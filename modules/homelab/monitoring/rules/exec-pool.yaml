@@ -18,3 +18,31 @@ groups:
           description: "exec-pool-metrics on {{ $labels.node }} has not reached the queue's database for 10 minutes, or has not rewritten its textfile for over 10 minutes, so the queue's counts read absent. Run systemctl status postgresql.service exec-pool-migrate.service exec-pool-metrics.service there."
           query: 'exec_pool_queue_up{job="node-exporter",node="{{ $labels.node }}"}'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolqueuedown"
+
+      - alert: ExecPoolLeaseOverdue
+        # a live lease past its deadline: the runner died or stopped reconciling; the task neither runs nor requeues
+        expr: |
+          sum by (node) (exec_pool_lease_overdue{job="node-exporter"}) > 0
+        for: 10m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "An execution pool task on {{ $labels.node }} is stuck past its lease deadline"
+          description: "{{ $value }} attempt(s) in the queue on {{ $labels.node }} have been leased, running or checkpointing past their lease deadline for 10 minutes without a reconcile expiring them, so nothing runs or requeues them. Run exec-pool-queue reconcile there once the runner is known to be stopped."
+          query: 'exec_pool_lease_overdue{job="node-exporter",node="{{ $labels.node }}"} > 0'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolleaseoverdue"
+
+      - alert: ExecPoolNeedsReview
+        # an expired started attempt whose effects are unknown; only an operator's resolve closes it
+        expr: |
+          sum by (node) (exec_pool_attempts{job="node-exporter",state="needs_review"}) > 0
+        for: 1h
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "Execution pool tasks on {{ $labels.node }} wait for an operator's review"
+          description: "{{ $value }} attempt(s) in the queue on {{ $labels.node }} have been in needs_review for an hour: a started attempt lost its lease or settled as such, and its effects are unknown. Read its state_change lines in the runner's journal, check its effects, then resolve it."
+          query: 'exec_pool_attempts{job="node-exporter",node="{{ $labels.node }}",state="needs_review"} > 0'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolneedsreview"

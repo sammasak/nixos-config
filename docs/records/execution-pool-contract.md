@@ -8,8 +8,8 @@ and the owners; it adds no daemon, database, socket, port, Nix option or host ch
 | Concern | Owner | Where |
 |---|---|---|
 | Static slot capacity (how many reusable nspawn slots a host declares, their closure, cgroups, egress) | NixOS `services.devEnvironments`, changed only by a reviewed deploy | `modules/workers/core.nix`, `modules/workers/default.nix`, `modules/workers/execution-pool.nix` |
-| Task and attempt state (queued to terminal, leases, epochs, idempotency keys) | the queue (#651, PostgreSQL) | `pkgs/exec-pool/src/queue.rs`, CLI `exec-pool-queue`; on acer (`modules/homelab/exec-pool.nix`), nothing claims yet |
-| Slot assignment on a host (claim, start, stop, sanitise, resource accounting) | a host-local dispatcher (#652) | not built |
+| Task and attempt state (queued to terminal, leases, epochs, idempotency keys) | the queue (#651, PostgreSQL) | `pkgs/exec-pool/src/queue.rs`, CLI `exec-pool-queue`; on acer (`modules/homelab/exec-pool.nix`) |
+| Slot assignment on a host (claim, start, stop, sanitise, resource accounting) | a host-local runner (#652) | `pkgs/exec-pool/src/runner.rs`, `exec-pool-runner`; `modules/homelab/exec-pool-runner.nix`, on acer for `pool1` |
 | The inner tool loop | the native Claude, Codex and Pi CLIs, unchanged | `docs/herdr.md` |
 | Viewing sessions | Herdr, observe only: never the source of queue truth | `docs/herdr.md` |
 | Power windows and placement facts | `sam.fleet.hosts.*` | `modules/core/fleet.nix` |
@@ -70,9 +70,11 @@ holds ids, states and reason codes.
 
 Instrumentation (#658's first slice): every change is one JSON line on stdout, `{"msg":"state_change","change":{
 task_id, attempt, lease_epoch, host, slot, from, to, reason, durations: {in_state_ms, since_submit_ms}}}`, and
-`exec-pool-queue metrics` renders `exec_pool_queue_up`, `exec_pool_attempts{state}`,
-`exec_pool_queued_oldest_seconds` and `exec_pool_transitions_total{from,to,reason}` for a textfile collector. Ids
-stay in the log line, never in a label. When the render fails for any reason it prints only `exec_pool_queue_up 0`
+`exec-pool-queue metrics` renders `exec_pool_queue_up`, `exec_pool_attempts{state,agent}`,
+`exec_pool_queued_oldest_seconds`, `exec_pool_lease_overdue{state}`, `exec_pool_slots{state="busy"}`,
+`exec_pool_slots_declared` (from `EXEC_POOL_SLOTS`), the histograms `exec_pool_queue_wait_seconds{agent}` and
+`exec_pool_run_seconds{agent}` and `exec_pool_transitions_total{from,to,reason}` for a textfile collector; lease
+expiries are the transitions with `reason="lease_expired"`. Ids stay in the log line, never in a label. When the render fails for any reason it prints only `exec_pool_queue_up 0`
 and exits non-zero; the collector installs stdout whatever the exit code, so a missing source reads as absent, not as
 zero traffic or as the last good counts.
 
@@ -92,6 +94,30 @@ slot's own credentials and egress. `agent::outcome(agent, exit, stdout)` maps th
 JSON `is_error` decides for Claude, the exit code for the rest; a signal, or a Claude run with no result, is
 `needs_review`. Neither `failed` nor `needs_review` requeues, so no ambiguous external effect is replayed.
 
+## Runner (#652, first slice)
+
+`exec-pool-runner-<slot>` (`modules/homelab/exec-pool-runner.nix`, `homelab.execPool.runner`, off by default; on acer
+for its one slot `pool1`) runs as `exec_pool`, the queue's peer role, and loops: `reconcile`, `claim` for its slot
+(agent `none`, the configured capabilities), `start`, then `systemctl start exec-pool-exec@<slot>`, then `checkpoint`
+and `settle`, then `dev-env-reset@<slot>`. A polkit rule lets `exec_pool` start those two units of its own slots and
+nothing else. The helper `exec-pool-exec@<slot>` runs as root and has no queue access. It reads the versioned manifest
+(`runner::Manifest`: slot, attempt, epoch, task) from `/run/exec-pool-runner/<slot>/`, refusing a symlink. In the guest,
+as its user and through `systemd-run -M`, it clones `source.repo` into `~/task`, checks out `source.rev` and runs
+`agent::argv(&task)` in `command.workdir`. All three are argv, never a shell string, and the task is stopped at `timeoutSecs`.
+Up to 1 MiB of each stream and the result go to `/var/lib/exec-pool-exec/<slot>/<hex attempt>-<epoch>/`, kept 30 days.
+
+Settling (`runner::decide`): a clone or checkout that fails never started the task's argv, so the attempt goes back to
+`queued`. A timeout, a guest that went away, or a missing result (or one for another attempt or epoch) goes to
+`needs_review`. Otherwise `agent::outcome` decides from the exit code and the captured stdout. The command runs as a
+oneshot unit, so only exit 0 is clean, and systemd-run's 255 (killed by a signal) counts as no exit code. A helper
+that finds its attempt's run directory already there refuses to run it again. The receipt reports no effect. An event
+the queue refuses, or one whose commit is unknown, is never re-sent: the lease (`timeoutSecs` + 1200 s) expires and
+`reconcile` decides. Work never begins before `start` is accepted. The runner resets the slot at startup (its state
+then is unknown) and after every run. A reset that fails three times writes `/var/lib/exec-pool-runner/<slot>.quarantined`,
+and that slot is not claimed for again until an operator removes the marker and restarts the runner. Every state change
+is one JSON line with its ids, and the `run` line carries exit code, output tails, `claim_to_exec_ms`, `exec_ms`,
+`prepare_ms` and `run_ms`. `slot_reset` carries `sanitize_ms`. There are no metric labels.
+
 ## Not `sam.agentRuntime`
 
 The historical `sam.agentRuntime` (#133, #138) made one ephemeral nspawn instance per task with no scheduler; it is
@@ -107,11 +133,14 @@ worker unit, container or toplevel on msi, and its instances (`m1`, `m2`, `t1`) 
 is how a user without root queues an agent task and watches it. It logs in as `exec_pool_submit`, a role with no
 database of its own: `homelab.postgresql.clients` in `modules/homelab/exec-pool.nix` lets the listed system users
 (`lukas`; a worker guest's user goes beside it) reach `exec_pool` as that role through a pg_ident peer map, still over
-the socket alone, with no password. Migration 0002 grants it SELECT on tasks, attempts and events and INSERT on them
-(an attempt's id and task alone, so it starts queued and unplaced); it updates and deletes nothing and reads no
-receipt. `submit` takes the agent, repo, rev, workdir, prompt and an optional model and prints the task id; the
-idempotency key is `--key`, or else derived from the rest, so the same submission again returns the same task. Its
-tasks ask for no capability and take one attempt.
+the socket alone, with no password. Migration 0002 gives it no table write: it queues only through `submit_task`, a
+SECURITY DEFINER function that takes the one shape `submit` builds (agent claude, codex or pi, an https repo, a rev
+that is not an option, a workdir inside the checkout, a prompt and maybe a model; no capability, one attempt,
+credential class `slot`) and assigns the task's id from its key, and it reads attempts, events and `task_summaries`,
+which leaves out the prompt. So a submitter chooses no policy, forges no event and queues nothing a claim cannot
+decode. `submit` prints the task id; the idempotency key is `--key`, or else derived from the flags, so the same
+submission again returns the same task. `exec-pool-migrate` is ordered after `postgresql-setup.service`, which
+creates the role.
 
 ## Phase gates (detail in #646)
 

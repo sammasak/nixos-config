@@ -22,6 +22,7 @@ pub const UP: &str = include_str!("../migrations/0001_queue.up.sql");
 pub const DOWN: &str = include_str!("../migrations/0001_queue.down.sql");
 /// Migration `n` is `STEPS[n - 1]`; each records its own version.
 const STEPS: [&str; 2] = [UP, include_str!("../migrations/0002_submitter.up.sql")];
+const DOWN_SUBMITTER: &str = include_str!("../migrations/0002_submitter.down.sql");
 const VERSION: i32 = 2;
 /// The fence's SQLSTATE, raised by `attempts_fence`.
 const FENCED: &str = "XP409";
@@ -36,6 +37,9 @@ macro_rules! up_help {
 
 /// The whole rendering while the database is unreachable: absent, not zero.
 pub const METRICS_UNAVAILABLE: &str = concat!(up_help!(), "exec_pool_queue_up 0\n");
+
+/// The agent kinds a task's `command.agent` may name, as serialized.
+const AGENTS: [&str; 4] = ["none", "claude", "codex", "pi"];
 
 const STATUSES: [Status; 8] = [
     Status::Queued,
@@ -219,10 +223,10 @@ const ATTEMPT_COLS: &str = "a.id, a.task_id, a.lease_epoch, a.tries, a.status, a
     (extract(epoch FROM now() - a.changed_at) * 1000)::bigint AS in_state_ms, \
     (extract(epoch FROM now() - t.submitted_at) * 1000)::bigint AS since_submit_ms";
 
-/// One task and its attempt as `status` and `list` show them, under `a` and `t`: no prompt.
+/// One task and its attempt as `status` and `list` show them, under `a` (attempts) and `t` (`task_summaries`).
 const SUMMARY: &str = "jsonb_build_object('task', t.id, 'attempt', a.id, 'status', a.status, \
-    'agent', t.spec->'command'->'agent', 'repo', t.spec->'source'->'repo', 'rev', t.spec->'source'->'rev', \
-    'workdir', t.spec->'command'->'workdir', 'lease_epoch', a.lease_epoch, 'tries', a.tries, 'host', a.host, \
+    'agent', t.agent, 'repo', t.repo, 'rev', t.rev, \
+    'workdir', t.workdir, 'lease_epoch', a.lease_epoch, 'tries', a.tries, 'host', a.host, \
     'slot', a.slot, 'submitted_at', t.submitted_at, 'changed_at', a.changed_at)";
 
 struct Locked {
@@ -464,7 +468,23 @@ impl Store {
         self.tx(|tx| match Self::version(tx)? {
             None => Err(QueueError::NotMigrated),
             Some(v) if v > VERSION => Err(QueueError::SchemaAhead(v)),
-            Some(_) => Ok(tx.batch_execute(DOWN)?),
+            Some(_) => Ok(tx.batch_execute(&format!("{DOWN_SUBMITTER}{DOWN}"))?),
+        })
+    }
+
+    /// Queues `task` through `submit_task`, as `exec_pool_submit` may: the queue assigns its id from its key and refuses
+    /// any task but the shape `exec-pool submit` builds. The queued task's id and whether it was already queued.
+    ///
+    /// # Errors
+    /// What `submit_task` or the database reports, an idempotency conflict included.
+    pub fn submit_task(&mut self, task: &TaskSpec) -> Result<(String, bool), QueueError> {
+        let mut spec = serde_json::to_value(task)?;
+        if let Value::Object(m) = &mut spec {
+            m.remove("id");
+        }
+        self.tx(|tx| {
+            let row = tx.query_one("SELECT o_task, o_duplicate FROM submit_task($1)", &[&spec])?;
+            Ok((row.try_get(0)?, row.try_get(1)?))
         })
     }
 
@@ -689,7 +709,7 @@ impl Store {
                      'at', e.at, 'from', e.from_status, 'to', e.to_status, 'reason', e.reason, \
                      'lease_epoch', e.lease_epoch, 'host', e.host, 'slot', e.slot) ORDER BY e.id), '[]') \
                      FROM events e WHERE e.attempt_id = a.id)) \
-                     FROM tasks t JOIN attempts a ON a.task_id = t.id WHERE t.id = $1 OR a.id = $1"
+                     FROM task_summaries t JOIN attempts a ON a.task_id = t.id WHERE t.id = $1 OR a.id = $1"
                 ),
                 &[&id],
             )?;
@@ -705,7 +725,7 @@ impl Store {
         self.tx(|tx| {
             tx.query(
                 &format!(
-                    "SELECT {SUMMARY} FROM tasks t JOIN attempts a ON a.task_id = t.id \
+                    "SELECT {SUMMARY} FROM task_summaries t JOIN attempts a ON a.task_id = t.id \
                      ORDER BY t.submitted_at DESC, t.id LIMIT $1"
                 ),
                 &[&limit],
@@ -732,30 +752,43 @@ impl Store {
         })
     }
 
-    /// The queue's counters in the Prometheus text format, for a textfile collector. Labels are states and reason
-    /// codes only. When it fails for any reason, render [`METRICS_UNAVAILABLE`] instead.
+    /// The queue's counters in the Prometheus text format, for a textfile collector. Labels are states, agent kinds
+    /// and reason codes only. `declared_slots` is the host's configured slot count, when the caller knows it. When it
+    /// fails for any reason, render [`METRICS_UNAVAILABLE`] instead.
     ///
     /// # Errors
     /// What the database reports.
-    pub fn metrics(&mut self) -> Result<String, QueueError> {
+    pub fn metrics(&mut self, declared_slots: Option<u32>) -> Result<String, QueueError> {
         self.tx(|tx| {
             let mut out = String::from(
                 concat!(
                     up_help!(),
                     "exec_pool_queue_up 1\n\
-                     # HELP exec_pool_attempts Attempts by state.\n# TYPE exec_pool_attempts gauge\n",
+                     # HELP exec_pool_attempts Attempts by state and agent kind (one per task).\n\
+                     # TYPE exec_pool_attempts gauge\n",
                 ),
             );
-            let counts = tx.query("SELECT status, count(*) FROM attempts GROUP BY status", &[])?;
+            let counts = tx.query(
+                "SELECT a.status, t.spec->'command'->>'agent', count(*) FROM attempts a \
+                 JOIN tasks t ON t.id = a.task_id GROUP BY 1, 2",
+                &[],
+            )?;
             for s in STATUSES {
-                let name = status_str(s);
-                let mut n = 0_i64;
-                for r in &counts {
-                    if r.try_get::<_, &str>(0)? == name {
-                        n = r.try_get(1)?;
+                let state = status_str(s);
+                for agent in AGENTS {
+                    let mut n = 0_i64;
+                    for r in &counts {
+                        if r.try_get::<_, &str>(0)? == state
+                            && r.try_get::<_, Option<&str>>(1)? == Some(agent)
+                        {
+                            n = r.try_get(2)?;
+                        }
                     }
+                    let _ = writeln!(
+                        out,
+                        "exec_pool_attempts{{state=\"{state}\",agent=\"{agent}\"}} {n}"
+                    );
                 }
-                let _ = writeln!(out, "exec_pool_attempts{{state=\"{name}\"}} {n}");
             }
             let oldest: f64 = tx
                 .query_one(
@@ -767,9 +800,28 @@ impl Store {
             let _ = write!(
                 out,
                 "# HELP exec_pool_queued_oldest_seconds Age of the oldest queued attempt (0 with none).\n\
-                 # TYPE exec_pool_queued_oldest_seconds gauge\nexec_pool_queued_oldest_seconds {oldest}\n\
-                 # HELP exec_pool_transitions_total State changes by from, to and reason.\n\
-                 # TYPE exec_pool_transitions_total counter\n"
+                 # TYPE exec_pool_queued_oldest_seconds gauge\nexec_pool_queued_oldest_seconds {oldest}\n"
+            );
+            leases(tx, &mut out, declared_slots)?;
+            histogram(
+                tx,
+                &mut out,
+                "exec_pool_queue_wait_seconds",
+                "# HELP exec_pool_queue_wait_seconds Time from queued to leased, by agent kind.\n\
+                 # TYPE exec_pool_queue_wait_seconds histogram\n",
+                "queued",
+            )?;
+            histogram(
+                tx,
+                &mut out,
+                "exec_pool_run_seconds",
+                "# HELP exec_pool_run_seconds Time running, until a checkpoint or a lease expiry, by agent kind.\n\
+                 # TYPE exec_pool_run_seconds histogram\n",
+                "running",
+            )?;
+            out.push_str(
+                "# HELP exec_pool_transitions_total State changes by from, to and reason.\n\
+                 # TYPE exec_pool_transitions_total counter\n",
             );
             for r in tx.query(
                 "SELECT coalesce(from_status, 'none'), to_status, reason, count(*) FROM events \
@@ -786,4 +838,98 @@ impl Store {
             Ok(out)
         })
     }
+}
+
+/// Upper bounds of the duration histograms, in seconds: ten seconds to four hours.
+const BUCKETS: [u32; 8] = [10, 60, 300, 900, 1800, 3600, 7200, 14400];
+
+/// A histogram, per agent kind and every kind present at zero, of the time attempts spent in `from` before leaving it.
+/// `head` is its HELP and TYPE lines, literal so the dashboard check finds the name.
+fn histogram(
+    tx: &mut Transaction<'_>,
+    out: &mut String,
+    name: &str,
+    head: &str,
+    from: &str,
+) -> Result<(), QueueError> {
+    let filters: Vec<String> = BUCKETS
+        .iter()
+        .map(|b| format!("count(*) FILTER (WHERE e.in_state_ms <= {b} * 1000)"))
+        .collect();
+    let rows = tx.query(
+        &format!(
+            "SELECT t.spec->'command'->>'agent', count(*), \
+             (coalesce(sum(e.in_state_ms), 0) / 1000.0)::float8, ARRAY[{}] \
+             FROM events e JOIN tasks t ON t.id = e.task_id WHERE e.from_status = $1 GROUP BY 1",
+            filters.join(", ")
+        ),
+        &[&from],
+    )?;
+    out.push_str(head);
+    for agent in AGENTS {
+        let row = rows
+            .iter()
+            .find(|r| r.try_get::<_, Option<&str>>(0).ok().flatten() == Some(agent));
+        let (count, sum, buckets): (i64, f64, Vec<i64>) = match row {
+            Some(r) => (r.try_get(1)?, r.try_get(2)?, r.try_get(3)?),
+            None => (0, 0.0, vec![0; BUCKETS.len()]),
+        };
+        for (b, n) in BUCKETS.iter().zip(buckets) {
+            let _ = writeln!(out, "{name}_bucket{{agent=\"{agent}\",le=\"{b}\"}} {n}");
+        }
+        let _ = write!(
+            out,
+            "{name}_bucket{{agent=\"{agent}\",le=\"+Inf\"}} {count}\n\
+             {name}_sum{{agent=\"{agent}\"}} {sum}\n{name}_count{{agent=\"{agent}\"}} {count}\n"
+        );
+    }
+    Ok(())
+}
+
+/// Live leases past their deadline by state, and the slots they hold.
+fn leases(
+    tx: &mut Transaction<'_>,
+    out: &mut String,
+    declared_slots: Option<u32>,
+) -> Result<(), QueueError> {
+    out.push_str(
+        "# HELP exec_pool_lease_overdue Live attempts past their lease deadline that no reconcile has expired.\n\
+         # TYPE exec_pool_lease_overdue gauge\n",
+    );
+    let overdue = tx.query(
+        &format!(
+            "SELECT status, count(*) FROM attempts \
+             WHERE status IN {LIVE} AND lease_deadline <= now() GROUP BY status"
+        ),
+        &[],
+    )?;
+    for state in ["leased", "running", "checkpointing"] {
+        let mut n = 0_i64;
+        for r in &overdue {
+            if r.try_get::<_, &str>(0)? == state {
+                n = r.try_get(1)?;
+            }
+        }
+        let _ = writeln!(out, "exec_pool_lease_overdue{{state=\"{state}\"}} {n}");
+    }
+    // one live attempt per slot (attempts_slot_live), so live attempts are busy slots
+    let busy: i64 = tx
+        .query_one(
+            &format!("SELECT count(*) FROM attempts WHERE status IN {LIVE}"),
+            &[],
+        )?
+        .try_get(0)?;
+    let _ = write!(
+        out,
+        "# HELP exec_pool_slots Slots by state: busy holds a live lease.\n\
+         # TYPE exec_pool_slots gauge\nexec_pool_slots{{state=\"busy\"}} {busy}\n"
+    );
+    if let Some(n) = declared_slots {
+        let _ = write!(
+            out,
+            "# HELP exec_pool_slots_declared Slots this host's configuration declares.\n\
+             # TYPE exec_pool_slots_declared gauge\nexec_pool_slots_declared {n}\n"
+        );
+    }
+    Ok(())
 }

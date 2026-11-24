@@ -72,3 +72,50 @@ tests:
       - eval_time: 60m
         alertname: ExecPoolQueueDown
         exp_alerts: []
+
+  # a lease goes overdue at 10m and is reconciled at 40m: firing from 20m, gone after
+  - interval: 1m
+    input_series:
+      - series: 'exec_pool_lease_overdue{job="node-exporter",node="acer-swift",state="running"}'
+        values: '0x10 1x30 0x20'
+      - series: 'exec_pool_lease_overdue{job="node-exporter",node="acer-swift",state="leased"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: ExecPoolLeaseOverdue
+        exp_alerts: []
+      - eval_time: 21m
+        alertname: ExecPoolLeaseOverdue
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: acer-swift}
+            exp_annotations:
+              summary: "An execution pool task on acer-swift is stuck past its lease deadline"
+              description: "1 attempt(s) in the queue on acer-swift have been leased, running or checkpointing past their lease deadline for 10 minutes without a reconcile expiring them, so nothing runs or requeues them. Run exec-pool-queue reconcile there once the runner is known to be stopped."
+              query: 'exec_pool_lease_overdue{job="node-exporter",node="acer-swift"} > 0'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolleaseoverdue"
+      - eval_time: 45m
+        alertname: ExecPoolLeaseOverdue
+        exp_alerts: []
+
+  # one attempt needs review from 10m: quiet at 69m, firing at 71m; an idle queue never fires
+  - interval: 1m
+    input_series:
+      - series: 'exec_pool_attempts{job="node-exporter",node="acer-swift",state="needs_review",agent="claude"}'
+        values: '0x10 1x80'
+      - series: 'exec_pool_attempts{job="node-exporter",node="acer-swift",state="needs_review",agent="none"}'
+        values: '0x90'
+      - series: 'exec_pool_attempts{job="node-exporter",node="acer-swift",state="queued",agent="claude"}'
+        values: '3x90'
+    alert_rule_test:
+      - eval_time: 69m
+        alertname: ExecPoolNeedsReview
+        exp_alerts: []
+      - eval_time: 71m
+        alertname: ExecPoolNeedsReview
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: acer-swift}
+            exp_annotations:
+              summary: "Execution pool tasks on acer-swift wait for an operator's review"
+              description: "1 attempt(s) in the queue on acer-swift have been in needs_review for an hour: a started attempt lost its lease or settled as such, and its effects are unknown. Read its state_change lines in the runner's journal, check its effects, then resolve it."
+              query: 'exec_pool_attempts{job="node-exporter",node="acer-swift",state="needs_review"} > 0'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolneedsreview"

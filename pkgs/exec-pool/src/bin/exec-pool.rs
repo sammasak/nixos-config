@@ -1,13 +1,13 @@
 //! `exec-pool`: submit an agent task to the queue and watch it, for a user `homelab.postgresql.clients` lets log in
-//! as `exec_pool_submit`, whose grants (migration 0002) allow inserting a queued task and reading the queue, nothing
-//! else. It reaches the queue over the Unix socket in `EXEC_POOL_DB`, by default [`DB`]. Exit codes are
+//! as `exec_pool_submit`, whose grants (migration 0002) allow queueing a task through `submit_task` and reading the
+//! queue without its prompts, nothing else. It reaches the queue over the Unix socket in `EXEC_POOL_DB`, by default [`DB`]. Exit codes are
 //! `exec-pool-queue`'s: 0 done, 1 refused, 2 usage, 3 outcome unknown (run `status` before submitting again), 75
 //! database unavailable.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::process::ExitCode;
 
-use exec_pool::queue::{QueueError, Store, Submitted};
+use exec_pool::queue::{QueueError, Store};
 use exec_pool::{Agent, Command, Pins, RelPath, RetryPolicy, SchemaVersion, Source, TaskSpec};
 use serde_json::{Value, json};
 
@@ -89,8 +89,8 @@ fn fnv1a(bytes: &[u8]) -> u64 {
     })
 }
 
-/// The task `submit`'s flags describe. Its id follows from its key, so a resubmission under the key is the same
-/// [`TaskSpec`] and the queue returns the task it already has.
+/// The task `submit`'s flags describe, in the one shape `submit_task` (migration 0002) takes. Its id is a placeholder:
+/// the queue assigns the real one from the key, so a resubmission under the key returns the task already queued.
 fn task_spec(args: &Args) -> Result<TaskSpec, Fail> {
     args.only(
         "submit",
@@ -122,7 +122,7 @@ fn task_spec(args: &Args) -> Result<TaskSpec, Fail> {
     );
     let task = TaskSpec {
         schema_version: SchemaVersion::CURRENT,
-        id: format!("cli-{:016x}", fnv1a(key.as_bytes())),
+        id: key.clone(),
         idempotency_key: key,
         source: Source {
             repo: repo.to_owned(),
@@ -153,11 +153,11 @@ fn task_spec(args: &Args) -> Result<TaskSpec, Fail> {
 fn run(cmd: &str, args: &Args, store: &mut Store) -> Result<(), Fail> {
     match cmd {
         "submit" => {
-            let task = task_spec(args)?;
-            if let Submitted::Duplicate { .. } = store.submit(&task)? {
-                eprintln!("exec-pool: already queued under its key");
+            let (id, duplicate) = store.submit_task(&task_spec(args)?)?;
+            if duplicate {
+                eprintln!("exec-pool: already submitted under its key; see exec-pool status {id}");
             }
-            println!("{}", task.id);
+            println!("{id}");
         }
         "status" => {
             args.only("status", &[], 1)?;
@@ -275,11 +275,10 @@ mod tests {
         assert!(a.idempotency_key.starts_with("cli:"));
         let other = spec(&with(&["--model", "opus"])).unwrap();
         assert_ne!(other.idempotency_key, a.idempotency_key);
-        assert_ne!(other.id, a.id);
-        let keyed = spec(&with(&["--key", "run-2"])).unwrap();
-        assert_eq!(keyed.idempotency_key, "run-2");
-        assert_ne!(keyed.id, a.id);
-        assert_eq!(spec(&with(&["--key", "run-2"])).unwrap().id, keyed.id);
+        assert_eq!(
+            spec(&with(&["--key", "run-2"])).unwrap().idempotency_key,
+            "run-2"
+        );
     }
 
     #[test]

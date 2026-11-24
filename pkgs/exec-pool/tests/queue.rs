@@ -243,32 +243,80 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
     assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(3))));
 }
 
+/// The one shape `submit_task` takes: what `exec-pool submit` builds.
+fn agent_task() -> serde_json::Value {
+    json!({
+        "schema_version": 1, "id": "ignored", "idempotency_key": "cli:1",
+        "source": { "repo": "https://github.com/sammasak/nixos-config.git", "rev": "6266701" },
+        "command": { "agent": "claude", "argv": [ARGV_MARKER, "opus"], "workdir": "pkgs/exec-pool" },
+        "capabilities": [], "resource_class": "small", "credential_class": "slot",
+        "retry": { "max_attempts": 1 }
+    })
+}
+
 #[test]
-fn the_submitter_queues_and_reads_but_changes_nothing() {
+fn the_submitter_queues_through_submit_task_and_reads_no_prompt() {
     let pg = Pg::new();
-    pg.migrated();
+    let mut owner = pg.migrated();
     let conninfo = pg
         .conninfo()
         .replace("user=exec_pool ", "user=exec_pool_submit ");
     let mut s = Store::open(&conninfo).unwrap();
-    let attempt = submit(&mut s, &task("t-1", 1));
-    assert_eq!(s.task("t-1").unwrap().unwrap()["status"], "queued");
+    let task: TaskSpec = serde_json::from_value(agent_task()).unwrap();
+    let (id, duplicate) = s.submit_task(&task).unwrap();
+    assert!(id.starts_with("cli-") && !duplicate, "{id}");
+    assert_eq!(s.submit_task(&task).unwrap(), (id.clone(), true));
+    let mut other = task.clone();
+    other.command.argv.pop();
+    assert!(s.submit_task(&other).is_err(), "a key names one task");
+    let shown = s.task(&id).unwrap().unwrap();
+    assert_eq!(shown["status"], "queued");
+    assert!(!shown.to_string().contains(ARGV_MARKER), "{shown}");
     assert_eq!(s.tasks(5).unwrap().len(), 1);
+    // what it queued is a task the owner's claim decodes
+    let mut claude = slot("pool1");
+    claude.agents = BTreeSet::from([Agent::Claude]);
+    let claim = owner.claim(&claude, 60).unwrap().unwrap();
+    assert_eq!(claim.task.id, id);
+
     let mut c = Client::connect(&conninfo, NoTls).unwrap();
-    for sql in [
-        format!("UPDATE attempts SET status = 'succeeded' WHERE id = '{attempt}'"),
-        format!("DELETE FROM events WHERE attempt_id = '{attempt}'"),
-        "INSERT INTO attempts (id, task_id, status) VALUES ('x', 't-1', 'running')".to_owned(),
-        "SELECT * FROM receipts".to_owned(),
-        "CREATE TABLE x (y int)".to_owned(),
-    ] {
-        let e = c.batch_execute(&sql).unwrap_err();
+    let refused = |c: &mut Client, sql: &str, code: &str| {
+        let e = c.batch_execute(sql).unwrap_err();
         assert_eq!(
             e.code().map(postgres::error::SqlState::code),
-            Some("42501"),
+            Some(code),
             "{sql}: {e}"
         );
+    };
+    for sql in [
+        "INSERT INTO events (task_id, attempt_id, lease_epoch, to_status, reason, in_state_ms, since_submit_ms) \
+         SELECT task_id, id, 0, 'failed', 'x', 0, 0 FROM attempts",
+        "INSERT INTO tasks (id, idempotency_key, spec, max_attempts) VALUES ('x', 'x', '{}', 9)",
+        "UPDATE attempts SET status = 'succeeded'",
+        "SELECT spec FROM tasks",
+        "SELECT * FROM receipts",
+    ] {
+        refused(&mut c, sql, "42501");
     }
+    let bad: [(&str, serde_json::Value); 8] = [
+        ("/capabilities", json!(["read_only"])),
+        ("/credential_class", json!("root")),
+        ("/retry", json!({ "max_attempts": 9 })),
+        ("/command/agent", json!("none")),
+        ("/command/workdir", json!("a/../../x")),
+        ("/source/rev", json!("--upload-pack=x")),
+        ("/source/repo", json!("file:///etc")),
+        ("/command/argv", json!(["p", "-m"])),
+    ];
+    for (at, v) in bad {
+        let mut t = agent_task();
+        *t.pointer_mut(at).unwrap() = v;
+        refused(&mut c, &format!("SELECT submit_task('{t}')"), "22023");
+    }
+    let mut extra = agent_task();
+    extra["command"]["env"] = json!({});
+    refused(&mut c, &format!("SELECT submit_task('{extra}')"), "22023");
+    refused(&mut c, "SELECT submit_task('[]')", "22023");
 }
 
 #[test]
@@ -628,7 +676,7 @@ fn the_queue_survives_a_restart_and_says_when_the_database_is_down() {
         s.claim(&slot("s1"), 60).map(|_| ()),
         s.apply(&a, &ev(1, Kind::Start), None).map(|_| ()),
         s.reconcile().map(|_| ()),
-        s.metrics().map(|_| ()),
+        s.metrics(None).map(|_| ()),
     ] {
         assert!(
             matches!(result, Err(QueueError::Unavailable(_))),
@@ -654,8 +702,9 @@ fn state_changes_and_metrics_keep_ids_and_prompts_where_they_belong() {
     let mut s = pg.migrated();
     // no traffic: every state is present at zero, unlike the unavailable rendering
     let has = |text: &str, line: &str| text.lines().any(|l| l == line);
-    let idle = s.metrics().unwrap();
+    let idle = s.metrics(None).unwrap();
     assert!(has(&idle, "exec_pool_queue_up 1"));
+    let agents = ["none", "claude", "codex", "pi"];
     let states = [
         "queued",
         "leased",
@@ -667,17 +716,22 @@ fn state_changes_and_metrics_keep_ids_and_prompts_where_they_belong() {
         "needs_review",
     ];
     for state in states {
-        assert!(
-            has(&idle, &format!("exec_pool_attempts{{state=\"{state}\"}} 0")),
-            "{state}"
-        );
+        for agent in agents {
+            assert!(
+                has(
+                    &idle,
+                    &format!("exec_pool_attempts{{state=\"{state}\",agent=\"{agent}\"}} 0")
+                ),
+                "{state} {agent}"
+            );
+        }
     }
     let series = |text: &str| {
         text.lines()
             .filter(|l| l.starts_with("exec_pool_attempts{"))
             .count()
     };
-    assert_eq!(series(&idle), states.len());
+    assert_eq!(series(&idle), states.len() * agents.len());
     assert!(has(&idle, "exec_pool_queued_oldest_seconds 0"));
     assert_eq!(
         idle.strip_suffix("exec_pool_queue_up 1\n").map(|_| ()),
@@ -706,10 +760,16 @@ fn state_changes_and_metrics_keep_ids_and_prompts_where_they_belong() {
     assert!(line["durations"]["in_state_ms"].as_i64().unwrap() >= 0);
     assert!(line["durations"]["since_submit_ms"].as_i64().unwrap() >= 0);
 
-    let text = s.metrics().unwrap();
-    assert!(has(&text, "exec_pool_attempts{state=\"leased\"} 1"));
-    assert!(has(&text, "exec_pool_attempts{state=\"queued\"} 0"));
-    assert_eq!(series(&text), states.len());
+    let text = s.metrics(None).unwrap();
+    assert!(has(
+        &text,
+        "exec_pool_attempts{state=\"leased\",agent=\"none\"} 1"
+    ));
+    assert!(has(
+        &text,
+        "exec_pool_attempts{state=\"queued\",agent=\"none\"} 0"
+    ));
+    assert_eq!(series(&text), states.len() * agents.len());
     assert!(has(
         &text,
         "exec_pool_transitions_total{from=\"queued\",to=\"leased\",reason=\"lease\"} 1"
@@ -734,6 +794,99 @@ fn state_changes_and_metrics_keep_ids_and_prompts_where_they_belong() {
             "{row}"
         );
     }
+}
+
+#[test]
+fn an_idle_queue_renders_slots_leases_and_durations_at_zero() {
+    let pg = Pg::new();
+    let mut s = pg.migrated();
+    let idle = s.metrics(None).unwrap();
+    let has = |line: &str| idle.lines().any(|l| l == line);
+    assert!(has("exec_pool_slots{state=\"busy\"} 0"));
+    for state in ["leased", "running", "checkpointing"] {
+        assert!(has(&format!(
+            "exec_pool_lease_overdue{{state=\"{state}\"}} 0"
+        )));
+    }
+    assert!(
+        !idle.contains("exec_pool_slots_declared"),
+        "no declared count when the caller gives none"
+    );
+    for agent in ["none", "claude", "codex", "pi"] {
+        for h in ["exec_pool_queue_wait_seconds", "exec_pool_run_seconds"] {
+            assert!(
+                has(&format!("{h}_count{{agent=\"{agent}\"}} 0")),
+                "{h} {agent}"
+            );
+            assert!(has(&format!(
+                "{h}_bucket{{agent=\"{agent}\",le=\"+Inf\"}} 0"
+            )));
+            assert!(has(&format!("{h}_bucket{{agent=\"{agent}\",le=\"10\"}} 0")));
+        }
+    }
+}
+
+#[test]
+fn a_wait_a_run_and_an_overdue_lease_show_in_the_metrics() {
+    let pg = Pg::new();
+    let mut s = pg.migrated();
+    let has = |text: &str, line: &str| text.lines().any(|l| l == line);
+    let a = submit(&mut s, &task("t-1", 2));
+    s.claim(&slot("s0"), 60).unwrap().unwrap();
+    let text = s.metrics(Some(2)).unwrap();
+    assert!(has(&text, "exec_pool_slots{state=\"busy\"} 1"));
+    assert!(has(&text, "exec_pool_slots_declared 2"));
+    // the wait was well under ten seconds: in every bucket, and counted once
+    assert!(has(
+        &text,
+        "exec_pool_queue_wait_seconds_bucket{agent=\"none\",le=\"10\"} 1"
+    ));
+    assert!(has(
+        &text,
+        "exec_pool_queue_wait_seconds_count{agent=\"none\"} 1"
+    ));
+    assert!(has(
+        &text,
+        "exec_pool_queue_wait_seconds_count{agent=\"claude\"} 0"
+    ));
+    assert!(has(&text, "exec_pool_lease_overdue{state=\"leased\"} 0"));
+    s.apply(&a, &ev(1, Kind::Start), None).unwrap();
+    s.apply(&a, &ev(1, Kind::Checkpoint), None).unwrap();
+    let text = s.metrics(None).unwrap();
+    assert!(has(&text, "exec_pool_run_seconds_count{agent=\"none\"} 1"));
+    assert!(has(
+        &text,
+        "exec_pool_run_seconds_bucket{agent=\"none\",le=\"10\"} 1"
+    ));
+    assert!(has(
+        &text,
+        "exec_pool_lease_overdue{state=\"checkpointing\"} 0"
+    ));
+
+    // a dead runner: the lease is past its deadline and nothing has reconciled it yet
+    overdue(&pg, &a);
+    let text = s.metrics(None).unwrap();
+    assert!(has(
+        &text,
+        "exec_pool_lease_overdue{state=\"checkpointing\"} 1"
+    ));
+    assert!(has(&text, "exec_pool_slots{state=\"busy\"} 1"));
+
+    assert_eq!(s.reconcile().unwrap().len(), 1);
+    let text = s.metrics(None).unwrap();
+    assert!(has(
+        &text,
+        "exec_pool_lease_overdue{state=\"checkpointing\"} 0"
+    ));
+    assert!(has(&text, "exec_pool_slots{state=\"busy\"} 0"));
+    assert!(has(
+        &text,
+        "exec_pool_attempts{state=\"needs_review\",agent=\"none\"} 1"
+    ));
+    assert!(has(
+        &text,
+        "exec_pool_transitions_total{from=\"checkpointing\",to=\"needs_review\",reason=\"lease_expired\"} 1"
+    ));
 }
 
 #[test]

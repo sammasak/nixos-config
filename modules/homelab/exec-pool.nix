@@ -1,6 +1,6 @@
 # The execution pool's queue (pkgs/exec-pool, docs/records/execution-pool-contract.md) on this host: its own database
 # and role in the host's PostgreSQL (postgresql.nix), reached by peer over the socket alone; the schema is the CLI's `migrate` at start,
-# its metrics a minutely textfile and its backup a nightly dump. No runner and no slot: nothing claims a task yet.
+# its metrics a minutely textfile and its backup a nightly dump; the runner, off by default, is exec-pool-runner.nix.
 {
   config,
   lib,
@@ -46,6 +46,7 @@ in
     ./postgresql.nix
     ./monitoring/node-exporter.nix
     ./backup-metrics.nix
+    ./exec-pool-runner.nix
   ];
 
   users.users.exec_pool = {
@@ -72,8 +73,16 @@ in
 
   systemd.services.exec-pool-migrate = lib.recursiveUpdate unit {
     description = "Apply the execution pool queue's schema";
-    # the target: postgresql.service is up before its ensureUsers setup has run
-    requires = [ "postgresql.target" ];
+    # the target: postgresql.service is up before its ensureUsers setup has run. postgresql-setup too: a switch
+    # restarts it with no job on the target, and migration 0002 grants to the role it creates.
+    after = [
+      "postgresql.target"
+      "postgresql-setup.service"
+    ];
+    requires = [
+      "postgresql.target"
+      "postgresql-setup.service"
+    ];
     wantedBy = [ "multi-user.target" ];
     serviceConfig = {
       RemainAfterExit = true;
@@ -88,6 +97,8 @@ in
   systemd.tmpfiles.rules = [ "d ${dir} 0755 exec_pool exec_pool -" ];
   systemd.services.exec-pool-metrics = lib.recursiveUpdate unit {
     description = "Execution pool queue metrics, for node-exporter";
+    # exec_pool_slots_declared, beside the busy count the queue knows
+    environment.EXEC_POOL_SLOTS = toString config.sam.workers.executionPool.slots;
     # a run before the schema exists would fail; a failed migrate leaves the textfile to go stale
     after = [
       "postgresql.target"

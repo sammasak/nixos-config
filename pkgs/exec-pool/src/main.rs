@@ -23,7 +23,8 @@ const USAGE: &str = "usage: exec-pool-queue COMMAND [--flag value]...
   resolve --attempt ID --epoch N --to succeeded|failed|queued   (an operator closing a needs_review attempt)
   reconcile                                                     (expire overdue leases; run at startup)
   metrics       (Prometheus text for a textfile collector; install stdout whatever the exit code: on a failure it is
-                exec_pool_queue_up 0, so the queue reads absent instead of keeping the last good counts)";
+                exec_pool_queue_up 0, so the queue reads absent instead of keeping the last good counts; EXEC_POOL_SLOTS,
+                when set, is the host's declared slot count)";
 
 enum Fail {
     Usage(String),
@@ -171,16 +172,26 @@ fn run(cmd: &str, args: &Args, store: &mut Store) -> Result<(), Fail> {
             changes.iter().for_each(log);
             result(&json!({ "expired": changes.len() }));
         }
-        "metrics" => match store.metrics() {
+        "metrics" => match declared_slots().and_then(|n| Ok(store.metrics(n)?)) {
             Ok(text) => print!("{text}"),
             Err(e) => {
                 print!("{METRICS_UNAVAILABLE}");
-                return Err(e.into());
+                return Err(e);
             }
         },
         other => return Err(Fail::Usage(format!("unknown command {other:?}"))),
     }
     Ok(())
+}
+
+fn declared_slots() -> Result<Option<u32>, Fail> {
+    std::env::var("EXEC_POOL_SLOTS")
+        .ok()
+        .map(|v| {
+            v.parse()
+                .map_err(|_| Fail::Usage(format!("EXEC_POOL_SLOTS {v:?} is not a count")))
+        })
+        .transpose()
 }
 
 fn main() -> ExitCode {
