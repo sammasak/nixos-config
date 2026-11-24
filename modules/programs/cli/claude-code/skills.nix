@@ -14,6 +14,15 @@ let
     name: type:
     type == "regular" && lib.hasSuffix ".md" name && (coordinatorHost || name != "coordinator.md")
   ) agentEntries;
+
+  # An adapter names its contract and jq files relative to a skills checkout, which a worker guest lacks and another
+  # host may hold at a different revision; point them at the pinned source the adapter itself comes from.
+  pinAdapter =
+    name:
+    builtins.replaceStrings
+      [ "`agents/" "~/claude-code-skills/agents/" ]
+      [ "`${skillsSrc}/agents/" "${skillsSrc}/agents/" ]
+      (builtins.readFile "${skillsSrc}/agents/${name}");
 in
 {
   home.file = {
@@ -29,7 +38,7 @@ in
   // (lib.mapAttrs' (
     name: _:
     lib.nameValuePair ".claude/agents/${name}" {
-      source = "${skillsSrc}/agents/${name}";
+      text = pinAdapter name;
     }
   ) agentFiles);
 }
