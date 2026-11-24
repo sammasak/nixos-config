@@ -2,8 +2,8 @@ use std::collections::BTreeSet;
 
 use exec_pool::{
     Agent, Attempt, CheckpointRef, Error, Event, Kind, Pins, Placement, Receipt, RelPath,
-    Resolution, RetryPolicy, SchemaVersion, Settle, Slot, SlotState, Status, Submission, TaskSpec,
-    submit, transition,
+    Resolution, RetryPolicy, STORE, SchemaVersion, Settle, Slot, SlotState, Status, Submission,
+    TaskSpec, reachable, submit, transition,
 };
 use serde_json::{Value, json};
 
@@ -50,6 +50,7 @@ fn slot() -> Slot {
             nix_closure_digest: Some("sha256-closure-a".to_owned()),
             ..Pins::default()
         },
+        store: false,
     }
 }
 
@@ -182,6 +183,8 @@ fn empty_fields_are_rejected() {
         schema_version: SchemaVersion::CURRENT,
         uri: uri.to_owned(),
         digest: digest.to_owned(),
+        generation: 0,
+        hosts: Vec::new(),
     };
     assert_eq!(cp("", "d").validate(), Err(Error::Empty("uri")));
     assert_eq!(cp("u", "").validate(), Err(Error::Empty("digest")));
@@ -197,6 +200,40 @@ fn empty_fields_are_rejected() {
         ..receipt
     };
     assert_eq!(receipt.validate(), Err(Error::Empty("digest")));
+}
+
+#[test]
+fn a_parked_session_is_reachable_only_where_its_tree_is() {
+    let at = |hosts: &[&str]| CheckpointRef {
+        schema_version: SchemaVersion::CURRENT,
+        uri: "session-tree://acer-swift/t-1".to_owned(),
+        digest: "unhashed".to_owned(),
+        generation: 3,
+        hosts: hosts.iter().map(|&h| h.to_owned()).collect(),
+    };
+    assert!(
+        reachable(None, "msi-ms7758", false),
+        "a first turn runs anywhere"
+    );
+    assert!(
+        reachable(Some(&at(&[])), "msi-ms7758", false),
+        "a checkpoint from before sessions names no host"
+    );
+    assert!(reachable(Some(&at(&["acer-swift"])), "acer-swift", false));
+    assert!(!reachable(Some(&at(&["acer-swift"])), "msi-ms7758", false));
+    assert!(
+        !reachable(Some(&at(&["acer-swift"])), "msi-ms7758", true),
+        "the store does not hold it"
+    );
+    assert!(reachable(
+        Some(&at(&["acer-swift", STORE])),
+        "msi-ms7758",
+        true
+    ));
+    assert!(
+        !reachable(Some(&at(&["acer-swift", STORE])), "msi-ms7758", false),
+        "a host that cannot pull from the store"
+    );
 }
 
 #[test]
@@ -521,6 +558,16 @@ fn max_attempts_stop_retries() {
         .unwrap();
     let retried = transition(&at, &once, &ev(1, Kind::Settle(Settle::Queued))).unwrap();
     assert_eq!(retried.status, Status::Failed);
+    // but a run its host's poweroff stopped gives its try back and runs again
+    let drained = transition(&at, &once, &ev(1, Kind::Settle(Settle::Drained))).unwrap();
+    assert_eq!(
+        (drained.status, drained.tries, drained.placement.is_none()),
+        (Status::Queued, 0, true)
+    );
+    assert_eq!(
+        transition(&drained, &once, &lease(1)).unwrap().status,
+        Status::Leased
+    );
     // and a record claiming a lease left is still refused one past the limit
     let mut spent = queued();
     spent.tries = 1;

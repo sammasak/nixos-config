@@ -57,6 +57,39 @@ fails before the host's services do. msi powers off at 21:00
 (Mon-Fri window); its environments come back at its next boot.
 Inside, the cgroup files read `max`: `/etc/dev-environment` holds these limits as shell `key=value` (bytes: `memory_reserved`, `pool_memory`, `pool_swap`; `cpu_weight`, `nix_max_jobs`, `nix_cores`).
 
+## Execution pool
+
+`sam.workers.executionPool` (`modules/workers/execution-pool.nix`; on acer-swift three slots, on msi-ms7758 four, no named worker beside them) declares reusable slots for the
+pool's tasks (`docs/records/execution-pool-contract.md`): `pool1` .. `pool<slots>`, each an instance with
+`agent = "none"` and no prompt, so a slot has the named instances' pool ceiling, reserves, `rootInGuest`, reset and
+retire. Changing `slots` is a reviewed deploy; a task is released with `dev-env-reset@<slot>`, which switches nothing.
+
+| Option | Default | Effect |
+|--------|---------|--------|
+| `enable` | `false` | off, nothing moves (pinned by `scripts/test-workers-eval.py`) |
+| `slots` | `0` | how many slots (unsigned) |
+| `memory.reserved`, `cpu.reserved` | `"2G"`, `2` | each slot's, as an instance's |
+| `credentials` | `[ ]` | which host credentials a slot may hold; never `id_ed25519` (asserted) |
+| `github.repos` | sammasak's repositories tasks hand back to, and nixos-config's private inputs | each slot's `egress.github.repos`: git and gh to these repositories through the host's GitHub proxy, no credential in the slot; a host in `sam.fleet.listeners.github-egress`'s `from` (msi) forwards to that listener's host (acer), which applies its own list ([execution-pool-credentials.md](records/execution-pool-credentials.md)) |
+| `agents` | `[ ]` | agents a task may run in a slot (`claude`): each slot's `headlessAgents`, the egress route a named worker of that agent has (the anthropic proxy, no credential in the guest), while its `agent` stays `none` and no session starts |
+| `rootInGuest` | `false` | each slot's |
+
+Evaluation fails when a slot's name is also declared in `sam.workers.instances` or `retired`, or when the slots and
+the named instances reserve more than `pool.memory`. `worker-pool-inventory` prints one JSON line per slot from its
+units: `slot`, `state`, `sub`, `closure`, `memory.min`/`.low`, `cpu.weight`, `slice`. `nix build .#execution-pool-vm`
+(msi) boots two slots beside a named instance, reuses one across a reset and restarts it alone.
+
+Every slot has `sessionDock` (an instance option, off for named workers): `/session` is bound read-write from
+`<stateDir>/.sessions/dock/<slot>`, root's 0755 under `.sessions/dock` (0755) and `.sessions` (0711), so a session's home and work tree, kept
+outside every slot home, are renamed in for one turn; reset, retire, the trash sweep and records never touch `.sessions`, and gcroots
+only reads it. Not with `rootInGuest`. On acer and msi, with `homelab.execPool.sessionGc.enable`,
+`exec-pool-sessions-gc` moves the parked trees and store copies the queue lists (`exec-pool sessions`, read as
+exec_pool from the runner's queue) as eligible and `handed_back` into `.trash` daily, one JSON line each in its journal,
+never a session whose tree is docked; a tree the queue does not know is counted (`homelab_exec_pool_sessions_orphaned`),
+not removed. No lock is shared with the runner yet: it must take one before a dock or a push, or a removal can race them.
+Whatever can write a task's state (the runner role, a submitter) can make the queue list it: `.trash` keeps that
+recoverable for a week.
+
 ## Sizing
 
 Reserved per environment, spiking allowed. Measured on both hosts (8 cores,
@@ -90,7 +123,7 @@ neighbour was reclaimed to 59M.
 | Create | add `instances.<name>` on the host, deploy | 37 s deploy, guest boots in 1.9 s (6.8 s before the unused guest services went) |
 | First use of a repo | clone, `devenv shell` | closure already in the host store: 20 s (herman), 26 s (factum), of which 12 to 15 s fetching input tarballs, 5 s evaluation, 2 s small builds, no substitution; closure not yet in the host store: 88 to 92 s (about 63 downloads, 3.9 GB, plus local assembly of the Rust toolchain); fresh clone of a lock the environment has seen: 6.5 s (factum), 17.6 s (herman, msi); 0.2 to 0.6 s after that |
 | Work | brief the agent through Herdr, or `ssh <name>.<prefix>` | hours to days; the home persists |
-| Host reboot or redeploy | nothing | container autostarts 6 to 7 s into userspace, the agent is back in Herdr at 14 to 15 s and resumes its conversation; home and the shared `~/.cache/nix` are intact (`devenv shell` 7 to 10 s). Whatever ran in the environment is killed and not restarted: the resumed agent is told so, once per start of the container, and re-checks its work. msi tells its agents at 20:40 (`sam.workers.shutdownNotice`) to push before the 21:00 poweroff |
+| Host reboot or redeploy | nothing | container autostarts 6 to 7 s into userspace, the agent is back in Herdr at 14 to 15 s and resumes its conversation; home and the shared `~/.cache/nix` are intact (`devenv shell` 7 to 10 s). Whatever ran in the environment is killed and not restarted: the resumed agent is told so, once per start of the container, and re-checks its work. A host with `sam.workers.shutdownNotice` tells its named agents at that time to push before a scheduled poweroff; msi has no named agent left, its pool runner claims only work whose hold ends before the poweroff |
 | Resize (`memory`, `cpu`) or edit `prompt` | edit the declaration, deploy | live, no restart (checked on msi: 6G to 5G and back, same container start time) |
 | Change `agent`, `model`, credentials | edit the declaration, deploy | restarts that one environment, home kept |
 | Stop | remove the declaration, deploy | units stop, home kept |
@@ -107,6 +140,9 @@ The host's weekly/monthly collection would not see an environment's devenv
 roots (the daemon records them under the guest's path), so
 `dev-environments-gcroots` roots them from each home right before `nix-gc`
 (it searches the whole home, pruning `node_modules`, `target` and `.git`).
+It also roots each session's work tree, parked (`.sessions/<id>/tree/work`) or docked in a slot
+(`.sessions/dock/<slot>/cur/work`), under `/nix/var/nix/gcroots/dev-env-sessions/parked/<id>` or `dock/<slot>`; a key no
+longer found keeps its roots for an hour, since a dock or park moves the tree between two keys.
 A timer also runs it at boot and every 15 minutes, because the daemon collects
 by itself once `min-free` is set; a path a guest built within the last interval
 is the remaining exposure.
@@ -136,7 +172,8 @@ the package signed `msi-ms7758-store-1`. Evaluation is not shared: a first
 A container that never gets ready is retried 3 times in 10 minutes and then stays `failed` (start limit). Each switch
 calls `reset-failed` (clearing the limit) and restarts the active targets, `machines.target` among them, which starts
 it again with a fresh allowance; by hand, `systemctl reset-failed container@<n>` first, because a 4th start inside the
-10 minutes is refused ("repeated too quickly").
+10 minutes is refused ("repeated too quickly"). `dev-env-reset@<n>` clears it too, so a pool slot, reset every task
+turn, never reaches it.
 
 ## Alerts
 

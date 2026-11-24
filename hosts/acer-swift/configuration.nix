@@ -11,23 +11,25 @@
     ../../modules/homelab/llm-gateway.nix
     ../../modules/homelab/authentik.nix
     ../../modules/homelab/exec-pool.nix
+    ../../modules/homelab/exec-pool-store.nix
     ../../modules/homelab/monitoring/node-exporter.nix
     ../../modules/homelab/nav-metrics.nix
     ../../modules/homelab/shunt-metrics.nix
     ../../modules/homelab/monitoring/alloy-otlp.nix
     ../../modules/homelab/journal-collector.nix
+    ../../modules/homelab/scheduled-gate.nix
   ];
 
   homelab.journalCollector.enable = true;
   homelab.shuntMetrics.enable = true;
-  # Shunt on for worker a1 alone; herman and the host stay off, so the collector compares on and off (#625).
-  # Compaction at 300K for herman alone, its Shunt-off peer the host, so the two comparisons stay apart (#626).
+  # the always-on heavy host: msi and asus are off at night
+  homelab.scheduledGate.enable = true;
+  # Shunt on for slot pool1 alone; the host and the other slots stay off, so the collector compares on and off (#625).
   services.devEnvironments.guestModules = [
     (
-      { devEnvironment, lib, ... }:
+      { devEnvironment, ... }:
       {
-        sam.claude.bulkReader.enable = devEnvironment.name == "a1";
-        sam.claude.autoCompactWindow = lib.mkIf (devEnvironment.name == "herman") 300000;
+        sam.claude.bulkReader.enable = devEnvironment.name == "pool1";
       }
     )
   ];
@@ -39,17 +41,33 @@
     pi = true;
     nativeOtel = true;
   };
-  # A 7G pool reserves 2G each for at most 3, 2 recommended (docs/nspawn-workers.md, Sizing).
+  # A 7G pool reserves 2G each for at most 3: pool1 to pool3 (docs/nspawn-workers.md, Sizing).
   sam.workers = {
     labelPrefix = "acer";
     pool.memory = "7G";
     ghHostsFile = "/home/${config.sam.profile.username}/.config/gh/hosts.yml";
-    # No prompt: its goal is sent through Herdr once it is up (docs/nspawn-workers.md).
-    instances.herman = { };
-    # A task slot: reset with dev-env-reset@a1 between tasks, no deploy.
-    instances.a1 = { };
+    retired = [
+      "herman"
+      "a1"
+    ];
+    executionPool = {
+      enable = true;
+      slots = 3;
+      # no codex: this host sets no sam.workers.codexAuthFile
+      agents = [
+        "claude"
+        "pi"
+      ];
+    };
   };
-  # the #494 usage spike: herman's cgroup counters every minute (scripts/guest-records.py --usage)
+  homelab.execPool.runner = {
+    enable = true;
+    store = "acer-swift";
+  };
+  homelab.execPool.sessionGc.enable = true;
+  # msi's runner claims from this queue over the fleet LAN (exec-pool-db listener)
+  homelab.execPool.remoteRunners = true;
+  # the #494 usage spike: the workers' cgroup counters every minute (scripts/guest-records.py --usage)
   services.devEnvironments.records.usage = "1min";
   sam.herdr.trustedDirs = map (d: "/home/${config.sam.profile.username}/${d}") [
     "claude-code-skills"

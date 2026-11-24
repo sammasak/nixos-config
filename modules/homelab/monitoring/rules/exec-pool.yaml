@@ -18,3 +18,76 @@ groups:
           description: "exec-pool-metrics on {{ $labels.node }} has not reached the queue's database for 10 minutes, or has not rewritten its textfile for over 10 minutes, so the queue's counts read absent. Run systemctl status postgresql.service exec-pool-migrate.service exec-pool-metrics.service there."
           query: 'exec_pool_queue_up{job="node-exporter",node="{{ $labels.node }}"}'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolqueuedown"
+
+      - alert: ExecPoolLeaseOverdue
+        # a live lease past its deadline: the runner died or stopped reconciling; the task neither runs nor requeues
+        expr: |
+          sum by (node) (exec_pool_lease_overdue{job="node-exporter"}) > 0
+        for: 10m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "An execution pool task on {{ $labels.node }} is stuck past its lease deadline"
+          description: "{{ $value }} attempt(s) in the queue on {{ $labels.node }} have been leased, running or checkpointing past their lease deadline for 10 minutes without a reconcile expiring them, so nothing runs or requeues them. Once no runner holds it, run exec-pool-queue reconcile there as the exec_pool user (runbook)."
+          query: 'exec_pool_lease_overdue{job="node-exporter",node="{{ $labels.node }}"} > 0'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolleaseoverdue"
+
+      - alert: ExecPoolNeedsReview
+        # an expired started attempt whose effects are unknown; only an operator's resolve closes it
+        expr: |
+          sum by (node) (exec_pool_attempts{job="node-exporter",state="needs_review"}) > 0
+        for: 1h
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "Execution pool tasks on {{ $labels.node }} wait for an operator's review"
+          description: "{{ $value }} attempt(s) in the queue on {{ $labels.node }} have been in needs_review for an hour: a started attempt lost its lease or settled as such, and its effects are unknown. List it with psql as the exec_pool user, check its effects, then resolve it (runbook)."
+          query: 'exec_pool_attempts{job="node-exporter",node="{{ $labels.node }}",state="needs_review"} > 0'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolneedsreview"
+
+      - alert: ExecPoolSlotQuarantined
+        # a refused reset (an agent running, or unpushed work): the runner stays up but claims nothing for that slot
+        expr: |
+          max by (node) (exec_pool_slots{job="node-exporter",state="quarantined"}) > 0
+        for: 5m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "An execution pool slot in the queue on {{ $labels.node }} is quarantined"
+          description: "{{ $value }} slot(s) in the queue on {{ $labels.node }} failed their reset for 5 minutes, so their runner claims nothing for them. List them with psql as the exec_pool user, clear the cause on the slot's host, then remove the runner's marker and restart it (runbook)."
+          query: 'exec_pool_slots{job="node-exporter",node="{{ $labels.node }}",state="quarantined"} > 0'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolslotquarantined"
+
+      - alert: ExecPoolSessionsLarge
+        # parked, docked and stored session trees together (modules/workers/core.nix's dev-env-sessions-metrics)
+        expr: |
+          sum by (node) (homelab_dev_env_sessions_bytes{job="node-exporter"})
+            / max by (node) (homelab_dev_env_sessions_filesystem_bytes{job="node-exporter"}) > 0.7
+        for: 30m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "Session trees on {{ $labels.node }} fill most of the workers' state filesystem"
+          description: "The parked, docked and stored session trees on {{ $labels.node }} have held over 70% of the workers' state filesystem ({{ $value | humanizePercentage }}) for 30 minutes; the queue has not made enough of them eligible for removal, or orphans pile up. Read homelab_dev_env_session_trees and homelab_exec_pool_sessions_orphaned there, then run du -sh /var/lib/workers/.sessions/* /var/lib/workers/.sessions-store/* as root (runbook)."
+          query: 'homelab_dev_env_sessions_bytes{job="node-exporter",node="{{ $labels.node }}"}'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolsessionslarge"
+
+      - alert: ExecPoolSessionStuck
+        # a session nobody will move on its own: in review (only its owner's send or a resolve), or parked 14 days with
+        # a tree the queue cannot prove was handed back, so session_gc keeps it and its disk
+        expr: |
+          sum by (node) (exec_pool_sessions{job="node-exporter",state="needs_review"}) > 0
+          or sum by (node) (exec_pool_sessions_stale{job="node-exporter"}) > 0
+        for: 1d
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "Execution pool sessions on {{ $labels.node }} are stuck in review or stale"
+          description: "{{ $value }} session(s) in the queue on {{ $labels.node }} have been in needs_review, or waiting 14 days untouched with a tree not known to be handed back, for a day: nothing moves them, and a stale one keeps its tree on disk. List them with exec-pool sessions and exec-pool list, then send, resolve or cancel each (runbook)."
+          query: 'exec_pool_sessions{job="node-exporter",node="{{ $labels.node }}",state="needs_review"} > 0 or exec_pool_sessions_stale{job="node-exporter",node="{{ $labels.node }}"} > 0'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolsessionstuck"

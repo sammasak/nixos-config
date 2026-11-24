@@ -48,16 +48,26 @@ let
     inherit (seeded.sam.fleet) hosts;
   };
   plannedByDay = h: !(homelabRules.windowed ? ${h});
-  # the shipping rules as prometheus.nix renders them: its store path carries no context
-  shippingRules = builtins.toFile "shipping.yaml" (
-    builtins.toJSON (
-      import ../modules/homelab/monitoring/rules/shipping.nix {
-        inherit lib;
-        policy = lib.importJSON ../modules/homelab/monitoring/shipping-policy.json;
-        collectorNode = black-pi.config.sam.fleet.deployer;
-      }
-    )
-  );
+  # every rule file black-pi's Prometheus loads, so a file added there is checked: the kube-prometheus-stack mixins
+  # may name upstream's runbooks, the llm-bench scorecard holds records only
+  loadedRules =
+    map (f: builtins.appendContext f { ${f}.path = true; })
+      (builtins.fromJSON (
+        builtins.unsafeDiscardStringContext black-pi.config.services.prometheus.configText
+      )).rule_files;
+  ruleArg =
+    f:
+    let
+      name = builtins.substring 33 (-1) (baseNameOf f);
+    in
+    lib.optionalString (lib.elem name [
+      "general.yaml"
+      "node-exporter.yaml"
+      "alertmanager.yaml"
+      "prometheus.yaml"
+    ]) "upstream="
+    + lib.optionalString (name == "llm-bench.yaml") "records="
+    + f;
   # each seed must fail scripts/check-alert-annotations.py with its reason
   annotationSeed = annotations: {
     groups = [
@@ -107,6 +117,24 @@ let
         { groups = [ ]; }
       ];
       reason = "seed-empty-file-1.json: no alert";
+    };
+    upstream-other-page = {
+      upstream = true;
+      files = [
+        (annotationSeed {
+          runbook_url = "https://runbooks.prometheus-operator.dev/runbooks/general/targetdown";
+        })
+      ];
+      reason = "is not upstream's page for SeedAlert";
+    };
+    # only a file passed as upstream= may name upstream's runbooks
+    upstream-unmarked = {
+      files = [
+        (annotationSeed {
+          runbook_url = "https://runbooks.prometheus-operator.dev/runbooks/general/seedalert";
+        })
+      ];
+      reason = "is not a doc under";
     };
   };
   # a case at an instant (since the epoch, a Thursday 00:00 UTC) for one host, stated literally so the fleet facts and
@@ -267,18 +295,22 @@ in
               fi
               touch $out
             '';
-        # docs/alert-runbooks.md's contract on the homelab, shipping, Shunt and Loki-ruler alerts, and each seed failing it
+        # docs/alert-runbooks.md's contract on every alert Prometheus and the Loki ruler load, and each seed failing it
         monitoring-alert-annotations =
           pkgs.runCommand "monitoring-alert-annotations"
             { nativeBuildInputs = [ (pkgs.python3.withPackages (ps: [ ps.pyyaml ])) ]; }
             ''
               check() { python3 -I ${../scripts/check-alert-annotations.py} ${../docs} "$@"; }
-              check ${homelabRules.file} ${shippingRules} ${../modules/homelab/monitoring/rules/shunt.yaml} ${../modules/homelab/monitoring/rules/exec-pool.yaml} ${../modules/homelab/monitoring/rules/general.yaml} ${../modules/homelab/monitoring/rules/llm-gateway.yaml} ${../modules/homelab/monitoring/loki-rules/fake/homelab.yaml}
+              check ${toString (map ruleArg loadedRules)} ${../modules/homelab/monitoring/loki-rules/fake/homelab.yaml}
               ${lib.concatStrings (
                 lib.mapAttrsToList (name: s: ''
                   if check ${
                     toString (
-                      lib.imap0 (i: f: builtins.toFile "seed-${name}-${toString i}.json" (builtins.toJSON f)) s.files
+                      lib.imap0 (
+                        i: f:
+                        lib.optionalString (s.upstream or false) "upstream="
+                        + builtins.toFile "seed-${name}-${toString i}.json" (builtins.toJSON f)
+                      ) s.files
                     )
                   } > out.txt; then
                     echo "monitoring-alert-annotations: seed ${name} passed" >&2

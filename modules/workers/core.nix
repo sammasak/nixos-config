@@ -23,6 +23,9 @@ let
   # shipper subverted by a guest's bytes could add .prom files the host's scrape then reads; it could not before
   recordsMetrics = "/run/dev-env-records-metrics";
   workLocks = "/run/work-locks";
+  # a parked or docked session's devenv roots: it is no instance, so it has no per-container dir
+  sessionRoots = "/nix/var/nix/gcroots/dev-env-sessions";
+  sessionMetrics = "/run/dev-env-sessions-metrics";
 
   multipliers = {
     "" = 1;
@@ -207,6 +210,11 @@ let
         mkdir -m 0755 "$d/${w.name}/home/.cache" 2>/dev/null && chown -h ${o.u}:${o.g} "$d/${w.name}/home/.cache" || true
         [[ -d $d/${w.name}/eval-cache ]] || install -d -m 0700 -o ${o.u} -g ${o.g} "$d/${w.name}/eval-cache"
       ''
+      # root's at every level, so the guest cannot swap the dir its tree is renamed into
+      + lib.optionalString w.sessionDock ''
+        install -d -m 0711 "$d/.sessions"
+        install -d -m 0755 "$d/.sessions/dock" "$d/.sessions/dock/${w.name}"
+      ''
       + lib.optionalString w.rootInGuest ''
         [[ -d $d/${w.name}/nix-cache ]] || install -d -m 0700 -o ${o.u} -g ${o.g} "$d/${w.name}/nix-cache"
         [[ -e $d/${w.name}/ssh_host_ed25519_key ]] || ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "" -f "$d/${w.name}/ssh_host_ed25519_key"
@@ -292,6 +300,7 @@ let
         }
       '') (egressOf w)
     ) egressed
+    + cfg.egressSites
   );
 
   argv =
@@ -436,6 +445,12 @@ let
         hostPath = "${egressDir}/${w.name}";
         isReadOnly = true;
       };
+    }
+    // lib.optionalAttrs w.sessionDock {
+      "/session" = {
+        hostPath = "${cfg.stateDir}/.sessions/dock/${w.name}";
+        isReadOnly = false;
+      };
     };
 
   guest = w: { ... }: {
@@ -468,6 +483,8 @@ let
     };
     security.sudo.wheelNeedsPassword = lib.mkIf w.rootInGuest false;
     networking.hostName = w.hostName;
+    networking.useHostResolvConf = lib.mkIf (cfg.nameservers != [ ]) false;
+    networking.nameservers = cfg.nameservers;
     programs.fish.enable = lib.mkIf (cfg.shell == "fish") true;
 
     services.openssh = {
@@ -534,17 +551,25 @@ let
         }
       ) (egressOf w)
     );
-    systemd.services = lib.listToAttrs (
-      map (
-        s:
-        lib.nameValuePair "${s.name}-egress" {
-          serviceConfig = {
-            User = user;
-            ExecStart = "${config.systemd.package}/lib/systemd/systemd-socket-proxyd ${s.socket}";
-          };
-        }
-      ) (egressOf w)
-    );
+    systemd.services =
+      lib.listToAttrs (
+        map (
+          s:
+          lib.nameValuePair "${s.name}-egress" {
+            serviceConfig = {
+              User = user;
+              ExecStart = "${config.systemd.package}/lib/systemd/systemd-socket-proxyd ${s.socket}";
+            };
+          }
+        ) (egressOf w)
+      )
+      # At the pool limit the kernel kills the largest process in the whole slice: a gate's builds run as many
+      # mid-sized ones, an agent as one big one. Every build forks from the daemon and inherits this, so it goes before
+      # a session (0) unless the session outgrows it by half the pool. Not 1000: a runaway in a session would then
+      # take every neighbour's builds first.
+      // {
+        nix-daemon.serviceConfig.OOMScoreAdjust = 500;
+      };
 
     # the guest's cgroup files read max: the host's limits, read from the units that set them. Shell key=value,
     # so a job sources it (`. /etc/dev-environment`) or greps it without a parser; sizes in bytes.
@@ -667,6 +692,11 @@ let
         default = false;
         description = "Stopped, its container undeclared: its home, profiles and roots stay, its reserve is not counted, and flipping it back resumes the agent's session.";
       };
+      scratch = mkOption {
+        type = types.listOf (types.strMatching "[A-Za-z0-9_.-]+");
+        default = [ ];
+        description = "Directories directly under the home whose clones dev-env-reset@ trashes with the home without checking them for unpushed work.";
+      };
       memory.reserved = mkOption {
         type = size;
         default = "2G";
@@ -676,6 +706,11 @@ let
         type = types.ints.positive;
         default = 2;
         description = "Cores: CPUWeight 100 per core, a share under contention, all idle cores otherwise.";
+      };
+      sessionDock = mkOption {
+        type = types.bool;
+        default = false;
+        description = "A read-write /session from the host's .sessions/dock/<name>, root's, where a session's home and work tree are moved in for one turn; adding it restarts the container once.";
       };
       rootInGuest = mkOption {
         type = types.bool;
@@ -792,6 +827,11 @@ in
       default = [ ];
       description = "Host paths the proxy may not read, besides stateDir.";
     };
+    egressSites = mkOption {
+      type = types.lines;
+      default = "";
+      description = "Caddy sites the proxy also serves beside the instances' sockets, with their credentials; it runs only while an instance has an egress service.";
+    };
     guestModules = mkOption {
       type = types.listOf types.deferredModule;
       default = [ ];
@@ -830,6 +870,11 @@ in
       type = types.strMatching "/var/lib/[a-z0-9-]+";
       default = "/var/lib/dev-environments";
       description = "Homes and the guests' host key.";
+    };
+    nameservers = mkOption {
+      type = types.listOf (types.strMatching "[0-9]{1,3}(\\.[0-9]{1,3}){3}");
+      default = [ ];
+      description = "IPv4 resolvers every guest uses instead of the stock copy of the host's resolv.conf, which can list only an IPv6 router-advertised server an IPv4-only guest cannot reach; empty keeps the copy.";
     };
     blockedNetworks = mkOption {
       type = types.listOf cidr;
@@ -1059,14 +1104,23 @@ in
             done
           done) || true
           [[ -z $busy ]] || { echo "$n: an agent is running (pids ''${busy//$'\n'/ }); not reset" >&2; exit 1; }
+          scratch=()
+          case $n in
+            ${lib.concatMapStrings (w: "${w.name}) scratch=(${lib.escapeShellArgs w.scratch}) ;;
+") (
+              lib.filter (w: w.scratch != [ ]) running
+            )}
+          esac
           # Run by the guest's own systemd as its user, inside the container's limits: git acts on the clones' config
           # (hooks, fsmonitor, filters), which must not run on the host.
           # shellcheck disable=SC2016 # the script expands inside the guest
-          held=$(systemd-run -M "$n" --uid=${user} --wait --pipe --quiet -- ${pkgs.bash}/bin/bash -c '
+          # --expand-environment=no: systemd would otherwise substitute each ''${...} in the script before bash sees it
+          held=$(systemd-run -M "$n" --uid=${user} --expand-environment=no --wait --pipe --quiet -- ${pkgs.bash}/bin/bash -c '
             cd "$HOME" || { echo "the home cannot be entered"; exit 0; }
-            errs=$(${pkgs.findutils}/bin/find . -maxdepth 5 -name .git -prune -print 2>&1 >/dev/null)
+            skip=(); for s in "$@"; do skip+=(-path "./$s" -prune -o); done
+            errs=$(${pkgs.findutils}/bin/find . -maxdepth 5 "''${skip[@]}" -name .git -prune -print 2>&1 >/dev/null)
             [[ -z $errs ]] || echo "paths under the home cannot be read"
-            ${pkgs.findutils}/bin/find . -maxdepth 5 -name .git -prune -print 2>/dev/null | while read -r g; do
+            ${pkgs.findutils}/bin/find . -maxdepth 5 "''${skip[@]}" -name .git -prune -print 2>/dev/null | while read -r g; do
               r=''${g%/.git}
               st=$(${pkgs.git}/bin/git -C "$r" status --porcelain 2>&1) || st="unreadable: $st"
               [[ -z $st ]] || echo "$r: uncommitted changes or an unreadable repository"
@@ -1075,10 +1129,13 @@ in
               [[ -z $(${pkgs.git}/bin/git -C "$r" stash list 2>&1) ]] || echo "$r: a stash"
             done
             exit 0
-          ') || { echo "$n: could not check the guest for unpushed work; not reset" >&2; exit 1; }
+          ' bash "''${scratch[@]}") || { echo "$n: could not check the guest for unpushed work; not reset" >&2; exit 1; }
           [[ -z $held ]] || { printf '%s: not reset, the guest holds work that is not pushed:\n%s\n' "$n" "$held" >&2; exit 1; }
           systemctl stop "container@$n.service"
           install -d -m 0700 ${lib.escapeShellArg cfg.stateDir}/.trash
+          # a pool slot is reset every task turn, seconds apart in a session: without this the container's start limit
+          # (startLimitBurst below) fails it on the fourth turn in ten minutes
+          systemctl reset-failed "container@$n.service"
           if ! ${resetSteps} "$n"; then
             systemctl start "container@$n.service" || true
             echo "$n: the reset failed after the stop; the container was started again on what is left" >&2
@@ -1104,15 +1161,13 @@ in
         enableStrictShellChecks = true;
         script = ''
           rc=0
-          for home in ${lib.escapeShellArg cfg.stateDir}/*/home; do
-            n=''${home%/home}; n=''${n##*/}
-            roots=/nix/var/nix/gcroots/per-container/$n
-            [[ -d $roots ]] || continue
-            ok=1
+          # refresh <tree> <roots>: a root in <roots> for each devenv link under <tree>
+          refresh() {
+            local home=$1 roots=$2 ok=1 found l t name r
             rm -f "$roots"/.home-*
             found=$(find "$home" -ignore_readdir_race \( -name node_modules -o -name target -o -name .git \) -prune \
               -o -path '*/.devenv/gc/*' -type l -print) || { ok=0; rc=1; }
-            declare -A keep=()
+            local -A keep=()
             while IFS= read -r l; do
               t=$(readlink "$l") || continue
               [[ $t == /nix/store/* && $t != *..* && -e $t ]] || continue
@@ -1123,12 +1178,105 @@ in
             # only a complete scan may drop a root; a failed one keeps what it had and fails the unit, and with it nix-gc
             if (( ok )); then
               for r in "$roots"/home-*; do
-                [[ -L $r && -z ''${keep[''${r##*/}]-} ]] && rm -f "$r"
+                if [[ -L $r && -z ''${keep[''${r##*/}]-} ]]; then rm -f "$r"; fi
               done
             fi
-            unset keep
+          }
+          for home in ${lib.escapeShellArg cfg.stateDir}/*/home; do
+            n=''${home%/home}; n=''${n##*/}
+            roots=/nix/var/nix/gcroots/per-container/$n
+            [[ -d $roots ]] || continue
+            refresh "$home" "$roots"
           done
+          # A session's work tree, parked (.sessions/<id>/tree) or docked in a slot (.sessions/dock/<slot>/cur), each
+          # under its own roots dir, parked/<id> or dock/<slot>. A dock or park moves the tree between two keys, possibly in the middle of this
+          # run, so a key no longer found keeps its roots for an hour (each refresh rewrites a live key's dir).
+          s=${lib.escapeShellArg cfg.stateDir}/.sessions
+          if [[ -d $s ]]; then
+            install -d -m 0755 ${sessionRoots}
+            declare -A live=()
+            for home in "$s"/*/tree/work "$s"/dock/*/cur/work; do
+              [[ -d $home && ! -L $home ]] || continue
+              case $home in
+                "$s"/dock/*) k=''${home#"$s"/dock/} k=dock/''${k%/cur/work} ;;
+                *) k=''${home#"$s"/} k=parked/''${k%/tree/work} ;;
+              esac
+              install -d -m 0755 "${sessionRoots}/''${k%/*}" "${sessionRoots}/$k"
+              refresh "$home" "${sessionRoots}/$k"
+              live[$k]=1
+            done
+            for r in ${sessionRoots}/{parked,dock}/*; do
+              if [[ -d $r && ! -L $r && -z ''${live[''${r#${sessionRoots}/}]-} && -n $(find "$r" -maxdepth 0 -mmin +60) ]]; then rm -rf "$r"; fi
+            done
+          fi
           exit $rc
+        '';
+      };
+
+      # Disk bytes and counts of the session trees, parked, docked and in the store (ExecPoolSessionsLarge), and of
+      # .trash; no ids
+      services.prometheus.exporters.node.extraFlags = [
+        "--collector.textfile.directory=${sessionMetrics}"
+      ];
+      systemd.tmpfiles.rules = [ "d ${sessionMetrics} 0755 root root -" ];
+      systemd.timers.dev-env-sessions-metrics = {
+        wantedBy = [ "timers.target" ];
+        timerConfig = {
+          OnBootSec = "5min";
+          OnUnitActiveSec = "15min";
+        };
+      };
+      systemd.services.dev-env-sessions-metrics = {
+        description = "Size the developer environments' session trees and session store, for node-exporter";
+        path = [ pkgs.coreutils ];
+        enableStrictShellChecks = true;
+        # root that only reads past the guests' modes and writes its own textfile
+        serviceConfig = {
+          Type = "oneshot";
+          CapabilityBoundingSet = [ "CAP_DAC_READ_SEARCH" ];
+          NoNewPrivileges = true;
+          ProtectSystem = "strict";
+          ProtectHome = true;
+          PrivateTmp = true;
+          PrivateNetwork = true;
+          ReadWritePaths = [ sessionMetrics ];
+          Nice = 19;
+          IOSchedulingClass = "idle";
+        };
+        script = ''
+          d=${lib.escapeShellArg cfg.stateDir}
+          shopt -s nullglob
+          # total <path>...: their disk bytes; a file a turn deletes mid-walk fails du, the total still counts the rest
+          total() {
+            local b=0
+            (( $# == 0 )) || b=$({ du -scxB1 -- "$@" 2>/dev/null || true; } | tail -n 1 | cut -f1)
+            [[ $b =~ ^[0-9]+$ ]] || { echo "du gave no total for $*" >&2; return 1; }
+            echo "$b"
+          }
+          # emit <kind> <tree>...
+          emit() {
+            local kind=$1 b
+            shift
+            b=$(total "$@")
+            printf 'homelab_dev_env_sessions_bytes{kind="%s"} %s\n' "$kind" "$b"
+            printf 'homelab_dev_env_session_trees{kind="%s"} %s\n' "$kind" "$#"
+          }
+          trash=("$d"/.trash/*) parked=()
+          for e in "$d"/.sessions/*/tree; do [[ $e == "$d"/.sessions/dock/tree ]] || parked+=("$e"); done
+          tb=$(total "''${trash[@]}")
+          fs=$(df -B1 --output=size "$d" | tail -n 1 | tr -d ' ')
+          [[ $fs =~ ^[0-9]+$ ]] || { echo "df gave no size for $d" >&2; exit 1; }
+          {
+            # not .sessions/dock/tree, a slot named tree
+            emit parked "''${parked[@]}"
+            emit docked "$d"/.sessions/dock/*/cur
+            emit store "$d"/.sessions-store/*
+            # retired homes and removed sessions, freed a week after they were moved there
+            printf 'homelab_dev_env_trash_bytes %s\n' "$tb"
+            printf 'homelab_dev_env_trash_entries %s\n' "''${#trash[@]}"
+            printf 'homelab_dev_env_sessions_filesystem_bytes %s\n' "$fs"
+          } > ${sessionMetrics}/sessions.prom.tmp
+          mv ${sessionMetrics}/sessions.prom.tmp ${sessionMetrics}/sessions.prom
         '';
       };
     })
@@ -1286,6 +1434,10 @@ in
               message = "${i}: hostname ${w.hostName} is longer than 63.";
             }
             {
+              assertion = !(w.sessionDock && w.rootInGuest);
+              message = "${i}: sessionDock with rootInGuest: its writable binds are not id-mapped, so a session's tree could not move between slots.";
+            }
+            {
               assertion = !w.rootInGuest || gid != null;
               message = "${i}.rootInGuest maps ${user}'s group ${group}, which declares no gid.";
             }
@@ -1395,14 +1547,15 @@ in
                 # MemoryLow alone is given up once a neighbour has nothing left to reclaim: it took an idle instance to 59M
                 MemoryMin = w.memory.reserved;
                 CPUWeight = lib.min 10000 (100 * w.cpu.reserved);
-                # The stock pre-start copies the host's resolv.conf, the guest's only DNS: at boot or while a switch
-                # restarts NetworkManager it can have no nameserver yet, and the guest would boot without DNS.
-                ExecStartPre = lib.mkBefore [
-                  "-${pkgs.writeShellScript "worker-wait-resolv-conf" ''
-                    for _ in {1..30}; do ${pkgs.gnugrep}/bin/grep -q ^nameserver /etc/resolv.conf && exit; ${pkgs.coreutils}/bin/sleep 1; done
-                  ''}"
-                  "${idCheck} ${cfg.stateDir}/${w.name} ${toString (if w.rootInGuest then baseOf w else 0)}"
-                ];
+                # Without nameservers the stock pre-start's copy of the host's resolv.conf is the guest's only DNS: at
+                # boot or while a switch restarts NetworkManager it can have no nameserver yet.
+                ExecStartPre = lib.mkBefore (
+                  lib.optional (cfg.nameservers == [ ])
+                    "-${pkgs.writeShellScript "worker-wait-resolv-conf" ''
+                      for _ in {1..30}; do ${pkgs.gnugrep}/bin/grep -q ^nameserver /etc/resolv.conf && exit; ${pkgs.coreutils}/bin/sleep 1; done
+                    ''}"
+                  ++ [ "${idCheck} ${cfg.stateDir}/${w.name} ${toString (if w.rootInGuest then baseOf w else 0)}" ]
+                );
               };
             })
             # A change of this unit file restarts it and so (PartOf) the container and its agent: it holds only what a

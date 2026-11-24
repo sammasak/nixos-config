@@ -105,6 +105,35 @@ in
           "{{ $value | humanizePercentage }} of the last ${toString a.GateFailRateHigh.lastRuns.value} push gates failed."
           { }
         )
+        # the full gate runs on main only, on a schedule (modules/homelab/scheduled-gate.nix): a red run names its first
+        # failed step and the commits since the last green head, the range a bisect starts from
+        (lib.recursiveUpdate
+          (alert "ScheduledGateRed"
+            ''max by (node, head, step, green) (homelab_scheduled_gate_red{job="node-exporter"}) == 1''
+            "The scheduled full gate failed on main at {{ $labels.head }}, first failed step {{ $labels.step }}; {{ if eq $labels.green \"none\" }}no scheduled run has passed yet, so the range starts at the first scheduled run{{ else }}the commits since the last green run are {{ $labels.green }}..{{ $labels.head }}{{ end }}."
+            { }
+          )
+          {
+            annotations.runbook_url = "https://github.com/sammasak/nixos-config/blob/main/docs/shipping.md#scheduledgatered";
+          }
+        )
+        # a stale check time covers a scheduler that stopped reading main: then behind no longer says whether it moved
+        (lib.recursiveUpdate
+          (alert "ScheduledGateOverdue"
+            (
+              let
+                limit = toString (a.ScheduledGateOverdue.hours.value * 3600);
+                s = m: ''max by (node) (${m}{job="node-exporter"})'';
+              in
+              "time() - ${s "homelab_scheduled_gate_behind_since_timestamp_seconds"} > ${limit} and on (node) ${s "homelab_scheduled_gate_behind_since_timestamp_seconds"} > 0 or time() - ${s "homelab_scheduled_gate_checked_timestamp_seconds"} > ${limit}"
+            )
+            "Main moved {{ $value | humanizeDuration }} ago and no scheduled full gate on {{ $labels.node }} has finished since, over ${toString a.ScheduledGateOverdue.hours.value} h, or the scheduler has not read main for that long."
+            { }
+          )
+          {
+            annotations.runbook_url = "https://github.com/sammasak/nixos-config/blob/main/docs/shipping.md#scheduledgateoverdue";
+          }
+        )
         # for: hours up and behind in a row, so a host that slept through a merge is not paged the minute it wakes
         (alert "HostBehindMain"
           ''shipping_deploy_lag_hours > ${toString a.HostBehindMain.maxHours.value} and on (node) up{job="node-exporter"} == 1''

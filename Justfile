@@ -40,8 +40,8 @@ audit-candidate HOST=host TARGET=(if HOST == host { "local" } else { HOST }):
 # (flake-modules/deploy.nix); the host list is the table in
 # flake-modules/hosts.nix, read by scripts/hosts-table.sh, whose check refuses any other name. --skip-checks:
 # otherwise deploy-rs runs the full flake check first, building every x86 host
-# on lenovo, which runs it out of memory. The pre-push gate runs that check on
-# pushed non-docs commits, but `.#HOST` is the working tree, so the recipe
+# on lenovo, which runs it out of memory. The scheduled gate runs that check on
+# main (modules/homelab/scheduled-gate.nix), but `.#HOST` is the working tree, so the recipe
 # refuses a dirty tree or a HEAD not on origin/main (a detached checkout of it
 # passes).
 # A second deploy of a HOST being deployed is refused at once, recorded
@@ -179,10 +179,22 @@ bench-diff:
 deferred-checks HEAD:
     python3 scripts/deferred-checks.py {{quote(HEAD)}}
 
-# This host's record spool only; a later full gate on the same commit does not clear a line.
-[doc("List commits pushed from this host at night without the full gate (result=owed records)")]
+# This host's record spool only; a later full gate on the same commit (scheduled, or `just full-gate`) does not clear
+# a line.
+[doc("List commits pushed from this host without the full gate (result=owed records)")]
 qa-owed:
     grep ' gate .*result=owed' "${XDG_STATE_HOME:-$HOME/.local/state}/platform-records" || echo "no owed gate in this host's spool"
+
+# What a push owes, now, for a risky change before it merges: a worktree at REF's commit, so neither edits nor another
+# branch count; nixos:qa waits for this host's heavy-work lock, and a green records REF's tree (scripts/qa-green.sh),
+# so pushing that tree runs the lints only. Heavy: one at a time per host.
+[doc("Run the full nixos:qa now on a clean worktree at REF (default HEAD), as a push no longer does")]
+full-gate REF="HEAD":
+    rev=$(git rev-parse --verify {{quote(REF + "^{commit}")}}); \
+      tree=$(mktemp -d); \
+      trap 'git worktree remove --force "$tree"' EXIT; \
+      git worktree add --quiet --detach "$tree" "$rev"; \
+      cd "$tree" && devenv tasks run nixos:qa
 
 # The lock decides, not a process name: the gate runs as nixos-qa (`pgrep 'nixos:qa'` misses it), a `flock -o` job
 # under any name. The lock is per physical host, so a guest sees its host's jobs; a holder in another PID namespace

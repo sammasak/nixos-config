@@ -16,20 +16,23 @@ devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks,
 # Hooks: the shims in .githooks/ (core.hooksPath) run prek on the checkout's .pre-commit-config.yaml,
 # which entering the devenv generates (.envrc does it on cd); without one, the main checkout's:
 #   pre-commit: lint-comments + lint-shell; commit-msg: subject <= 72 chars, a body needs a `Why:` line;
-#   pre-push:   no-force guard, one ref with new commits per push, + nixos:qa on the PUSHED commit in a temp worktree
-#               (lints only when everything changed since origin/main is docs/ or a top-level *.md,
-#               plus the tests whose scripts/test-* names a changed file; also lints only for a tree
-#               already green here under the same gate and system generation, or it plus such docs;
-#               deleting nixos-qa-green in the common git dir forces the full gate.
-#               From 21:00 to 08:30 host local time (night_from/night_until in qaPush) a push that would run the
-#               full gate runs the lints, secrets-verify and nixos-night-eval only (the flake check's
+#   pre-push:   no-force guard, one ref with new commits per push, + the fast set on the PUSHED commit in a temp
+#               worktree, at any hour: the lints, secrets-verify and nixos-push-eval (the flake check's
 #               `nix flake show --all-systems`, import-from-derivation off, ~90 s: no check's derivation, no build;
-#               its own gate-step record), prints `night mode: full QA not run for <sha>, owed` and records
-#               `gate … result=owed mode=night`: never a pass, no green tree; `just qa-owed` lists them.
-#               nixos:qa runs scripts/test-qa-push.py on the hook's own text, without Nix).
-#               A manual nixos:qa that passes on a clean checkout, unchanged through the run, records its tree the
-#               same way (scripts/qa-green.sh), so pushing that commit afterwards runs the lints only; with any
-#               change no commit holds it records nothing. A re-push of a green tree also runs the lints only.
+#               its own gate-step record). It prints `full QA not run for <sha>, owed to the scheduled gate on main`
+#               and records `gate … result=owed mode=fast`: never a pass, no green tree; `just qa-owed` lists them.
+#               Lints only when everything changed since origin/main is docs/ or a top-level *.md, plus the
+#               tests whose scripts/test-* names a changed file; also lints only for a tree a full gate passed here
+#               under the same gate and system generation, or it plus such docs. Other changed paths map to no
+#               single check cheaply (the tests read the hosts through the probe, a full evaluation), so none run.
+#               nixos:qa runs scripts/test-qa-push.py on the hook's own text, without Nix.
+#   The full gate: `scheduled-gate.timer` on acer (modules/homelab/scheduled-gate.nix, 4 times a day) runs
+#               nixos:qa on origin/main in a fresh worktree when main has moved, mode=scheduled, under the heavy
+#               lock; ScheduledGateRed and ScheduledGateOverdue report it (docs/shipping.md#the-scheduled-full-gate).
+#               For a risky change before merging: `just full-gate [REF]` (a clean worktree at REF, nixos:qa).
+#               A manual nixos:qa that passes on a clean checkout, unchanged through the run, records its tree
+#               (scripts/qa-green.sh, in the common git dir's nixos-qa-green), so pushing that commit afterwards runs
+#               the lints only; with any change no commit holds it records nothing.
 #               Tracked files only: what .gitignore hides is not compared.
 #               nixos:qa takes /run/work-locks/heavy-work.lock itself (pkgs/heavy-lock); an ancestor that
 #               holds it (`flock -o`) counts, and a launcher holding it across systemd-run sets NIXOS_QA_LOCKED=1.
@@ -71,8 +74,8 @@ just build  [HOST]            # Build only
 just diff   [HOST]            # Build and print the package diff vs the running system
 
 # Push from lenovo with deploy-rs (magic rollback; logs in as `deploy`, no password).
-# --skip-checks under a 7G, no-swap cap on the deploy-rs client. The pre-push gate runs the
-# flake check on pushed non-docs commits; a dirty tree or a HEAD not on origin/main is refused (DEPLOY_UNGATED=1 breaks glass).
+# --skip-checks under a 7G, no-swap cap on the deploy-rs client. The scheduled gate runs the
+# flake check on main; a dirty tree or a HEAD not on origin/main is refused (DEPLOY_UNGATED=1 breaks glass).
 just deploy HOST              # HOST: a deploy-rs node, any other name is refused
 #   then, whatever deploy-rs returned, it checks the target (scripts/post-deploy-check.sh: running,
 #   no unit in a restart loop, condition-skipped units listed; /run/current-system = the system profile's
@@ -137,6 +140,7 @@ Secret scopes in `secrets/.sops.yaml`:
 | `homelab/open-webui.yaml` | Personal + acer-swift | open-webui's gateway and session keys |
 | `homelab/llm-gateway.yaml` | Personal + acer-swift | llm-gateway's provider and project keys |
 | `homelab/authentik.yaml` | Personal + acer-swift | Authentik's secret key and the Grafana OIDC pair its blueprint reads |
+| `homelab/exec-pool-runner.yaml` | Personal + acer-swift, msi-ms7758 | The `exec_pool_runner` role's scram password: acer sets it, msi's runner logs in with it |
 | `homelab/grafana.yaml` | Personal + black-pi | Grafana's admin, OIDC client and secret key |
 | `homelab/cloudflare.yaml` | Personal + lenovo, acer-swift, acer `lukas` | ACME DNS token (lenovo, and acer's Caddy) |
 | `homelab/tailscale.yaml` | Personal + lenovo, acer `lukas` | Tailscale authkey |
@@ -147,7 +151,7 @@ Secret scopes in `secrets/.sops.yaml`:
 | `claude/coordinator-login.yaml` | Personal | the coordinator agent's own Authentik login for checks; no host reads it |
 | `claude/*.yaml` | Personal + lenovo, acer-swift, acer `lukas` | Pi's gateway key |
 
-Every acer-swift recipient except `native-otlp-auth.yaml`, `open-webui.yaml`, `llm-gateway.yaml` and `authentik.yaml` also includes acer's own `lukas` user
+Every acer-swift recipient except `native-otlp-auth.yaml`, `open-webui.yaml`, `llm-gateway.yaml`, `authentik.yaml` and `exec-pool-runner.yaml` also includes acer's own `lukas` user
 key. A fleet host is a recipient only of files it declares a secret from (`nixos:known-hosts-test`); trimming a
 recipient revokes nothing already in git history, only rotating the secret does.
 
@@ -192,15 +196,15 @@ the session gets the path with a head and tail excerpt; failed commands are unto
 - Environments: a guest does not inherit its host's value; the host adds a guest module, e.g. for one instance
   `services.devEnvironments.guestModules = [ ({ devEnvironment, ... }: { sam.claude.bulkReader.enable = devEnvironment.name == "canary"; }) ];`
 - Rollback: set it false and switch, or `SHUNT_DISABLE=1` in the environment Claude starts from (no rebuild).
-- On now: lenovo and acer's worker a1; acer's host and herman are the off side. `homelab.shuntMetrics` labels every
+- On now: lenovo and acer's pool slot pool1; acer's host and its other slots are the off side. `homelab.shuntMetrics` labels every
   series `shunt="on|off"` (and `worker` for a guest) from this option, so on and off compare; ShuntSilent guards the on side.
 - Running sessions keep the hooks they started with: settings are read at session start, so restart a session to
   pick up a change. `notifyHookGeneration` pings ntfy only when the skills store path changes (a pin bump), not
   when this option flips.
 
 **Auto-compaction** (`sam.claude.autoCompactWindow`, null by default): sets Claude Code's `autoCompactWindow`; a guest
-sets it through a guest module like the bulk reader. On now: acer's worker herman at 300000; `homelab.shuntMetrics`
-writes `claude_auto_compact_window_info{worker,variant}` so it compares with the default side (#626).
+sets it through a guest module like the bulk reader. On now: nowhere; `homelab.shuntMetrics` writes
+`claude_auto_compact_window_info{worker,variant}` so a set side compares with the default (#626).
 
 ### Codex
 

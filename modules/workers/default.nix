@@ -17,6 +17,85 @@ let
   onGithub = i: i.egress.github.repos != [ ];
   # The tokens are read at request time from the unit's credential and its private directory.
   githubToken = "${dev.paths.egress.private}/github-token";
+  openaiKey = "${dev.paths.egress.private}/openai-key";
+  githubRewrite."http://127.0.0.1:${toString dev.egress.github.port}/".insteadOf = [
+    "https://github.com/"
+    "git@github.com:"
+    "ssh://git@github.com/"
+  ];
+  gateway = config.sam.fleet.listeners.gateway-api;
+  # msi's slots reach GitHub through acer's sidecar (sam.fleet.listeners.github-egress): this host holds no token
+  ghFleet = config.sam.fleet.listeners.github-egress;
+  hostName = config.networking.hostName;
+  ghForward = ghFleet.host != hostName && lib.elem hostName ghFleet.from;
+  ghServes = ghFleet.host == hostName;
+  forwardSite = ''
+    reverse_proxy ${ghFleet.url} {
+      header_up Host {upstream_hostport}
+      flush_interval -1
+    }
+  '';
+  # GraphQL names no repository in its path, so it cannot be held to the list: off unless asked for.
+  githubSite =
+    i:
+    let
+      repos = "(?i:${lib.concatMapStringsSep "|" (lib.escapeRegex) i.egress.github.repos})";
+    in
+    ''
+      # what Caddy matches is the decoded path, what GitHub gets is the raw one: refuse anything they could read apart
+      @odd vars_regexp {http.request.orig_uri} (?i)%(2f|5c|2e|25)|(^|/)\.\.?(/|\?|$)|//|\\
+      # the owner's token administers the repository: none of that, on any listed repo
+      @admin path_regexp (?i)^/repos/[^/]+/[^/]+/(rulesets|branches/.+/protection|collaborators|keys|hooks|transfer|actions/(secrets|variables|runners|permissions)|dependabot/secrets|codespaces/secrets|environments|invitations)(/.*)?$
+      @adminRepo {
+        path_regexp ^/repos/[^/]+/[^/]+/?$
+        method PATCH PUT DELETE
+      }
+      handle @odd {
+        respond 403
+      }
+      handle @admin {
+        respond 403
+      }
+      handle @adminRepo {
+        respond 403
+      }
+      @git {
+        path_regexp ^/${repos}(\.git)?/(info/refs|git-upload-pack|git-receive-pack)$
+        method GET POST
+      }
+      @read {
+        path_regexp ^/repos/${repos}(/.*)?$
+        method GET HEAD
+      }
+      # what an agent does to a repository: issues, comments, labels and pull requests. Merges, refs, contents,
+      # workflows, releases and the rest stay off, and reviews too (an approval would be the owner's).
+      @write {
+        path_regexp ^/repos/${repos}/(issues(/[0-9]+(/(comments|labels|assignees))?|/comments/[0-9]+)?|pulls(/[0-9]+(/(comments|requested_reviewers))?|/comments/[0-9]+)?|labels(/[^/]+)?)/?$
+        method POST PATCH
+      }
+      handle @git {
+        ${upstream "https://github.com" "Basic {file.${githubToken}.basic}"}
+      }
+      handle @read {
+        ${upstream "https://api.github.com" "token {file.${githubToken}}"}
+      }
+      handle @write {
+        ${upstream "https://api.github.com" "token {file.${githubToken}}"}
+      }
+      ${lib.optionalString i.egress.github.graphql ''
+        @graphql {
+          path /graphql
+          method POST
+        }
+        handle @graphql {
+          ${upstream "https://api.github.com" "bearer {file.${githubToken}}"}
+        }
+      ''}
+      handle {
+        respond 403
+      }
+    '';
+  headless = a: i: lib.elem a i.headlessAgents;
   # the hosts.nix entries with the runtime-host role, by hostName (as ssh-known-hosts.nix reads the table)
   runtimeHosts = lib.sort lib.lessThan (
     lib.mapAttrsToList (name: h: h.hostDir or name) (
@@ -47,6 +126,18 @@ let
       umask 077
       printf '%s' "$tok" > ${githubToken}
       printf 'x-access-token:%s' "$tok" | base64 -w0 > ${githubToken}.basic
+    '';
+  };
+
+  # `codex login --with-api-key` keeps the key in auth.json; a ChatGPT login's tokens refresh, so the proxy takes none.
+  openaiKeyFromAuth = pkgs.writeShellApplication {
+    name = "dev-env-egress-openai-key";
+    runtimeInputs = [ pkgs.jq ];
+    text = ''
+      key=$(jq -r '.OPENAI_API_KEY // empty' "$CREDENTIALS_DIRECTORY/codex-auth.json")
+      [[ -n $key ]] || echo "no OPENAI_API_KEY in the codex auth.json (a ChatGPT login?): OpenAI calls go unsigned" >&2
+      umask 077
+      printf '%s' "$key" > ${openaiKey}
     '';
   };
 
@@ -264,6 +355,17 @@ let
         description = "Also pass GitHub's GraphQL API, which no repository list can bound; most gh pr and issue commands need it.";
       };
     };
+    options.headlessAgents = mkOption {
+      type = types.listOf (
+        types.enum [
+          "claude"
+          "codex"
+          "pi"
+        ]
+      );
+      default = [ ];
+      description = "Agents something other than the session surface starts in the instance, beside `agent`: each gets the egress route an instance with that `agent` does, and no session.";
+    };
     options.telemetry = mkOption {
       type = types.bool;
       default = profile.nativeOtel;
@@ -278,6 +380,7 @@ in
 {
   imports = [
     ./core.nix
+    ./execution-pool.nix
     (lib.mkAliasOptionModule
       [ "sam" "workers" "instances" ]
       [ "services" "devEnvironments" "instances" ]
@@ -310,6 +413,12 @@ in
       default = null;
       description = "The host user's gh `hosts.yml`, bound read-only; null when the host user has no gh login.";
     };
+    codexAuthFile = mkOption {
+      type = types.nullOr types.externalPath;
+      default = null;
+      example = "/home/alice/.codex/auth.json";
+      description = "The host user's Codex `auth.json` from `codex login --with-api-key`, read by the proxy alone; null when the host user has no such login.";
+    };
     ntfyUrl = mkOption {
       type = types.nullOr types.str;
       default = null;
@@ -332,6 +441,14 @@ in
       unitPrefix = "worker";
       stateDir = "/var/lib/workers";
       guestModules = [ fleetGuest ];
+      # the LAN's resolver, sam.fleet.public's DNS entry: msi's own resolv.conf can hold only an IPv6 RA server
+      nameservers = [
+        config.sam.fleet.hosts.${
+          (lib.findFirst (
+            p: p.port == 53 && p.host != null
+          ) (throw "sam.workers: no DNS host in sam.fleet.public") config.sam.fleet.public).host
+        }.address
+      ];
       credentials = {
         # the host user's own key is also the environment's, for `git push`
         id_ed25519 = dev.paths.clientKey;
@@ -365,9 +482,32 @@ in
         fleet = lib.attrNames config.sam.fleet.hosts;
       };
       egressInaccessible = [ "/run/secrets.d" ]; # sops-nix: every host secret; the proxy gets its own as a credential
+      # every address, so an early start is no bind failure: the firewall admits only `from` (modules/core/network.nix),
+      # and remote_ip holds the site to it too
+      egressSites = lib.optionalString ghServes ''
+        http://:${toString ghFleet.port} {
+          log github-fleet
+          @outside not remote_ip ${
+            toString (
+              lib.concatMap (
+                h: [ config.sam.fleet.hosts.${h}.address ] ++ config.sam.fleet.hosts.${h}.extraAddresses
+              ) ghFleet.from
+            )
+          }
+          handle @outside {
+            respond 403
+          }
+          ${githubSite {
+            egress.github = {
+              inherit (config.sam.workers.executionPool.github) repos;
+              graphql = false;
+            };
+          }}
+        }
+      '';
       egress = {
         anthropic = {
-          for = i: i.agent == "claude";
+          for = i: i.agent == "claude" || headless "claude" i;
           site = _: ''
             @other not path /v1/*
             respond @other 403
@@ -395,82 +535,90 @@ in
         };
         github = {
           for = onGithub;
-          # GraphQL names no repository in its path, so it cannot be held to the list: off unless asked for.
-          site =
-            i:
-            let
-              repos = "(?i:${lib.concatMapStringsSep "|" (lib.escapeRegex) i.egress.github.repos})";
-            in
-            ''
-              # what Caddy matches is the decoded path, what GitHub gets is the raw one: refuse anything they could read apart
-              @odd vars_regexp {http.request.orig_uri} (?i)%(2f|5c|2e|25)|(^|/)\.\.?(/|\?|$)|//|\\
-              # the owner's token administers the repository: none of that, on any listed repo
-              @admin path_regexp (?i)^/repos/[^/]+/[^/]+/(rulesets|branches/.+/protection|collaborators|keys|hooks|transfer|actions/(secrets|variables|runners|permissions)|dependabot/secrets|codespaces/secrets|environments|invitations)(/.*)?$
-              @adminRepo {
-                path_regexp ^/repos/[^/]+/[^/]+/?$
-                method PATCH PUT DELETE
-              }
-              handle @odd {
-                respond 403
-              }
-              handle @admin {
-                respond 403
-              }
-              handle @adminRepo {
-                respond 403
-              }
-              @git {
-                path_regexp ^/${repos}(\.git)?/(info/refs|git-upload-pack|git-receive-pack)$
-                method GET POST
-              }
-              @read {
-                path_regexp ^/repos/${repos}(/.*)?$
-                method GET HEAD
-              }
-              # what an agent does to a repository: issues, comments, labels and pull requests. Merges, refs, contents,
-              # workflows, releases and the rest stay off, and reviews too (an approval would be the owner's).
-              @write {
-                path_regexp ^/repos/${repos}/(issues(/[0-9]+(/(comments|labels|assignees))?|/comments/[0-9]+)?|pulls(/[0-9]+(/(comments|requested_reviewers))?|/comments/[0-9]+)?|labels(/[^/]+)?)/?$
-                method POST PATCH
-              }
-              handle @git {
-                ${upstream "https://github.com" "Basic {file.${githubToken}.basic}"}
-              }
-              handle @read {
-                ${upstream "https://api.github.com" "token {file.${githubToken}}"}
-              }
-              handle @write {
-                ${upstream "https://api.github.com" "token {file.${githubToken}}"}
-              }
-              ${lib.optionalString i.egress.github.graphql ''
-                @graphql {
-                  path /graphql
-                  method POST
-                }
-                handle @graphql {
-                  ${upstream "https://api.github.com" "bearer {file.${githubToken}}"}
-                }
-              ''}
-              handle {
-                respond 403
-              }
-            '';
+          site = if ghForward then _: forwardSite else githubSite;
           port = 4102;
-          secrets."gh-hosts.yml" = cfg.ghHostsFile;
+          secrets = lib.optionalAttrs (!ghForward) { "gh-hosts.yml" = cfg.ghHostsFile; };
           missing = "sam.workers: an instance with egress.github.repos is signed with the token in sam.workers.ghHostsFile, which this host does not set.";
-          prepare = [ (lib.getExe githubTokenFromHosts) ];
+          prepare = lib.optional (!ghForward) (lib.getExe githubTokenFromHosts);
           guest.env.GH_TOKEN = "held-by-the-host";
-          # mkForce: the fleet's git sends sammasak's repos to ssh, and git applies only the longest rewrite
-          guest.config.home-manager.users.${user} = {
-            programs.git.settings.url = lib.mkForce {
-              "http://127.0.0.1:${toString dev.egress.github.port}/".insteadOf = [
-                "https://github.com/"
-                "git@github.com:"
-                "ssh://git@github.com/"
-              ];
+          guest.config = {
+            # also the system's: a pool attempt's HOME holds no Home Manager files, and its push URL is ssh
+            programs.git = {
+              enable = true;
+              config.url = githubRewrite;
             };
-            xdg.configFile."gh/config.yml".text = "http_unix_socket: ${dev.egress.github.socket}\n";
+            # mkForce: the fleet's git sends sammasak's repos to ssh, and git applies only the longest rewrite
+            home-manager.users.${user} = {
+              programs.git.settings.url = lib.mkForce githubRewrite;
+              xdg.configFile."gh/config.yml".text = "http_unix_socket: ${dev.egress.github.socket}\n";
+            };
           };
+        };
+        openai = {
+          for = headless "codex";
+          site = _: ''
+            @other not path /v1/*
+            respond @other 403
+            ${upstream "https://api.openai.com" "Bearer {file.${openaiKey}}"}
+          '';
+          port = 4103;
+          secrets."codex-auth.json" = cfg.codexAuthFile;
+          missing = "sam.workers: a codex instance's calls are signed with the API key in sam.workers.codexAuthFile, which this host does not set.";
+          prepare = [ (lib.getExe openaiKeyFromAuth) ];
+          guest.env.CODEX_API_KEY = "held-by-the-host";
+          # mkBefore: a top-level key, so ahead of the file's first table
+          guest.config.home-manager.users.${user}.home.file.".codex/config.toml".text = lib.mkBefore ''
+            openai_base_url = "http://127.0.0.1:${toString dev.egress.openai.port}/v1"
+          '';
+        };
+        # Pi's own route: the gateway holds the provider keys, the proxy the host's project key.
+        llm-gateway = {
+          for = headless "pi";
+          site = _: ''
+            @other not path /v1/*
+            respond @other 403
+            ${upstream gateway.url "Bearer {file.${dev.paths.egress.credentials}/llm_gateway_pi_key}"}
+          '';
+          port = 4104;
+          secrets.llm_gateway_pi_key =
+            if
+              config.sops.secrets ? llm_gateway_pi_key
+              && lib.elem config.networking.hostName ([ gateway.host ] ++ gateway.from)
+            then
+              config.sops.secrets.llm_gateway_pi_key.path
+            else
+              null;
+          missing = "sam.workers: a pi instance's calls are signed with the sops secret llm_gateway_pi_key (sam.profile.pi) and go to sam.fleet.listeners.gateway-api, which must admit this host.";
+          guest.env = {
+            PI_SKIP_VERSION_CHECK = "1";
+            PI_TELEMETRY = "0";
+          };
+          guest.config.home-manager.users.${user} =
+            { lib, ... }:
+            let
+              models = pkgs.writeText "pi-models.json" (
+                builtins.toJSON {
+                  providers.homelab = import ../programs/cli/pi/homelab-provider.nix {
+                    baseUrl = "http://127.0.0.1:${toString dev.egress.llm-gateway.port}/v1";
+                    apiKey = "held-by-the-host";
+                  };
+                }
+              );
+              settings = pkgs.writeText "pi-settings.json" (
+                builtins.toJSON {
+                  defaultProvider = "homelab";
+                  defaultModel = "auto";
+                }
+              );
+            in
+            {
+              home.packages = [ pkgs.pi-coding-agent ];
+              # copies, not store links: Pi rewrites its settings
+              home.activation.piGateway = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+                run install -D -m 0644 ${models} "$HOME/.pi/agent/models.json"
+                run install -D -m 0644 ${settings} "$HOME/.pi/agent/settings.json"
+              '';
+            };
         };
         # A path to the host's relay, which adds the token; the guest's Claude and Codex send to the same 127.0.0.1:4319.
         otlp = {
@@ -523,7 +671,7 @@ in
           ) agentNames;
         };
       })
-      (lib.mkIf (lib.any onGithub (lib.attrValues dev.instances)) {
+      (lib.mkIf (!ghForward && lib.any onGithub (lib.attrValues dev.instances)) {
         # gh rewrites hosts.yml on a login or refresh; the token is read at start
         services.dev-env-egress-gh = {
           serviceConfig.Type = "oneshot";
@@ -566,6 +714,10 @@ in
           i: !onGithub i || !lib.elem "id_ed25519" i.credentials && !lib.elem "gh-hosts.yml" i.credentials
         ) (lib.attrValues dev.instances);
         message = "sam.workers: an instance with egress.github.repos gets neither id_ed25519 nor gh-hosts.yml.";
+      }
+      {
+        assertion = ghServes -> lib.any onGithub (lib.attrValues dev.instances);
+        message = "sam.workers: this host serves sam.fleet.listeners.github-egress, whose token its proxy loads only for an instance of its own with egress.github.repos (sam.workers.executionPool.github.repos).";
       }
       {
         assertion = profile.nativeOtel || !lib.any (i: i.telemetry) (lib.attrValues dev.instances);

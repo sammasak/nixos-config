@@ -102,6 +102,12 @@ in
         example = 600;
         description = "Skills `coordinator.interactiveQuietSeconds`: no wake session while a Coordinator pane (`panes`) works or worked within this many seconds, so the timer never races the owner's session; null passes nothing (the skills default, off). Needs a skills pin that declares the option.";
       };
+      poolHost = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        example = "acer-swift";
+        description = "The ssh host whose `exec-pool` CLI (modules/homelab/exec-pool.nix) holds the queue: this host gets an `exec-pool` that runs it there as the same user, and skills `coordinator.poolCommand` names it. Required with `enable`: the Coordinator dispatches only as pool sessions.";
+      };
     };
 
     claude.bulkReader = {

@@ -110,7 +110,8 @@ in { failing = map (a: a.message) (builtins.filter (a: !a.assertion) c.assertion
 """
 FLEET_CASES = [
     ("claude without the token secret", "{ sam.hostSecrets.enable = lib.mkForce false; sam.workers.instances.t = { }; }", "claude instance's calls are signed with the host's sops secret"),
-    ("github without a gh login", '{ sam.workers.instances.t.egress.github.repos = [ "o/r" ]; }', "signed with the token in sam.workers.ghHostsFile"),
+    # asus signs its own GitHub calls; msi forwards them to acer's sidecar (FORWARD)
+    ("github without a gh login", '{ sam.workers.instances.t.egress.github.repos = [ "o/r" ]; }', "signed with the token in sam.workers.ghHostsFile", "asus-b460m"),
     ("github keeping the ssh key", '{ sam.workers = { ghHostsFile = "/home/lukas/hosts.yml"; instances.t = { egress.github.repos = [ "o/r" ]; credentials = [ "id_ed25519" ]; }; }; }',
      "gets neither id_ed25519 nor gh-hosts.yml"),
     ("telemetry without nativeOtel", "{ sam.profile.nativeOtel = lib.mkForce false; sam.workers.instances.t.telemetry = true; }", "runs only with sam.profile.nativeOtel"),
@@ -119,35 +120,17 @@ FLEET_CASES = [
     ("a record stream named as a fleet host", '{ services.devEnvironments.prefix = lib.mkForce "black"; sam.workers.instances.pi = { }; }',
      "the record stream of black-pi would equal a fleet host's name"),
 ]
-# msi's task slot t1 as committed (#535): where it is declared, its reserve, and that it holds no GitHub credential
-SLOT = r"""
-let
-  flake = builtins.getFlake (toString %(root)s);
-  c = flake.nixosConfigurations.msi-ms7758.config;
-  t1 = c.services.devEnvironments.instances.t1;
-  unit = c.systemd.services."container@t1".serviceConfig;
-  egress = c.systemd.services.dev-env-egress.serviceConfig;
-  caddy = builtins.readFile (flake.inputs.nixpkgs.lib.last (flake.inputs.nixpkgs.lib.splitString " " egress.ExecStart));
-  lock = c.containers.t1.bindMounts."/run/work-locks" or { };
-in {
-  declaring = builtins.attrNames (flake.inputs.nixpkgs.lib.filterAttrs (_: h: (h.config.services.devEnvironments.instances or { }) ? t1) flake.nixosConfigurations);
-  inherit (t1) agent credentials rootInGuest telemetry;
-  github = t1.egress.github;
-  site = flake.inputs.nixpkgs.lib.hasInfix "/run/dev-env-egress/t1/github.sock" caddy;
-  reserved = unit.MemoryMin;
-  weight = unit.CPUWeight;
-  pool = c.systemd.slices.environments.sliceConfig.MemoryMax;
-  binds = builtins.attrNames c.containers.t1.bindMounts;
-  links = builtins.filter (r: builtins.match ".*(id_ed25519|gh-hosts).*" r != null) c.containers.t1.config.systemd.tmpfiles.rules;
-  lock = [ (lock.hostPath or null) (lock.isReadOnly or null) ];
-}
-"""
+def fleet_host(case):
+    return case[3] if len(case) > 3 else "msi-ms7758"
+
+
 USER_SECRET = ("the relay's secret readable by a user", '{ sops.secrets.native_otlp_auth.owner = "lukas"; }', "native_otlp_auth must be owned by root with mode 0400")
-# msi with two instances behind the GitHub proxy and one without: the proxy's Caddyfile is in the store every guest reads
+# asus (a host that signs its own GitHub calls) with two instances behind the GitHub proxy and one without: the proxy's
+# Caddyfile is in the store every guest reads
 GITHUB = r"""
 let
   flake = builtins.getFlake (toString %(root)s);
-  c = (flake.nixosConfigurations.msi-ms7758.extendModules { modules = [ ({ lib, ... }: {
+  c = (flake.nixosConfigurations.asus-b460m.extendModules { modules = [ ({ lib, ... }: {
     sam.workers = {
       ghHostsFile = "/home/lukas/hosts.yml";
       instances = lib.mkForce { gh.egress.github.repos = [ "o/r.s" ]; gh2.egress.github.repos = [ "x/y" ]; plain = { }; };
@@ -224,6 +207,7 @@ in {
   hook = builtins.readFile (builtins.appendContext (builtins.head (builtins.match "(.*) start" (d ex))) (builtins.getContext ex));
   evalCache = builtins.filter (n: builtins.match ".*/eval-cache.*" n != null) (builtins.attrNames c.containers.t.bindMounts);
   nixDrv = g.nix.package.drvPath;
+  oomAdj = { daemon = g.systemd.services.nix-daemon.serviceConfig.OOMScoreAdjust or null; sshd = g.systemd.services.sshd.serviceConfig.OOMScoreAdjust or null; };
   gcroots = d c.systemd.services.dev-environments-gcroots.script;
   stateDir = c.services.devEnvironments.stateDir;
   gcTimer = c.systemd.timers.dev-environments-gcroots.timerConfig;
@@ -335,6 +319,19 @@ ROOT_IN_GUEST = ('{ allowed = sys.config.nix.settings.allowed-users; trusted = s
                  'binds = map (b: { src = b.hostPath; dst = b.mountPoint; ro = b.isReadOnly; }) (builtins.attrValues c.bindMounts); '
                  'sudoPassword = c.config.security.sudo.wheelNeedsPassword; sub = c.config.users.users.alice.subUidRanges; }; in { r = f "r"; s = f "s"; ok = f "ok"; })')
 NONE_DECLARED = "{ services.devEnvironments.instances = lib.mkForce { }; }"
+# the guest's resolver: by default the stock copy of the host's resolv.conf, waited for; with nameservers, its own static
+RESOLVER = ('{ ns = sys.config.containers.ok.config.networking.nameservers; '
+            'host = sys.config.containers.ok.config.networking.useHostResolvConf; '
+            'local = sys.config.containers.ok.config.networking.localCommands; '
+            'pre = map toString sys.config.systemd.services."container@ok".serviceConfig.ExecStartPre; }')
+RESOLVER_SET = '{ services.devEnvironments.nameservers = [ "192.0.2.53" ]; }'
+# msi's guests as committed: the fleet's DNS host from fleet.nix, never the host's resolv.conf (an IPv6 RA server)
+FLEET_RESOLVER = r"""
+let
+  c = (builtins.getFlake (toString %(root)s)).nixosConfigurations.msi-ms7758.config;
+  dns = (builtins.head (builtins.filter (p: p.port == 53 && p.host != null) c.sam.fleet.public)).host;
+in { want = c.sam.fleet.hosts.${dns}.address; got = builtins.mapAttrs (_: g: { ns = g.config.networking.nameservers; host = g.config.networking.useHostResolvConf; }) c.containers; }
+"""
 NO_ROOT = ('{ allowed = sys.config.nix.settings.allowed-users; '
            'mounts = builtins.mapAttrs (_: f: f.options) (flake.inputs.nixpkgs.lib.filterAttrs (_: f: builtins.elem "nosuid" f.options) sys.config.fileSystems); '
            'nosuid = builtins.attrNames (flake.inputs.nixpkgs.lib.filterAttrs (_: f: builtins.elem "nosuid" f.options) sys.config.fileSystems); }')
@@ -411,6 +408,44 @@ def site_wrong(site, upstream, cases, to="http://127.0.0.1:1"):
         finally:
             proc.terminate()
             proc.wait(5)
+
+
+# msi's slots reach GitHub through acer's sidecar (sam.fleet.listeners.github-egress): msi's proxy forwards and holds no
+# token, acer's serves the listener with its own slots' list and refusals, to msi's address alone
+FORWARD = r"""
+let
+  flake = builtins.getFlake (toString %(root)s);
+  caddy = c: builtins.readFile (flake.inputs.nixpkgs.lib.last (flake.inputs.nixpkgs.lib.splitString " " c.systemd.services.dev-env-egress.serviceConfig.ExecStart));
+  msi = flake.nixosConfigurations.msi-ms7758.config;
+  acer = flake.nixosConfigurations.acer-swift.config;
+in {
+  listener = { inherit (msi.sam.fleet.listeners.github-egress) host port from url; };
+  msi = { caddy = caddy msi; creds = msi.systemd.services.dev-env-egress.serviceConfig.LoadCredential; paths = builtins.attrNames msi.systemd.paths; };
+  acer = { caddy = caddy acer; repos = acer.sam.workers.executionPool.github.repos; msiAddress = acer.sam.fleet.hosts.msi-ms7758.address; };
+}
+"""
+
+
+def check_github_forward():
+    out = run_eval(FORWARD % {"root": json.dumps(ROOT)})
+    got = json.loads(out.stdout) if out.returncode == 0 else {}
+    l, msi, acer = got.get("listener", {}), got.get("msi", {}), got.get("acer", {})
+    sites = {b.split("\n", 2)[1].strip(): b for b in msi.get("caddy", "").split("http:// {")[1:]}
+    slots = [sites.get(f"bind unix//run/dev-env-egress/pool{n}/github.sock", "") for n in (1, 2)]
+    check(l.get("host") == "acer-swift" and l.get("from") == ["msi-ms7758"]
+          and all(f"reverse_proxy {l.get('url')} {{" in s and "Authorization" not in s for s in slots)
+          and not any("gh-hosts" in c for c in msi.get("creds", [])) and "dev-env-egress-gh" not in msi.get("paths", []),
+          f"msi's slots forward GitHub to acer's {l.get('url')}, and msi's proxy loads no GitHub token ({slots}, {msi.get('creds')})")
+    site = next((b for b in acer.get("caddy", "").split("\nhttp://:")[1:] if b.startswith(f"{l.get('port')} {{")), "")
+    repos = "(?i:" + "|".join(r.replace(".", "\\.") for r in acer.get("repos", [])) + ")"
+    check(f"@outside not remote_ip {acer.get('msiAddress')}\n" in site and f"path_regexp ^/{repos}(\\.git)?/" in site and "/graphql" not in site,
+          f"acer serves :{l.get('port')} to msi's address alone, for its own slots' repositories, no GraphQL ({site[:300]!r})")
+    # the site as a socket's would be: its first two lines a site header and a bind, as site_wrong drops them
+    body = "http:// {\n  bind x\n" + site.split("\n", 1)[1] if site else ""
+    shut = site_wrong(body, r"https://(api\.)?github\.com", [("GET", "/sammasak/nixos-config/info/refs?service=git-receive-pack", False)])
+    opened = site_wrong(body.replace(f"remote_ip {acer.get('msiAddress')}", "remote_ip 127.0.0.1").replace(repos, "(?i:o/r\\.s)"),
+                        r"https://(api\.)?github\.com", GITHUB_CASES)
+    check(shut == [] and opened == [], f"acer's listener refuses any other address, and from msi's lets through what a slot's own site does ({'no caddy on PATH' if shut is None else shut + (opened or [])})")
 
 
 def check_github_proxy(site):
@@ -521,7 +556,9 @@ def check_gcroots(facts):
         return
     with tempfile.TemporaryDirectory() as d:
         state, roots = pathlib.Path(d, "state"), pathlib.Path(d, "roots")
-        script = facts["gcroots"].replace(facts["stateDir"], str(state)).replace("/nix/var/nix/gcroots/per-container", str(roots))
+        sroots = pathlib.Path(d, "sroots")
+        script = (facts["gcroots"].replace(facts["stateDir"], str(state)).replace("/nix/var/nix/gcroots/per-container", str(roots))
+                  .replace("/nix/var/nix/gcroots/dev-env-sessions", str(sroots)))
         gc = state / "n" / "home" / "proj" / ".devenv" / "gc"
         gc.mkdir(parents=True)
         (gc / "shell").symlink_to(store)
@@ -533,7 +570,7 @@ def check_gcroots(facts):
         (roots / "n" / "home-stale").symlink_to(store)
 
         def refresh(path=os.environ["PATH"]):
-            return subprocess.run(["bash", "-e", "-c", script], capture_output=True, text=True, env={**os.environ, "PATH": path})
+            return subprocess.run(["bash", "-euo", "pipefail", "-c", script], capture_output=True, text=True, env={**os.environ, "PATH": path})
 
         run = refresh()
         names = sorted(p.name for p in (roots / "n").iterdir())
@@ -545,6 +582,22 @@ def check_gcroots(facts):
         check(run.returncode != 0 and (roots / "n" / "home-stale").is_symlink(),
               f"a scan that fails fails the refresh, and with it the garbage collection, and drops no root ({run.returncode})")
         check("find \"$home\" -ignore_readdir_race" in facts["gcroots"], "the scan ignores a directory a running guest deletes under it")
+
+        # a parked session and a docked one each get their own roots; a key gone for over an hour loses its roots, one
+        # gone for less keeps them (a dock or park may have moved the tree past this run)
+        for tree in ("t1/tree/work", "dock/pool1/cur/work"):
+            g = state / ".sessions" / tree / "proj" / ".devenv" / "gc"
+            g.mkdir(parents=True)
+            (g / "shell").symlink_to(store)
+        for key, age in (("parked/gone-old", 7200), ("dock/gone-new", 0)):
+            (sroots / key).mkdir(parents=True)
+            (sroots / key / "home-x").symlink_to(store)
+            os.utime(sroots / key, (time.time() - age, time.time() - age))
+        run = refresh()
+        got = {str(k.relative_to(sroots)): sorted(p.name for p in k.iterdir()) for k in sroots.glob("*/*")} if sroots.is_dir() else {}
+        check(run.returncode == 0 and sorted(got) == ["dock/gone-new", "dock/pool1", "parked/t1"]
+              and all(len(got[k]) == 1 and (sroots / k / got[k][0]).resolve() == store.resolve() for k in ("parked/t1", "dock/pool1")),
+              f"a parked and a docked session tree each root their devenv link, and only a key gone for an hour is dropped ({run.returncode}, {got}, {run.stderr.strip()[-200:]})")
 
 
 ALERT_ON = '{ services.devEnvironments.alert = "/alert"; }'
@@ -778,6 +831,9 @@ def check_hygiene(facts):
         run = subprocess.run([str(exe), "wait"], capture_output=True, text=True, env={**os.environ, "HM_STATE": state, "WORKER_WAIT_TICK": "0"})
         check(run.returncode == code and (code != 2 or "home-manager-" in run.stderr) and (("still activating" in run.stderr) == still),
               f"wait with the home setup {state.splitlines()[-1]} exits {code}{', saying it is still activating' if still else ''} ({run.returncode}, {run.stderr.strip()[-100:]})")
+    adj = facts.get("oomAdj", {})
+    check(adj.get("daemon") == 500 and adj.get("sshd") is None,
+          f"at the pool limit a guest's builds (the nix-daemon's children) are killed before its agent sessions ({adj})")
     gc = facts.get("gcTimer", {})
     check(gc.get("OnBootSec") and gc.get("OnUnitActiveSec") == "15min" and facts.get("gcUnit") == {"before": ["nix-gc.service"], "requiredBy": ["nix-gc.service"]},
           f"the gc-roots unit runs at boot and every 15 min and still runs before nix-gc ({gc}, {facts.get('gcUnit')})")
@@ -803,49 +859,287 @@ def check_bounded():
           f"container@ stops restarting after {got.get('burst')} starts of {start} s (stop {stop} s) each within {got.get('interval')} s ({got or out.stderr.strip()[-300:]})")
 
 
-# docs/records/execution-pool-contract.md: the pool adds no option to msi's worker modules, and its named workers and
-# their Herdr units are pinned by name; a change to msi's instances edits this list in the same PR.
+# modules/workers/execution-pool.nix on msi without its own slot (without_msi_pool): off (unset, or enable = false
+# with a count) it moves no worker unit, no container and no toplevel, and a named worker beside it (msi declares none
+# since m1 and m2 were retired: `t` here, with the shutdown notice that prompts it) keeps its Herdr unit; on, its
+# 0/1/2 slots are shells beside it that leave its units alone.
 POOL_COMPAT = r"""
 let
   flake = builtins.getFlake (toString %(root)s);
   lib = flake.inputs.nixpkgs.lib;
-  sys = flake.nixosConfigurations.msi-ms7758;
-  c = sys.config;
+  c = (flake.nixosConfigurations.msi-ms7758.extendModules { modules = [ (%(case)s) ]; }).config;
+  dev = c.services.devEnvironments;
 in {
-  options = builtins.filter (p: lib.hasAttrByPath p sys.options) (lib.concatMap (n: [ [ "sam" n ] [ "sam" "workers" n ] [ "services" "devEnvironments" n ] ]) [ "executionPool" "agentRuntime" ]);
+  failing = map (a: a.message) (builtins.filter (a: !a.assertion) c.assertions);
+  toplevel = %(toplevel)s;
+  units = lib.mapAttrs (_: u: u.unit.drvPath) (lib.filterAttrs (n: _: builtins.match "(container@|worker|dev-env).*" n != null) c.systemd.units);
+  containers = lib.mapAttrs (_: x: x.path.drvPath or x.path) c.containers;
   instances = builtins.attrNames c.sam.workers.instances;
-  declared = builtins.attrNames c.services.devEnvironments.instances;
-  agents = builtins.attrNames (lib.filterAttrs (_: i: i.agent != "none") c.services.devEnvironments.instances);
+  declared = builtins.attrNames dev.instances;
+  agents = builtins.attrNames (lib.filterAttrs (_: i: i.agent != "none") dev.instances);
   herdr = builtins.filter (lib.hasPrefix "worker-herdr-") (builtins.attrNames c.systemd.services);
+  slots = lib.mapAttrs (n: i: {
+    inherit (i) agent prompt model credentials telemetry headlessAgents;
+    baseUrl = c.containers.${n}.config.environment.variables.ANTHROPIC_BASE_URL or null;
+    reserved = i.memory.reserved;
+    sockets = builtins.attrNames c.containers.${n}.config.systemd.sockets;
+    binds = builtins.attrNames c.containers.${n}.bindMounts;
+  }) (lib.filterAttrs (n: _: lib.hasPrefix "pool" n) dev.instances);
+  shutdown = c.systemd.services.worker-shutdown-notice.script;
+  inventory = builtins.any (p: (p.name or "") == "worker-pool-inventory") c.environment.systemPackages;
+}
+"""
+POOL_ON = "{ sam.workers.executionPool = { enable = true; slots = %d; }; }"
+NAMED = '{ sam.workers.instances.t = { }; sam.workers.shutdownNotice = "Mon-Fri 20:40"; }'
+
+
+def without_msi_pool(case):
+    """`case` on msi without its own pool slots and runners (hosts/msi-ms7758/exec-pool.nix): the host these cases
+    were written against, so each states its whole pool."""
+    return ('{ disabledModules = [ "${(builtins.getFlake (toString %s)).outPath}/hosts/msi-ms7758/exec-pool.nix" ]; '
+            'imports = [ (%s) ]; }' % (json.dumps(ROOT), case))
+
+
+
+# (name, module, expected message substring) on msi with the pool on; each must fail an assertion
+POOL_CASES = [(name, without_msi_pool(case), want) for name, case, want in [
+    ("slots above the pool", "{ sam.workers.executionPool = { enable = true; slots = 6; }; }", "their memory.reserved adds up to 12288M, more than pool.memory 10240M"),
+    ("a slot's name declared by hand", "{ sam.workers.executionPool = { enable = true; slots = 1; }; sam.workers.instances.pool1 = { }; }", "pool1 is a pool slot's name"),
+    ("a slot's name declared in the core", "{ sam.workers.executionPool = { enable = true; slots = 1; }; services.devEnvironments.instances.pool1 = { }; }", "pool1 is a pool slot's name"),
+    ("a slot's name retired", '{ sam.workers.executionPool = { enable = true; slots = 1; }; sam.workers.retired = [ "pool1" ]; }', "pool1 is a pool slot's name"),
+    ("a slot with the push key", '{ sam.workers.executionPool = { enable = true; slots = 1; credentials = [ "id_ed25519" ]; }; }', "never with the host user's SSH key"),
+    ("a credential the host has not", '{ sam.workers.executionPool = { enable = true; slots = 1; credentials = [ "nope" ]; }; }', "pool1.credentials names one that"),
+    ("codex without a codex login", '{ sam.workers.executionPool = { enable = true; slots = 1; agents = [ "codex" ]; }; }', "signed with the API key in sam.workers.codexAuthFile"),
+    ("pi on a host without the Pi key", '{ sam.workers.executionPool = { enable = true; slots = 1; agents = [ "pi" ]; }; }', "signed with the sops secret llm_gateway_pi_key"),
+    ("a session dock with rootInGuest", "{ sam.workers.executionPool = { enable = true; slots = 1; rootInGuest = true; }; }", "sessionDock with rootInGuest"),
+]]
+# acer (a pi host, the gateway's own) with every agent: one proxy route each, placeholders in the guest, no credential bound
+POOL_ALL = r"""
+let
+  c = ((builtins.getFlake (toString %(root)s)).nixosConfigurations.acer-swift.extendModules { modules = [ {
+    sam.workers.codexAuthFile = "/home/lukas/.codex/auth.json";
+    sam.workers.executionPool.agents = [ "claude" "codex" "pi" ];
+  } ]; }).config;
+  g = c.containers.pool1.config;
+in {
+  failing = map (a: a.message) (builtins.filter (a: !a.assertion) c.assertions);
+  sockets = builtins.filter (s: builtins.match ".*-egress" s != null) (builtins.attrNames g.systemd.sockets);
+  binds = builtins.attrNames c.containers.pool1.bindMounts;
+  codexKey = g.environment.variables.CODEX_API_KEY;
+  codexUrl = builtins.head (builtins.split "
+" g.home-manager.users.lukas.home.file.".codex/config.toml".text);
+  pi = builtins.any (p: (p.pname or "") == "pi-coding-agent") g.home-manager.users.lukas.home.packages;
+  creds = c.systemd.services.dev-env-egress.serviceConfig.LoadCredential;
+}
+"""
+POOL_TYPED = [(name, without_msi_pool(case), want) for name, case, want in [
+    ("negative slots", "{ sam.workers.executionPool = { enable = true; slots = -1; }; }", "is not of type `unsigned integer"),
+    ("a slot reserve that is no size", '{ sam.workers.executionPool = { enable = true; slots = 1; memory.reserved = "2 GB"; }; }', "is not of type `string matching the pattern"),
+]]
+POOL_THROW = r"""
+let c = ((builtins.getFlake (toString %(root)s)).nixosConfigurations.msi-ms7758.extendModules { modules = [ ({ lib, ... }: %(case)s) ]; }).config;
+in c.system.build.toplevel.drvPath
+"""
+
+
+def pool_eval(case, toplevel=False):
+    case = without_msi_pool("{ imports = [ (%s) (%s) ]; }" % (NAMED, case))
+    out = run_eval(POOL_COMPAT % {"root": json.dumps(ROOT), "case": case, "toplevel": "c.system.build.toplevel.drvPath" if toplevel else "null"})
+    return json.loads(out.stdout) if out.returncode == 0 else {"error": out.stderr.strip()[-600:]}
+
+
+def check_pool_compat():
+    # a whole msi each, one at a time: five in one process ran a 16G host out of memory
+    absent = pool_eval("{ }", True)
+    off = pool_eval("{ sam.workers.executionPool = { enable = false; slots = 2; }; }", True)
+    check(absent.get("units") and absent.get("toplevel") and absent == off,
+          f"executionPool off (unset, or enable = false with slots = 2) moves no worker unit, container or toplevel on msi ({absent.get('error') or [k for k in absent if absent[k] != off.get(k)]})")
+    named = ["t"]
+    check(absent.get("instances") == absent.get("declared") == absent.get("agents") == named
+          and absent.get("herdr") == [f"worker-herdr-{n}" for n in named] and not absent.get("inventory"),
+          f"msi's sam.workers.instances are {named}, each one worker-herdr-<name> unit, and no pool inventory ({ {k: absent.get(k) for k in ('instances', 'declared', 'agents', 'herdr', 'inventory')} })")
+    for n in range(3):
+        on = pool_eval(POOL_ON % n)
+        names = [f"pool{i}" for i in range(1, n + 1)]
+        slot = {"agent": "none", "prompt": None, "model": None, "credentials": [], "telemetry": False, "reserved": 2 << 30}
+        got = {s: {k: v for k, v in d.items() if k in slot} for s, d in on.get("slots", {}).items()}
+        check(on.get("failing") == [] and on.get("declared") == sorted(named + names) and on.get("agents") == named and got == {s: slot for s in names},
+              f"slots = {n}: {names or 'no slot'} beside {named}, each agent none, no prompt, no credential, no telemetry, 2G reserved, no assertion failing ({on.get('error') or {k: on.get(k) for k in ('failing', 'declared')} | {'slots': got} })")
+        # a slot holds the GitHub route alone and no bind of a host secret, credential or user runtime directory; the
+        # sshd host key every environment shares and public keys are the binds allowed under host-credentials
+        leaks = {s: [x for x in d["sockets"] if x.endswith("-egress") and x != "github-egress"] + [b for b in d["binds"] if b.startswith(("/run/secrets", "/run/user", "/run/credentials", "/var/lib/host-credentials/")) and not b.endswith(("/ssh_host_ed25519_key", ".pub"))]
+                 for s, d in on.get("slots", {}).items()}
+        check(len(leaks) == n and not any(leaks.values()) and on.get("shutdown") == absent.get("shutdown"),
+              f"slots = {n}: no slot has an egress socket but GitHub's or a host secret bind, and the shutdown notice still prompts only {named} ({leaks})")
+        units = on.get("units", {})
+        mine = {u for u in units if any(u.startswith(p + s) for s in names for p in ("container@", "dev-env-reset@", "worker-", "worker-herdr-"))}
+        # the host's shared units list every instance, so a slot moves them; each named worker's own units stay
+        shared = {"dev-env-egress.service", "dev-env-records.service", "dev-env-reset@.service", "dev-env-usage.service"}
+        moved = {u for u in units.keys() - mine if units[u] != absent.get("units", {}).get(u)}
+        check(moved <= shared and units.keys() - mine == absent.get("units", {}).keys() and len(mine) == 4 * n
+              and {k: v for k, v in on.get("containers", {}).items() if k not in names} == absent.get("containers") and on.get("inventory") == (n > 0),
+              f"slots = {n}: a container@, dev-env-reset@ drop-in, worker- and worker-herdr- unit per slot, the named workers' units and containers unchanged, worker-pool-inventory {'installed' if n else 'absent'} ({sorted(mine)}, moved {sorted(moved)})")
+    # agents = [ "claude" ]: the slot gets a named Claude worker's route, the anthropic proxy, and nothing more
+    on = pool_eval('{ sam.workers.executionPool = { enable = true; slots = 1; agents = [ "claude" ]; }; }')
+    s = on.get("slots", {}).get("pool1", {})
+    extra = [x for x in s.get("sockets", []) if x.endswith("-egress")] + [b for b in s.get("binds", []) if b.startswith(("/run/secrets", "/run/user", "/run/credentials", "/run/egress", "/var/lib/host-credentials/")) and not b.endswith(("/ssh_host_ed25519_key", ".pub"))]
+    check(on.get("failing") == [] and s.get("agent") == "none" and s.get("credentials") == [] and s.get("headlessAgents") == ["claude"]
+          and s.get("baseUrl") == "http://127.0.0.1:4100" and extra == ["anthropic-egress", "github-egress", "/run/egress"]
+          and on.get("agents") == named and on.get("shutdown") == absent.get("shutdown"),
+          f"executionPool.agents = [ \"claude\" ]: pool1 stays agent none with no credential, gets only the anthropic and github egress and its ANTHROPIC_BASE_URL, and starts no session ({on.get('error') or on.get('failing') or {**s, 'extra': extra} })")
+    out = run_eval(POOL_ALL % {"root": json.dumps(ROOT)})
+    a = json.loads(out.stdout) if out.returncode == 0 else {"error": out.stderr.strip()[-600:]}
+    # acer's pool1 pushes through the GitHub proxy (check_runner) and holds nothing of the host's
+    leaked = [b for b in a.get("binds", []) if b.startswith(("/run/secrets", "/run/user", "/run/credentials", "/var/lib/host-credentials/"))
+              and not b.endswith(("/ssh_host_ed25519_key", ".pub"))]
+    check(a.get("failing") == [] and a.get("sockets") == ["anthropic-egress", "github-egress", "llm-gateway-egress", "openai-egress"] and not leaked
+          and a.get("codexKey") == "held-by-the-host" and a.get("codexUrl") == 'openai_base_url = "http://127.0.0.1:4103/v1"' and a.get("pi") is True
+          and {"llm_gateway_pi_key:/run/secrets/llm_gateway_pi_key", "codex-auth.json:/home/lukas/.codex/auth.json"} <= set(a.get("creds", [])),
+          f"executionPool.agents = [ \"claude\" \"codex\" \"pi\" ] on acer: pool1 gets the anthropic, github, openai and llm-gateway proxies, Codex and Pi pointed at them with placeholders, and the keys only in the proxy's credentials ({a.get('error') or {**a, 'leaked': leaked} })")
+    # POOL_CASES were prefetched; a whole msi per type error, one at a time
+    outs = [run_eval(fleet(c[1])) for c in POOL_CASES]
+    typed = [subprocess.run(["nix", "eval", "--impure", "--json", "--expr", POOL_THROW % {"root": json.dumps(ROOT), "case": c[1]}], capture_output=True, text=True)
+             for c in POOL_TYPED]
+    for (name, _, want), out in zip(POOL_CASES, outs):
+        failing = json.loads(out.stdout) if out.returncode == 0 else []
+        check(any(want in m for m in failing), f"executionPool, {name}: fails \"{want}\" ({failing or out.stderr.strip()[-300:]})")
+    for (name, _, want), out in zip(POOL_TYPED, typed):
+        check(out.returncode != 0 and want in out.stderr, f"executionPool, {name}: a type error naming \"{want}\" ({out.stderr.strip()[-300:]})")
+
+
+# the session dock (modules/workers/core.nix sessionDock): each pool slot binds its own .sessions/dock/<name> read-write
+# at /session, made root's by the activation; a named worker (`t` on msi, neither host declaring one) binds none
+DOCK = r"""
+let
+  flake = builtins.getFlake (toString %(root)s);
+  named = (flake.nixosConfigurations.msi-ms7758.extendModules { modules = [ { sam.workers.instances.t = { }; } ]; }).config;
+  of = c: n: {
+    dock = c.services.devEnvironments.instances.${n}.sessionDock;
+    bind = let b = c.containers.${n}.bindMounts."/session" or null; in
+      if b == null then null else { inherit (b) hostPath isReadOnly; };
+  };
+  host = h: n: let c = flake.nixosConfigurations.${h}.config; in {
+    slots = builtins.listToAttrs (builtins.genList (i: { name = "pool${toString (i + 1)}"; value = of c "pool${toString (i + 1)}"; }) n);
+    stateDir = c.services.devEnvironments.stateDir;
+    activation = c.system.activationScripts.devEnvironments.text;
+  };
+in { acer = host "acer-swift" 3; msi = host "msi-ms7758" 4; named = of named "t"; }
+"""
+
+
+def check_session_dock():
+    out = run_eval(DOCK % {"root": json.dumps(ROOT)})
+    got = json.loads(out.stdout) if out.returncode == 0 else {"error": out.stderr.strip()[-600:]}
+    for h, n in (("acer", 3), ("msi", 4)):
+        d = got.get(h, {})
+        dock = f"{d.get('stateDir')}/.sessions/dock"
+        slots = [f"pool{i}" for i in range(1, n + 1)]
+        check(d.get("slots") == {s: {"dock": True, "bind": {"hostPath": f"{dock}/{s}", "isReadOnly": False}} for s in slots}
+              and 'install -d -m 0711 "$d/.sessions"' in d.get("activation", "")
+              and all(f'install -d -m 0755 "$d/.sessions/dock" "$d/.sessions/dock/{s}"' in d.get("activation", "") for s in slots),
+              f"{h}: {', '.join(slots)} each bind their own {dock}/<slot> read-write at /session, made 0711/0755 root's by the activation ({got.get('error') or {k: v for k, v in d.items() if k != 'activation'} })")
+    check(got.get("named") == {"dock": False, "bind": None}, f"a named worker binds no /session ({got.get('named') or got.get('error')})")
+
+
+# modules/homelab/exec-pool-runner.nix: on acer one runner per slot as the queue's role, its root helper, and a
+# polkit rule that lets that role start exactly the helpers and the resets of its slots, and clear those resets' failed
+# state; msi's four slots alike, its runner on acer's queue (exec-pool-db-acer-swift checks how it connects).
+# The slot claims for its pool agents, the helper hands a step the agent's route, and the reset never waits on an
+# attempt's workspace.
+RUNNER = r"""
+let
+  flake = builtins.getFlake (toString %(root)s);
+  units = c: builtins.filter (n: builtins.match "exec-pool-(runner|exec).*" n != null) (builtins.attrNames c.systemd.services);
+  acer = flake.nixosConfigurations.acer-swift.config;
+  msi = flake.nixosConfigurations.msi-ms7758.config;
+  r = acer.systemd.services.exec-pool-runner-pool1;
+  # a slot's push key: its credentials, host-credential binds beside the sshd host key and public keys every
+  # environment binds, its ~/.ssh links, its GitHub proxy's repositories and rewrite, and the helper's git identity
+  push = c: n: {
+    inherit (c.services.devEnvironments.instances.${n}) credentials;
+    repos = c.services.devEnvironments.instances.${n}.egress.github.repos;
+    rewrite = c.containers.${n}.config.environment.etc.gitconfig.text or null;
+    binds = builtins.filter (b: builtins.match "/var/lib/host-credentials/.*" b != null && builtins.match ".*(/ssh_host_ed25519_key|[.]pub)" b == null) (builtins.attrNames c.containers.${n}.bindMounts);
+    links = builtins.filter (r: builtins.match ".*(id_ed25519|gh-hosts).*" r != null) c.containers.${n}.config.systemd.tmpfiles.rules;
+    git = c.systemd.services."exec-pool-exec@".environment;
+  };
+  slots = n: builtins.genList (i: "pool${toString (i + 1)}") n;
+  # what each start-limit setting a slot's per-turn units and a named worker's container evaluate to
+  limits = c: n: let s = c.systemd.services; in {
+    slots = map (n: s."container@${n}".unitConfig.StartLimitIntervalSec or null) (slots n);
+    resets = map (n: { inherit (c.systemd.units."dev-env-reset@${n}.service") overrideStrategy text; }) (slots n);
+    exec = s."exec-pool-exec@".unitConfig.StartLimitIntervalSec or null;
+    reset = s."dev-env-reset@".unitConfig.StartLimitIntervalSec or null;
+  };
+  # neither host declares a named worker: msi with one, `t`
+  named = (flake.nixosConfigurations.msi-ms7758.extendModules { modules = [ { sam.workers.instances.t = { }; } ]; }).config.systemd.services."container@t".unitConfig;
+in {
+  acer = units acer;
+  msi = units flake.nixosConfigurations.msi-ms7758.config;
+  user = r.serviceConfig.User;
+  wanted = r.wantedBy;
+  slot = builtins.fromJSON r.environment.EXEC_POOL_SLOT;
+  exec = acer.systemd.services."exec-pool-exec@".serviceConfig.ExecStart;
+  env = acer.systemd.services."exec-pool-exec@".environment;
+  agentEnv = builtins.fromJSON acer.systemd.services."exec-pool-exec@".environment.EXEC_POOL_AGENT_ENV;
+  scratch = acer.services.devEnvironments.instances.pool1.scratch;
+  reset = acer.systemd.services."dev-env-reset@".script;
+  polkit = acer.security.polkit.extraConfig;
+  slot2 = builtins.fromJSON acer.systemd.services.exec-pool-runner-pool2.environment.EXEC_POOL_SLOT;
+  msiSlots = map (n: (builtins.fromJSON msi.systemd.services."exec-pool-runner-${n}".environment.EXEC_POOL_SLOT).agents) (slots 4);
+  limits = { acer = limits acer 3; msi = limits msi 4; };
+  namedLimit = { inherit (named) StartLimitIntervalSec StartLimitBurst; };
+  push = builtins.listToAttrs (map (n: { name = "acer-${n}"; value = push acer n; }) (slots 3) ++ map (n: { name = "msi-${n}"; value = push msi n; }) (slots 4));
 }
 """
 
 
-def check_pool_compat():
-    out = run_eval(POOL_COMPAT % {"root": json.dumps(ROOT)})
+def check_runner():
+    out = run_eval(RUNNER % {"root": json.dumps(ROOT)})
     got = json.loads(out.stdout) if out.returncode == 0 else {}
-    check(got.get("options") == [], f"msi declares no executionPool or agentRuntime option ({got.get('options', out.stderr.strip()[-600:])})")
-    named = ["m1", "m2", "t1"]
-    check(got.get("instances") == got.get("declared") == got.get("agents") == named
-          and got.get("herdr") == [f"worker-herdr-{n}" for n in named],
-          f"msi's sam.workers.instances are still {named}, each one worker-herdr-<name> unit ({got})")
-
-
-def check_slot():
-    """msi's t1 is sized by the msi row of docs/nspawn-workers.md (10G pool, 2G and 2 cores reserved each) and gets no
-    GitHub credential: no SSH key, no gh login, no proxy site. Its assertions are the "as committed" check's."""
-    out = run_eval(SLOT % {"root": json.dumps(ROOT)})
-    got = json.loads(out.stdout) if out.returncode == 0 else {}
-    check(got.get("declaring") == ["msi-ms7758"], f"the task slot t1 is declared on msi-ms7758 alone ({got.get('declaring', out.stderr.strip()[-600:])})")
-    check(got.get("reserved") == 2 << 30 and got.get("weight") == 200 and got.get("pool") == 10 << 30,
-          f"t1 reserves 2G and 2 cores in msi's 10G pool ({got.get('reserved')}, {got.get('weight')}, {got.get('pool')})")
-    check(got.get("agent") == "claude" and got.get("rootInGuest") is False and got.get("telemetry") is True,
-          f"t1 is a claude agent without rootInGuest, telemetry left on ({got.get('agent')}, {got.get('rootInGuest')}, {got.get('telemetry')})")
-    creds = {"/var/lib/host-credentials/id_ed25519", "/var/lib/host-credentials/gh-hosts.yml"}
-    check(got.get("credentials") == [] and got.get("github") == {"repos": [], "graphql": False} and got.get("site") is False
-          and got.get("links") == [] and not creds & set(got.get("binds", creds)),
-          f"t1 holds no GitHub credential: no key or gh login bound or linked, no proxy site ({got.get('credentials')}, {got.get('github')}, {got.get('links')})")
-    check(got.get("lock") == ["/run/work-locks", True], f"t1 binds the host's /run/work-locks read-only, one heavy lane with msi's own gates ({got.get('lock')})")
+    acer_slots, msi_slots = [f"pool{i}" for i in range(1, 4)], [f"pool{i}" for i in range(1, 5)]
+    rule = json.dumps([u for n in acer_slots for u in (f"exec-pool-exec@{n}.service", f"dev-env-reset@{n}.service")], separators=(",", ":"))
+    check(got.get("acer") == ["exec-pool-exec@", "exec-pool-runner-password", *[f"exec-pool-runner-{n}" for n in acer_slots]]
+          and got.get("msi") == ["exec-pool-exec@", *[f"exec-pool-runner-{n}" for n in msi_slots]] and got.get("user") == "exec_pool"
+          and got.get("wanted") == ["multi-user.target"] and got.get("slot", {}).get("id") == "pool1" and got.get("slot", {}).get("agents") == ["none", "claude", "pi"]
+          and got.get("slot2", {}).get("id") == "pool2" and got.get("slot2", {}).get("agents") == ["none", "claude", "pi"]
+          and got.get("msiSlots") == [["none", "claude"]] * 4
+          and got.get("exec", "").endswith("/bin/exec-pool-runner exec %i") and rule in got.get("polkit", "") and 'subject.user == "exec_pool"' in got.get("polkit", ""),
+          f"acer runs exec-pool-runner-pool1 to -pool3 as exec_pool with its root helper exec-pool-exec@, and polkit lets exec_pool start only {rule}; acer also sets the role's password, msi runs the same for its four slots, each claiming for none and claude ({ {k: got.get(k) for k in ('acer', 'msi', 'user', 'slot', 'slot2', 'msiSlots', 'exec')} or out.stderr.strip()[-300:]})")
+    polkit = got.get("polkit", "")
+    resets = json.dumps([f"dev-env-reset@{n}.service" for n in acer_slots], separators=(",", ":"))
+    check(f'var resets = {resets};' in polkit
+          and '(action.lookup("verb") == "reset-failed" && resets.indexOf(action.lookup("unit")) >= 0)' in polkit,
+          f"polkit lets exec_pool clear the failed state of its slots' resets only, so a refused reset quarantines the slot without leaving the host degraded ({polkit[-400:]!r})")
+    env, agent = got.get("env", {}), got.get("agentEnv", {})
+    check(agent.get("ANTHROPIC_BASE_URL") == "http://127.0.0.1:4100" and agent.get("CLAUDE_CODE_OAUTH_TOKEN") == "held-by-the-host"
+          and "/etc/profiles/per-user/" in agent.get("PATH", "") and not {"EDITOR", "XDG_CONFIG_HOME"} & set(agent)
+          and env.get("EXEC_POOL_SLOT_HOME") == "/var/lib/workers/%i/home" and env.get("EXEC_POOL_GUEST_HOME", "").startswith("/home/")
+          and got.get("scratch") == ["attempts"] and "--expand-environment=no --wait" in got.get("reset", ""),
+          f"the helper hands a step only the slot's egress variables and a PATH to the agent, admits by the host side of the slot home, and the reset trashes ~/attempts unchecked, its guest scan not expanded by systemd ({agent}, { {k: v for k, v in env.items() if 'HOME' in k} }, {got.get('scratch')})")
+    # a slot's reset restarts its container once per task turn, seconds apart in a session: the reset clears the
+    # container's start limit, which still ends a guest that never gets ready
+    script = got.get("reset", "")
+    cleared = script.find('systemctl reset-failed "container@$n.service"')
+    for host, n in (("acer", 3), ("msi", 4)):
+        lim = got.get("limits", {}).get(host, {})
+        check(lim.get("slots") == ["600"] * n
+              and 0 <= cleared < script.find('systemctl start "container@$n.service"')
+              and lim.get("exec") == "0" and lim.get("reset") is None
+              and lim.get("resets") == [{"overrideStrategy": "asDropin", "text": "[Unit]\nStartLimitIntervalSec=0\n"}] * n,
+              f"{host}: each slot's container@ keeps the core's 600 s / 3 starts, which dev-env-reset@ clears before it starts the container; exec-pool-exec@ and each slot's dev-env-reset@ have no start limit, the shared reset template keeps its own ({lim or out.stderr.strip()[-300:]})")
+    check(got.get("namedLimit") == {"StartLimitIntervalSec": "600", "StartLimitBurst": "3"},
+          f"a named worker's container keeps the core's start limit ({got.get('namedLimit') or out.stderr.strip()[-300:]})")
+    want = [f"acer-{n}" for n in acer_slots] + [f"msi-{n}" for n in msi_slots]
+    check(sorted(got.get("push", {})) == sorted(want), f"every slot of acer and msi is checked for its push key ({sorted(got.get('push', {}))})")
+    for host, p in got.get("push", {}).items():
+        links, git = p.get("links", []), p.get("git", {})
+        # an attempt's HOME has no Home Manager files: the system's git config sends its ssh push URL to the proxy
+        held = (p.get("credentials") == [] and p.get("binds") == [] and links == [] and "sammasak/nixos-config" in p.get("repos", [])
+                and all(f'insteadOf = "{u}"' in (p.get("rewrite") or "") for u in ("https://github.com/", "git@github.com:", "ssh://git@github.com/")))
+        what = "holds no GitHub credential, pushes through the GitHub proxy for its listed repos, rewritten in the system's git config"
+        check(held and git.get("EXEC_POOL_GIT_NAME") == "sammasak" and git.get("EXEC_POOL_GIT_EMAIL", "").endswith("@users.noreply.github.com"),
+              f"{host} {what}, and its helper commits as the owner's git identity ({ {k: v for k, v in p.items() if k != 'git'} }, { {k: v for k, v in git.items() if 'GIT_' in k} })")
 
 
 def check_nested(facts):
@@ -994,6 +1288,147 @@ BLOCKED_WHAT = "sys.config.networking.firewall.extraCommands"
 BLOCKED = (("", True), ("networking.enableIPv6 = false;", False))
 
 
+# modules/homelab/postgresql.nix's clients on acer: lukas reaches exec_pool as exec_pool_submit through its peer map
+# alone, the role owns no database, no other rule admits anyone, and the migration that grants to it waits for its role.
+SUBMITTER = r"""
+let
+  acer = (builtins.getFlake (toString %(root)s)).nixosConfigurations.acer-swift.config;
+  pg = acer.services.postgresql;
+in {
+  hba = builtins.filter (l: l != "") (builtins.split "\n" pg.authentication);
+  ident = builtins.filter (l: l != "") (builtins.split "\n" pg.identMap);
+  users = map (u: { inherit (u) name; own = u.ensureDBOwnership; }) pg.ensureUsers;
+  failed = map (a: a.message) (builtins.filter (a: !a.assertion) acer.assertions);
+  cli = builtins.any (p: p.pname or "" == "exec-pool") acer.environment.systemPackages;
+  migrate = acer.systemd.services.exec-pool-migrate.after;
+}
+"""
+
+
+def check_submitter():
+    out = run_eval(SUBMITTER % {"root": json.dumps(ROOT)})
+    got = json.loads(out.stdout) if out.returncode == 0 else {}
+    hba = [l for l in got.get("hba", []) if isinstance(l, str)]
+    ident = [l for l in got.get("ident", []) if isinstance(l, str)]
+    # its one TCP rule is msi's runner's, held by exec-pool-db-check
+    check([l for l in hba if not l.startswith("host ")] == ["local all postgres peer", "local exec_pool exec_pool peer", "local authentik authentik peer",
+                  "local exec_pool exec_pool_submit peer map=exec_pool_submit"]
+          and [l.split()[2] for l in hba if l.startswith("host ")] == ["exec_pool_runner"]
+          and "postgresql-setup.service" in got.get("migrate", [])
+          and ident == ["exec_pool_submit lukas exec_pool_submit"]
+          and {"name": "exec_pool_submit", "own": False} in got.get("users", []) and got.get("failed") == [] and got.get("cli") is True,
+          f"acer admits lukas to exec_pool as exec_pool_submit by peer map only, the role owns nothing, and exec-pool is installed ({ {k: got.get(k) for k in ('ident', 'users', 'failed', 'cli', 'migrate')} if got else out.stderr.strip()[-300:]}, {hba})")
+
+
+
+SESSIONS_GC = r"""
+let u = (builtins.getFlake (toString %(root)s)).nixosConfigurations.acer-swift.config.systemd.units;
+in (import <nixpkgs> { }).linkFarm "gc" [
+  { name = "gc"; path = u."exec-pool-sessions-gc.service".unit; }
+  { name = "list"; path = u."exec-pool-sessions-list.service".unit; }
+]
+"""
+
+SESSIONS_GC_MSI = r"""
+let c = (builtins.getFlake (toString %(root)s)).nixosConfigurations.msi-ms7758.config.systemd.services;
+  s = c.exec-pool-sessions-list; g = c.exec-pool-sessions-gc;
+in { inherit (s.environment) EXEC_POOL_DB; inherit (s.serviceConfig) User LoadCredential PrivateNetwork;
+  gc = { inherit (g.serviceConfig) PrivateNetwork RestrictAddressFamilies; cred = g.serviceConfig ? LoadCredential; env = g.environment ? EXEC_POOL_DB; }; }
+"""
+
+
+def check_sessions_gc():
+    """Runs acer's session remover against a scratch state dir and a written `sessions` list; msi's lists over TCP."""
+    out = subprocess.run(["nix", "build", "--no-link", "--print-out-paths", "--impure", "--expr", SESSIONS_GC % {"root": json.dumps(ROOT)}],
+                         capture_output=True, text=True)
+    unit = pathlib.Path(out.stdout.strip(), "gc/exec-pool-sessions-gc.service") if out.returncode == 0 else None
+    lunit = pathlib.Path(out.stdout.strip(), "list/exec-pool-sessions-list.service") if out.returncode == 0 else None
+    exe = re.search(r"^ExecStart=(\S+)", unit.read_text(), re.M) if unit else None
+    pre = re.search(r"^ExecStart=(\S+)", lunit.read_text(), re.M) if lunit else None
+    if not exe or not pre:
+        check(False, f"acer's session remover and its lister are on ({out.stderr.strip()[-300:]})")
+        return
+    g = unit.read_text()
+    check("User=exec_pool" in lunit.read_text() and "User=" not in g and "PrivateNetwork=true" in g
+          and "Requires=exec-pool-sessions-list.service" in g
+          and re.search(r"exec-pool sessions > /run/exec-pool-sessions-gc-list/sessions.tmp$", pathlib.Path(pre.group(1)).read_text(), re.M) is not None,
+          "acer lists every session as exec_pool, by peer, in its own unit; root's remover, after it, has no network")
+    out = run_eval(SESSIONS_GC_MSI % {"root": json.dumps(ROOT)})
+    got = json.loads(out.stdout) if out.returncode == 0 else {}
+    check(got.get("EXEC_POOL_DB", "").endswith("dbname=exec_pool user=exec_pool_runner") and got.get("User") == "exec_pool"
+          and got.get("PrivateNetwork") is False and [c.split(":")[0] for c in got.get("LoadCredential", [])] == ["db-password"]
+          and got.get("gc") == {"PrivateNetwork": True, "RestrictAddressFamilies": ["AF_UNIX"], "cred": False, "env": False},
+          f"msi's lister reads acer's queue as exec_pool_runner with its runner's password credential; root's remover has neither network nor credential ({got or out.stderr.strip()[-300:]})")
+    text = pathlib.Path(exe.group(1)).read_text()
+    with tempfile.TemporaryDirectory() as d:
+        state, metrics, own, listed = (pathlib.Path(d, n) for n in ("state", "metrics", "own", "sessions"))
+        # the runner's directory name for a task id (workspace.rs Sessions::hex); t1 is a real id's
+        ids = {"t1": "cli-c86629271199d5b7", "t2": "cli-2", "t3": "cli-3", "t4": "cli-4", "o1": "cli-o1", "o2": "cli-o2"}
+        hx = lambda i: ids.get(i, i).encode().hex()
+        for p in (state / ".trash", metrics, own, state / ".sessions/dock/pool1/cur/work"):
+            p.mkdir(parents=True)
+        for t in ("t1", "t3", "o1"):
+            (state / ".sessions" / hx(t) / "tree/work").mkdir(parents=True)
+        (state / ".sessions" / hx("t2")).mkdir()
+        for c in ("t1", "t2", "o2"):
+            (state / ".sessions-store" / hx(c) / "tree").mkdir(parents=True)
+        script = text.replace("/run/exec-pool-sessions-gc-list/sessions", str(listed)).replace("/var/lib/exec-pool-sessions-gc", str(own))
+        script = script.replace("/var/lib/workers", str(state)).replace("/run/exec-pool-sessions-gc", str(metrics))
+        pathlib.Path(d, "gc").write_text(script)
+        line = lambda i, eligible=True, handed_back=True, dir=None: json.dumps({"task_id": ids.get(i, i), "dir": dir or hx(i), "state": "cancelled", "last_change": "2026-11-01T00:00:00Z",
+                                                                      "hosts": ["acer-swift"], "eligible": eligible, "handed_back": handed_back})
+        known = lambda i: json.dumps({"task_id": ids[i], "dir": hx(i), "eligible": False, "handed_back": None})
+
+        # the list as `exec-pool sessions` prints it: t1 to t4 known, the given lines eligible; None: no list
+        def run(eligible, listed_ok=True):
+            listed.unlink(missing_ok=True)
+            if listed_ok:
+                given = {json.loads(e).get("task_id") for e in eligible if e.startswith("{")}
+                listed.write_text("".join(e + "\n" for e in eligible) + "".join(known(i) + "\n" for i in ("t1", "t2", "t3", "t4") if ids[i] not in given))
+            return subprocess.run(["bash", str(pathlib.Path(d, "gc"))], capture_output=True, text=True)
+
+        r = run([line("t1"), line("t2")])
+        events = [json.loads(l) for l in r.stdout.splitlines() if l.startswith("{")]
+        trash = sorted(p.name.rsplit("-", 2)[0] for p in (state / ".trash").iterdir())
+        check(r.returncode == 0 and trash == [f"session-{hx('t1')}", f"store-{hx('t1')}"] and not (state / ".sessions" / hx("t1")).exists()
+              and (state / ".sessions" / hx("t3") / "tree").is_dir() and (state / ".sessions-store" / hx("t2")).is_dir() and (state / ".sessions" / hx("t2")).is_dir()
+              and (state / ".sessions/dock/pool1/cur/work").is_dir()
+              and [(e["event"], e.get("kind")) for e in events] == [("removed", "session"), ("removed", "store"), ("skipped", None)]
+              and all(e.get("state") == "cancelled" and e.get("hosts") == ["acer-swift"] and e.get("task_id") == ids["t1"] for e in events[:2]),
+              f"an eligible parked tree, named by the hex of its id cli-c86629271199d5b7, and its store copy move to .trash with one JSON line each; a docked one, an ineligible one and the dock stay ({r.returncode}, {trash}, {events}, {r.stderr.strip()[-200:]})")
+        prom = (metrics / "sessions-gc.prom").read_text() if (metrics / "sessions-gc.prom").exists() else ""
+        check('homelab_exec_pool_sessions_removed_total{kind="session"} 1' in prom and 'homelab_exec_pool_sessions_removed_total{kind="store"} 1' in prom
+              and 'homelab_exec_pool_sessions_orphaned{kind="parked"} 1' in prom and 'homelab_exec_pool_sessions_orphaned{kind="store"} 1' in prom
+              and (state / ".sessions" / hx("o1") / "tree").is_dir() and (state / ".sessions-store" / hx("o2")).is_dir(),
+              f"the removed totals count each move, and a tree the queue does not know is counted as an orphan and stays ({prom!r})")
+        (state / "outside").mkdir()
+        r = run([line("t9", dir="../outside"), line("t1")])
+        prom = (metrics / "sessions-gc.prom").read_text()
+        check(r.returncode != 0 and (state / "outside").is_dir() and 'homelab_exec_pool_sessions_removed_total{kind="session"} 1' in prom
+              and r.stdout.count('"refused"') == 1,
+              f"a dir that is not a hex name is refused and fails the run, moving nothing; the totals carry over runs ({r.returncode}, {r.stdout.strip()[-300:]})")
+        r = run(["not json", line("t3")])
+        check(r.returncode != 0 and (state / ".sessions" / hx("t3") / "tree").is_dir() and (metrics / "sessions-gc.prom").read_text() == prom,
+              f"a list that does not parse fails the run before any move ({r.returncode})")
+        (state / ".sessions" / hx("t3") / "tree/work/x").write_text("x")
+        r = run([line("t3")], listed_ok=False)
+        check(r.returncode != 0 and (state / ".sessions" / hx("t3") / "tree").is_dir() and (metrics / "sessions-gc.prom").read_text() == prom,
+              f"no list (the lister failed) fails the run with nothing moved and the textfile left as it was ({r.returncode})")
+        r = run([line("t3", handed_back=False), line("t3x", eligible=False)])
+        check(r.returncode == 0 and (state / ".sessions" / hx("t3") / "tree/work/x").exists() and '"removed"' not in r.stdout,
+              f"a line the queue calls eligible whose branch was not handed back whole, or one it does not call eligible, moves nothing ({r.returncode}, {r.stdout.strip()[-300:]})")
+        prom = (metrics / "sessions-gc.prom").read_text()
+        (state / ".sessions" / hx("t4")).symlink_to(state / ".sessions" / hx("t3"))
+        (state / ".sessions-store" / hx("t4") / "tree").mkdir(parents=True)
+        own.joinpath("removed-store").write_text("garbage")
+        r = run([line("t8", dir="dock"), line("t4")])
+        prom = (metrics / "sessions-gc.prom").read_text()
+        check(r.returncode != 0 and (state / ".sessions/dock/pool1/cur/work").is_dir() and (state / ".sessions-store" / hx("t4") / "tree").is_dir()
+              and (state / ".sessions" / hx("t3") / "tree/work/x").exists() and r.stdout.count('"refused"') == 2
+              and 'homelab_exec_pool_sessions_removed_total{kind="store"} 0' in prom,
+              f"the id dock and a session that is a link are refused, the latter's store copy kept; a counter that is not a number restarts at 0 ({r.returncode}, {r.stdout.strip()[-300:]}, {prom!r})")
+
+
 def main():
     # every evaluation below that is not expected to throw, in chunks of PREFETCH_CHUNK per process instead of one process
     # each: the order of the checks, and so of their lines, is unchanged. The TYPED cases must throw, so each stays its own.
@@ -1002,10 +1437,10 @@ def main():
         ("{ }", ACT), (RETIRED, ACT), (PAUSED_ONE, ACT), ("{ }", ALERTS), (ALERT_ON, ALERTS), (PAUSED, OWN), (PAUSED, PAUSED_FACTS),
         ("{ }", BOUNDED), (STUB_SSH, CTL), ("{ }", DECLARATION),
         *[(BLOCKED_CASE % v6, BLOCKED_WHAT) for v6, _ in BLOCKED], *[(case, OWN) for _, case, _ in ASSERTED]]])
-    prefetch([fleet("{ }"), fleet(FLEET_INSTANCE, FLEET_FACTS), *[fleet(case) for _, case, _ in FLEET_CASES], fleet(USER_SECRET[1]),
+    prefetch([fleet("{ }"), fleet(FLEET_INSTANCE, FLEET_FACTS), *[fleet(c[1], host=fleet_host(c)) for c in FLEET_CASES], fleet(USER_SECRET[1]),
               NO_OTEL % {"root": json.dumps(ROOT)}, GITHUB % {"root": json.dumps(ROOT)}, TELEMETRY % {"root": json.dumps(ROOT)},
-              SCRIPTS % {"root": json.dumps(ROOT)}, host_network_expr(), SLOT % {"root": json.dumps(ROOT)},
-              POOL_COMPAT % {"root": json.dumps(ROOT)}])
+              SCRIPTS % {"root": json.dumps(ROOT)}, host_network_expr(),
+              *[fleet(case) for _, case, _ in POOL_CASES]])
     out = nix_eval("{ }")
     check(out.returncode == 0 and json.loads(out.stdout) == [], f"a valid host fails no assertion ({out.stdout.strip() or out.stderr.strip()[-600:]})")
     out = nix_eval("{ }", GUEST)
@@ -1053,6 +1488,8 @@ def main():
     check(ok.get("privateUsers") == "no" and not ok.get("extraFlags") and ok.get("binds") and not any(":" in b["dst"] for b in ok["binds"]) and ok.get("sudoPassword") is True,
           f"an instance without rootInGuest is unchanged: host uids, plain binds, sudo with a password ({ok})")
     check_host_network()
+    check_submitter()
+    check_sessions_gc()
     out = nix_eval("{ }", NO_ROOT)
     got = json.loads(out.stdout) if out.returncode == 0 else {}
     check(got.get("allowed") == ["*"] and got.get("mounts") == want_mounts,
@@ -1060,6 +1497,20 @@ def main():
     out = nix_eval(NONE_DECLARED, NO_ROOT)
     got = json.loads(out.stdout) if out.returncode == 0 else {}
     check(got.get("nosuid") == [], f"a host that declares no instance and no retired name gets no mount ({got or out.stderr.strip()[-300:]})")
+    for case, custom in (("{ }", False), (RESOLVER_SET, True)):
+        out = nix_eval(case, RESOLVER)
+        got = json.loads(out.stdout) if out.returncode == 0 else {}
+        waits = any("worker-wait-resolv-conf" in x for x in got.get("pre", []))
+        if custom:
+            check(got.get("ns") == ["192.0.2.53"] and got.get("host") is False and "nameserver 192.0.2.53" in got.get("local", "") and not waits,
+                  f"with nameservers the guest writes its own resolv.conf from them, not the host's copy ({got or out.stderr.strip()[-300:]})")
+        else:
+            check(got.get("ns") == [] and got.get("host") is True and waits,
+                  f"without nameservers the guest keeps the host's resolv.conf copy and waits for it ({got or out.stderr.strip()[-300:]})")
+    out = run_eval(FLEET_RESOLVER % {"root": json.dumps(ROOT)})
+    got = json.loads(out.stdout) if out.returncode == 0 else {}
+    check(got.get("got") and all(g == {"ns": [got["want"]], "host": False} for g in got["got"].values()),
+          f"msi's guests resolve through the fleet's DNS host, not the host's resolv.conf ({got or out.stderr.strip()[-300:]})")
     out = nix_eval("{ }", LIMITS)
     got = json.loads(out.stdout) if out.returncode == 0 else {}
     want = {"memory_reserved": str(2 << 30), "pool_memory": str(8 << 30), "pool_swap": str(got.get("swap")), "cpu_weight": "200",
@@ -1091,8 +1542,9 @@ def main():
 
     out = run_eval(fleet("{ }"))
     check(out.returncode == 0 and json.loads(out.stdout) == [], f"msi-ms7758 as committed fails no assertion ({out.stdout.strip() or out.stderr.strip()[-600:]})")
-    check_slot()
     check_pool_compat()
+    check_session_dock()
+    check_runner()
     out = run_eval(fleet(FLEET_INSTANCE, FLEET_FACTS))
     facts = json.loads(out.stdout) if out.returncode == 0 else {}
     check(facts.get("assertions") == [], f"msi-ms7758 with a claude instance fails no assertion ({facts.get('assertions', out.stderr.strip()[-600:])})")
@@ -1110,7 +1562,7 @@ def main():
     check(host.get("env") is None and any(r.startswith("Bash(git push") for r in host.get("deny", [])),
           f"the host keeps its Bash deny rules and its own claude without the variable ({host})")
     check_no_verify()
-    for name, case, want, host in [(*c, "msi-ms7758") for c in FLEET_CASES] + [(*USER_SECRET, "msi-ms7758")]:
+    for name, case, want, host in [(*c[:3], fleet_host(c)) for c in FLEET_CASES] + [(*USER_SECRET, "msi-ms7758")]:
         out = run_eval(fleet(case, host=host))
         check(want in out.stdout + out.stderr, f"fleet {name}: rejected with \"{want}\" ({(out.stdout + out.stderr).strip()[-300:]})")
     out = run_eval(NO_OTEL % {"root": json.dumps(ROOT)})
@@ -1119,7 +1571,7 @@ def main():
           f"without nativeOtel an instance that sets nothing sends no telemetry and the host fails no assertion ({got or out.stderr.strip()[-600:]})")
     out = run_eval(GITHUB % {"root": json.dumps(ROOT)})
     got = json.loads(out.stdout) if out.returncode == 0 else {}
-    check(got.get("failing") == [], f"msi-ms7758 with an egress.github instance and a gh login fails no assertion ({got.get('failing', out.stderr.strip()[-600:])})")
+    check(got.get("failing") == [], f"asus-b460m with an egress.github instance and a gh login fails no assertion ({got.get('failing', out.stderr.strip()[-600:])})")
     binds = got.get("binds", {})
     creds = {"/var/lib/host-credentials/id_ed25519", "/var/lib/host-credentials/gh-hosts.yml"}
     check(not creds & set(binds.get("gh", creds)) and "/run/egress" in binds.get("gh", []) and creds <= set(binds.get("plain", [])),
@@ -1141,6 +1593,7 @@ def main():
     check("bind unix//run/dev-env-egress/plain/github.sock" not in sites and "/graphql" not in caddy and "bind unix//run/dev-env-egress/gh2/github.sock" in sites,
           f"no GitHub site for an instance without repos, no GraphQL unless asked for ({sorted(sites)})")
     check_github_proxy(gh)
+    check_github_forward()
     check(got.get("config", "").startswith("/nix/store/") and "/run/secrets" not in caddy,
           f"the proxy's Caddyfile ({got.get('config')}) names no path under /run/secrets")
     out = run_eval(TELEMETRY % {"root": json.dumps(ROOT)})

@@ -1,7 +1,7 @@
 # Weekly goals: 23–29 November 2026
 
 Outcome: a working metrics → alerts → investigation → fix → verification loop, and the specialist agent roles
-that run it. Small PRs, shipped by nspawn workers, each merged batch deployed to the hosts it touches. Updated when
+that run it. Small PRs, shipped by execution pool sessions, each merged batch deployed to the hosts it touches. Updated when
 PRs merge.
 
 ## How we work (owner, 23 Nov)
@@ -12,39 +12,83 @@ PRs merge.
   longer, so no topic starves. An urgent break jumps the queue.
 - No dedicated benchmarks. Ship behind a switch scoped to one host or worker and compare on the running system.
   Every feature that claims an improvement needs a switch, a metric that can tell on from off, and a regression alert.
-- Deploy as we go; the execution pool's slots become the rollout unit.
+- Work is dispatched as pool sessions (`exec-pool start`, then `exec-pool send` for each follow-up), never to Herdr
+  panes. Deploy as we go; the execution pool's slots are the rollout unit.
 - Night is reduced capacity, not a pause. msi and asus are off 21:00 to 08:30 and are never woken; acer (heavy work,
-  one job at a time) and lenovo (edits only) keep working the queue with about two active workers. Only work that
+  one job at a time) and lenovo (edits only) keep working the queue with about two active sessions. Only work that
   needs msi or asus waits for the morning.
 - Prefer upstream nixpkgs modules and built-in features over home-made services.
 
 ## Queue
 
-In flight (24 Nov, 07:00): second alert slice of #600 (`a1`); live evidence written onto #624, #625 and #626 (lenovo
-subagent). Parked until msi is on (08:30): pool slot declaration (`m2`, built and tested locally, unpushed); one full
-gate on main for the night's pushes (`just qa-owed`); msi and asus deploys.
-Merged and live since 05:00: flake check green again (#695, step passed in 1263 s); worker guests leave record
-shipping to the host, no more false "Loki unreachable" (#697; 789 gate-step records from `a1` are in Loki); night
-pushes run a 90 s evaluation step that refuses a break like #691's (#698); role adapters name one place and take the
-task checkout from the handoff (skills#157, #158; pin #699, #158 not pinned yet).
+Owner, 24 Nov: ship the real work with a narrow test per change; no long gate per change. Merges and deploys are
+collected into a batch, and the scheduled full gate on main (acer, four times a day, first run 15:20) covers the batch.
+
+First real task ran through the pool on 24 Nov at 11:53: a Claude task submitted with `exec-pool submit` on acer,
+claimed by `pool1`, cloned, run and settled as succeeded in 12 s, slot reset.
+Merged since 10:00: pool metrics, dashboard row and two alerts (#719, #721); submit, status and list (#720); runner
+runs slot agents in the attempt workspace (#725); fleet dispatch listener and credential, off by default (#726, #730);
+Codex and Pi in slots (#727); systemd-run no longer expands task text (#728); result and wait (#729);
+`typed-interfaces-test` green again (#731); fleet credential fix (#733); heartbeats, cancel and record_result with a
+300 s lease (#734, #735); msi slot and runner, so the pool runs on acer and msi (#736); a task pushes its own branch
+`pool/<task id>` and reports it (#737); `exec-pool submit` from lenovo plus skills pin (#738); submit refuses an agent
+no live slot offers, and acer offers pi (#739); rollback across a migration and visible slot quarantine (#740).
+Since 14:25: sessions are live (#744 queue with inbox, park and send; #745 turn in a slot; deployed 15:09). The
+first live session, `cli-c86629271199d5b7` on acer, parked itself after 14 s, `exec-pool send` woke it 6 s later,
+and it resumed with its transcript and an uncommitted file intact. Then session housekeeping (#746: gcroots, disk
+metric, remover), session metrics with tokens and cost per turn, `exec-pool sessions --gc` and a dashboard row
+(#747), t1 and herman retired for a second pool slot on msi and acer, their unpushed branches bundled to
+`/var/lib/worker-archive` on each host (#748), a session claimed only on a host that holds its state (#749), the
+remover on, for sessions handed back whole only, final after 7 days or waiting idle 14 days (#750), and no start
+limit on slot units (#751, being replaced: the slot reset clears the limit instead). skills#162: coordinator
+`pool:start`, `pool:send`, `pool:wait`.
+Since 16:40 (live on acer and msi at #764 unless noted): slot reset clears the start limit (#755), remover dir names
+(#756), GitHub sidecar for acer slots (#757), drain before power-off with a drained one-shot going to review (#758),
+a1, m1 and m2 retired for three slots on acer and four on msi, unpushed work bundled under `/var/lib/worker-archive`
+(#759), the coordinator dispatches only as pool sessions (#760, #761; skills#163, #164), timers and `handed_back`
+(#762, #763), msi slots reach GitHub through acer's sidecar with no key on any slot and private clones through the
+proxy (#764), a timed-out turn continues up to three times (#765, merged, not deployed).
+Live proofs: a timer woke a parked session at 17:59:02; a session ran turn 1 on acer and turn 2 on msi with its
+state, and pushed from msi through acer's sidecar to the private skills repo; state is pushed to the acer store at
+every park.
+Live: acer and msi at #764; lenovo, asus and black-pi behind.
+
+Live findings, 19:00: acer `pool1` sat quarantined 15:11 to 17:27 with no alert (only `ExecPoolQueueDown` is loaded
+in Prometheus); a failed prepare leaves an empty result; slot metrics exist for acer only; the first msi deploy at
+18:06 rolled back on a slot reset overlapping activation (the retry passed); lenovo cannot push nixos-config (its
+devenv gate is stale and re-entering builds) nor fetch a new private skills pin as a user.
+
+Decided by the owner, 24 Nov: the pool is re-architected around sessions that park and wake by themselves, with no
+pause or resume command. A task is a session, a lease is a turn, and every turn ends in a park to waiting. A wake is a
+row in the session's inbox (`exec-pool send`, or a due timer). State lives outside the slot under the workers state
+dir, is docked into a slot at `/session` for one turn, and is pushed to acer at every park so any host can continue
+it. The named workers are pool slots now: herman and t1 retired for pool2 by #748; a1, m1 and m2 retired for acer's
+pool3 and msi's pool3 and pool4 by #759. Brief 656 (explicit pause and resume) is replaced by 1c.
+
+Current batch, 19:00: pool metrics and alerts (in flight), the skills pin to 811b2d6 and #765, then one deploy of acer
+and msi plus lenovo for the pin; asus and black-pi follow.
 
 Waiting, in pick-up order:
 
 | # | Topic | Pain now | Next small change |
 |---|-------|----------|-------------------|
-| 1 | Workers | msi sessions die when the pool runs out of memory (#647) | cap or slot limit (needs msi on) |
-| 2 | Pool | no task has run through it | push slots (#650), then the runner (#652); enqueue smoke test on acer |
-| 3 | Live comparison | first numbers only | read a day of Shunt on/off and of herman against default; decide to widen or switch off |
-| 4 | Gates | flake check took 1263 s after #683, not less than the 13.1 min median; a build-only break (#693's kind) still passes at night | read the morning gate per step; find what grew |
-| 5 | Roles | four write roles still say `devenv tasks run` with no directory; sandbox test cannot run in a guest | same wording fix for the four; pin skills#158; a handoff through Herdr |
-| 6 | Monitoring | no backlog figure for the guest record shipper | whichever of the two candidates slice 2 did not take; Alertmanager 0.34 |
-| 7 | Leftovers | two drafts open | #616 black-pi kernel (needs a build path that is not the Pi), skills#106 (fixes named on the PR) |
+| 1 | Pool metrics | a quarantined slot raised no alert; msi has no slot metrics | per-host labels, prepare failures, dashboard row, five actionable alerts, load the unloaded rules, reset during deploy (session `cli-62d78022bdb9581d`, in flight) |
+| 2 | Coordinator | the pinned skills predate pool-only dispatch | skills pin to 811b2d6, then a lenovo deploy (this session) |
+| 3 | Deploy | #765 merged, not live | #765 to acer and msi with the next batch; lenovo, asus, black-pi behind |
+| 4 | Isolation | slots run without a user namespace, `lukas` is in wheel in the guest | user namespaces, no wheel in slots |
+| 5 | Sessions | no logs or priority per session | logs per session, priority at claim |
+| 6 | Sessions | a running turn cannot be displaced or watched | preemption and attach |
+| 7 | Credentials | a slot can push any branch, tokens are long-lived | slice 3 (a slot may push only `pool/<task id>`), slice 4 (short-lived GitHub App tokens); store follow-ups in #754 |
+| 8 | Alerts | #624's unfinished alert work sits outside the pool | a1's patch at `/var/lib/worker-archive/a1` on acer |
+| 9 | Gates | first scheduled gate red on `shunt-metrics-test` only, fixed since | read the next scheduled gate result |
+| 10 | Live comparison | `ShuntCollectorStale` fires since the on side moved | read a day of Shunt on and off on 25 Nov, now on acer `pool1` |
+| 11 | Leftovers | one draft open | #616 (needs a physical reboot of black-pi) |
 
 ## Priorities
 
 | P | Issue | Scope | State |
 |---|-------|-------|-------|
-| P0 | [#600](https://github.com/sammasak/nixos-config/issues/600) | Self-improvement milestone | all hosts on main of 23 Nov; live receipts to collect |
+| P0 | [#600](https://github.com/sammasak/nixos-config/issues/600) | Self-improvement milestone | all hosts on main of 23 Nov; first live receipts on #624 and #625 (24 Nov) |
 | P0 | [#624](https://github.com/sammasak/nixos-config/issues/624) | Actionable alerts | split below |
 | P0 | [#625](https://github.com/sammasak/nixos-config/issues/625) | Shunt metrics, Grafana, alerts | split below |
 | P1 | [skills#138](https://github.com/sammasak/skills/issues/138) | Thin global context, role context | merged, skills#141 |
@@ -52,7 +96,7 @@ Waiting, in pick-up order:
 | P1 | [skills#139](https://github.com/sammasak/skills/issues/139) | Metrics analyst | merged, skills#143, #144 |
 | P1 | [skills#131](https://github.com/sammasak/skills/issues/131) | Incident investigator | merged, skills#145 |
 | P1 | [skills#140](https://github.com/sammasak/skills/issues/140) | Improvement verifier | merged, skills#146, #148 |
-| P1 | [skills#137](https://github.com/sammasak/skills/issues/137) | Observability engineer | merged, skills#147; follow-up with `m2` |
+| P1 | [skills#137](https://github.com/sammasak/skills/issues/137) | Observability engineer | merged, skills#147; follow-up waits for a pool session (m2 retired) |
 | P1 | [skills#133](https://github.com/sammasak/skills/issues/133) | Nix platform engineer | merged, skills#149 |
 | P1 | [skills#136](https://github.com/sammasak/skills/issues/136) | Dynamic handoffs pilot | closed 24 Nov: live named-role spawn and tests green |
 | P2 | skills [#132](https://github.com/sammasak/skills/issues/132), [#134](https://github.com/sammasak/skills/issues/134), [#135](https://github.com/sammasak/skills/issues/135) | Remaining specialists | all merged: skills#153, #154, #155 |
@@ -71,8 +115,8 @@ Waiting, in pick-up order:
 | 624-d | Journal-delivery stale alert | merged, live on black-pi | #640 |
 | 624-e | Backup stale, never recorded, collector stale | merged, live on black-pi; first recorded runs due 24 Nov 03:00 | #640 |
 | 624-f | Synthetic fire and resolve test through Alertmanager and alert-bridge | merged | #666 |
-| 624-g | Live delivery receipts | queued: black-pi and lenovo are on main | |
-| 624-h | alert-bridge renders query and runbook in the ntfy page (alert-bridge repo, then an app bump) | `m1`: bridge change and test update done, push gate running | |
+| 624-g | Live delivery receipts | read 24 Nov (comment on #624): NodeOOMKill and the synthetic alert reached ntfy and resolved; no blindness alert has fired yet | |
+| 624-h | Query and runbook in the ntfy page | merged, live: Alertmanager posts straight to ntfy, alert-bridge removed | #672, #680 |
 
 ### #625 Shunt metrics
 
@@ -81,7 +125,7 @@ Waiting, in pick-up order:
 | 625-a | Read-only check of the hook JSONL on lenovo, schema decision | done: comment on #625 | |
 | 625-1 | Collector, fixture tests, NixOS wiring (nav-metrics pattern) | merged, enabled on no host yet | #638 |
 | 625-2 | Shunt section in the agent-harness dashboard, stale and failing alerts, collector on lenovo | merged, live: collector on lenovo, rules on black-pi | #644 |
-| 625-pilot | Lenovo pilot, on/off benchmark | owner gate: token spend | |
+| 625-pilot | On/off on the running system (no benchmark, owner 23 Nov) | merged, live: on for lenovo and acer's `pool1` (moved from `a1` by #759), off for acer's other slots; read a day on 25 Nov | #678, #679 |
 
 ### #646 execution pool (v0.1)
 
@@ -91,11 +135,13 @@ are. v0.2 and v0.3 stay locked until the v0.1 offline gate has evidence. Deferre
 | Item | What | Needs | State | PR |
 |------|------|-------|-------|----|
 | [#649](https://github.com/sammasak/nixos-config/issues/649) | Contract: ADR, `pkgs/exec-pool` types and state machine, compatibility fixture | | merged; acer gate 23 min, one review round plus a fix round, about 4 h from dispatch to merge | #667 |
-| [#650](https://github.com/sammasak/nixos-config/issues/650) | `sam.workers.executionPool` slot count | #649 | `m2` | |
+| [#650](https://github.com/sammasak/nixos-config/issues/650) | `sam.workers.executionPool` slot count | #649 | closed; `pool1` declared on acer | #704, #716 |
 | [#651](https://github.com/sammasak/nixos-config/issues/651) | PostgreSQL queue, leases, fencing | #649 | closed; live on acer | #673, #693 |
-| [#658](https://github.com/sammasak/nixos-config/issues/658) | Events to the journal, textfile metrics, dashboard row, two alerts | starts with #651 | `a1`, first slice staged | |
-| [#652](https://github.com/sammasak/nixos-config/issues/652) | Runner: dispatcher, slot control, guest executor | #650, #651 | queued | |
-| [#653](https://github.com/sammasak/nixos-config/issues/653) | Per-attempt isolation and egress | #652 | queued | |
+| [#658](https://github.com/sammasak/nixos-config/issues/658) | Events to the journal, textfile metrics, dashboard row, two alerts | starts with #651 | first slice merged, live on acer: metrics, dashboard row, two alerts | #719, #721 |
+| [#652](https://github.com/sammasak/nixos-config/issues/652) | Runner: dispatcher, slot control, guest executor | #650, #651 | live on acer: first Claude task succeeded 24 Nov; heartbeats, cancel, record_result, own branch per task and submit refusal merged | #711, #713, #720, #725, #728, #729, #734, #735, #737, #738, #739, #740 |
+| [#653](https://github.com/sammasak/nixos-config/issues/653) | Per-attempt isolation and egress | #652 | merged, live: each attempt runs in its own workspace; Codex and Pi routes in slots | #717, #725, #727 |
+| [#654](https://github.com/sammasak/nixos-config/issues/654) | Fleet dispatch: msi runner against acer's queue | #652 | merged, live: the pool runs on acer and msi | #726, #730, #733, #736 |
+| Sessions | Park and wake re-architecture (queue above); replaces brief 656 | #652 | live on acer and msi: first session parked, woke and resumed 24 Nov; store on acer, drain, timers, sidecar and pool-only coordinator live at #764; #765 merged | #744 to #752, #755 to #765 |
 | v0.1 gate | Acceptance script in a VM: PASS, FAIL or UNTESTED per criterion | #653, #658 | | |
 
 Per merged pool PR, record here: gate minutes, review rounds, hours from dispatch to merge.
@@ -106,20 +152,19 @@ Placement order: acer, then msi, asus last (it carries ollama and the heavier lo
 
 | Host | Worker | Item |
 |------|--------|------|
-| acer-swift | `a1` | #651, #658 |
-| acer-swift | `herman` | dashboards lane (#525, #523), not this week's list |
-| msi-ms7758 | `m1` | 624-h |
-| msi-ms7758 | `m2` | #650 |
+| acer-swift | `pool1` to `pool3` | pool slots, Shunt on for `pool1`; `herman` and `a1` retired, their work in `/var/lib/worker-archive` |
+| msi-ms7758 | `pool1` to `pool4` | pool slots; `t1`, `m1` and `m2` retired, their work in `/var/lib/worker-archive` |
 | asus-b460m | none | `a624`, `s138`, `s130` retired |
 
-msi and asus have no `gh` login: workers push branches over SSH and the lenovo session opens and merges the PRs.
+No slot holds a GitHub key: acer's and msi's slots push through acer's GitHub sidecar, private clones go through the
+proxy, and the owner merges the PRs.
 
 ## Deploys
 
 Every host deployed main on 23 Nov: acer-swift, msi-ms7758, asus-b460m, black-pi, lenovo. The first black-pi deploy
 rolled back on a journal-metrics start race, fixed by #634. asus deployed again after #639 (workers retired).
 msi, asus and acer deployed main again on the evening of 23 Nov (gaming entries, skills pin #661; acer also has the
-pin from #670). lenovo and acer deployed #699 at 06:40 on 24 Nov, black-pi #694 at 05:00. Owed: msi and asus, after 08:30 on 24 Nov. Lenovo's user slice (8.1G) hit its memory cap while two agents ran skills gates there: one at a time.
+pin from #670). lenovo and acer deployed #699 at 06:40 on 24 Nov, black-pi #694 at 05:00. On 24 Nov: asus #703 at 08:25, msi #714 at 10:00, acer #710 at 09:50 and #728 at 11:50 (the #725 deploy rolled back first: fixed by #728); acer and msi at #739, then #745 at 15:09 (sessions live), then #750 at 16:34 (acer) and 16:36 (msi), then #764 (the first msi deploy at 18:06 rolled back on a slot reset overlapping activation; the retry passed). Lenovo's user slice (8.1G) hit its memory cap while two agents ran skills gates there: one at a time.
 
 ## Gaming entries (owner request, 23 Nov)
 
@@ -130,7 +175,7 @@ Steam Remote Play can still stream from msi through Valve's relay: the switch is
 ## Owner gates
 
 None, except physical access and spending money (owner, 23 Nov). The coordinator decides and ships everything else.
-Owed after 08:30 on 24 Nov: one full gate on main (covers the night's pushes, `just qa-owed`), deploy msi and asus.
+The scheduled gate on acer runs the full gate on main; nothing is owed by hand.
 
 ## Merged this week
 
@@ -146,9 +191,23 @@ Owed after 08:30 on 24 Nov: one full gate on main (covers the night's pushes, `j
   alert clears, #642 typed textfile port, #637 usage records, #631 asus model capability, #689 late-failure guard,
   #690 seventh-host reuses evaluations, #691 role adapters pinned to the skills input, #693 pool queue on acer,
   #694 and #695 flake check green again, #697 guest records shipped by the host only, #698 night eval step,
-  #699 skills pin
+  #699 skills pin, #701 untouched issues alert, #702 compaction loop alert, #703 skills pin, #704 pool slots,
+  #705 record backlog alert, #707 and #712 scheduled gate, #708 PostgreSQL module, #709 guest daemon OOM order,
+  #710 annotation check on vendor rules, #711 agent adapter, #714 guest DNS, #716 slot agents, #717 attempt workspace,
+  #719 and #721 pool metrics and alerts, #720 submit CLI, #722 inventory with one slot, #724 skills pin,
+  #725 runner in the attempt workspace, #726 and #730 fleet dispatch listener and credential, #727 Codex and Pi in slots,
+  #728 no expansion of task text, #729 result and wait, #731 typed interfaces green,
+  #733 fleet credential fix, #734 heartbeats, cancel and record_result, #735 exec-pool cancel, #736 msi slot and runner,
+  #737 task pushes its own branch, #738 submit from lenovo and skills pin, #739 submit refuses an agent no slot offers,
+  #740 rollback across a migration and slot quarantine, #744 session queue, inbox, park and send, #745 session turn
+  in a slot, #746 session housekeeping, #747 session metrics and `sessions --gc`, #748 t1 and herman retired for
+  pool2, #749 claim only where the state is, #750 session remover on, #751 no start limit on slot units, #752 session state in the acer store,
+  #755 slot reset clears the start limit, #756 remover dir names, #757 GitHub sidecar for acer slots, #758 drain before
+  power-off, #759 a1, m1 and m2 retired for slots, #760 and #761 coordinator dispatches as pool sessions, #762 and #763
+  timers and `handed_back`, #764 msi slots through acer's sidecar, #765 a timed-out turn continues
 - skills: #141 role context (#138), #142 execution field (#130), #143 and #144 metrics analyst (#139),
   #145 incident investigator (#131), #146 improvement verifier (#140), #147 observability engineer (#137), #148 verifier follow-up,
   #149 nix platform engineer (#133), #151 and #152 handoffs pilot (#136), #153 nix exposure auditor (#132),
   #154 regression engineer (#134), #155 Rust maintainer (#135), #156 dangling pointer check,
-  #157 and #158 adapters name one place
+  #157, #158 and #159 adapters name one place, #160 operator runbook line, #106 NUL in the bash hook, #162 coordinator `pool:start`, `pool:send`, `pool:wait`,
+  #163 and #164 pool-aware idle check, sessions in `work:status` and `coord:brief`

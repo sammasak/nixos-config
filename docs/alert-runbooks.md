@@ -1,18 +1,21 @@
 # Alert runbooks
 
 One section per alert in `modules/homelab/monitoring/rules/homelab.yaml`, `modules/homelab/monitoring/rules/shunt.yaml`,
-`modules/homelab/monitoring/rules/exec-pool.yaml`, `general.yaml` and `llm-gateway.yaml` beside them, and Loki's ruler rules, `modules/homelab/monitoring/loki-rules/fake/homelab.yaml`;
-each alert's `runbook_url` points at its heading here. The shipping alerts point at [shipping.md](shipping.md#alerts).
+`modules/homelab/monitoring/rules/exec-pool.yaml`, `modules/homelab/monitoring/rules/llm-gateway.yaml` and Loki's ruler
+rules, `modules/homelab/monitoring/loki-rules/fake/homelab.yaml`; each alert's `runbook_url` points at its heading here.
+The shipping alerts point at [shipping.md](shipping.md#alerts). The kube-prometheus-stack rules (`general.yaml`,
+`node-exporter.yaml`, `alertmanager.yaml`, `prometheus.yaml` there) keep upstream's runbook,
+`https://runbooks.prometheus-operator.dev/runbooks/<area>/<alert in lower case>`, and their `query` is their `expr`.
 
-Every homelab, Shunt, execution pool, general, llm-gateway, shipping and Loki-ruler alert carries the same annotations, held by the `monitoring-alert-annotations` check
-(`flake-modules/monitoring-check.nix`, `scripts/check-alert-annotations.py`):
+Every alert in a rule file black-pi's Prometheus loads, and every Loki-ruler alert, carries the same annotations, held
+by the `monitoring-alert-annotations` check (`flake-modules/monitoring-check.nix`, `scripts/check-alert-annotations.py`):
 
 | annotation | holds |
 |---|---|
 | `summary` | one line: the symptom and the component |
 | `description` | the observed condition, its threshold and duration, the affected host or service, the first safe step |
 | `query` | the first diagnostic PromQL, runnable as is in Prometheus on black-pi (`{{ $labels.* }}` are filled in by Prometheus); the `grafana-dashboards` check parses it and holds its metric names and jobs. A Loki-ruler alert's is LogQL, for Grafana's Explore on the Loki data source, and that check does not read it |
-| `runbook_url` | a heading in a tracked doc of this repo, on `main` |
+| `runbook_url` | a heading in a tracked doc of this repo, on `main`; for a kube-prometheus-stack rule, upstream's page for that alert |
 
 The ntfy page (Alertmanager's webhook payload, `modules/homelab/monitoring/alertmanager.nix`) carries `summary`,
 `description` and `Query: <query>`, and a tap opens `runbook_url`; all four also show in Prometheus's alert view. Run a PromQL query at `http://192.168.10.137:9090/graph`.
@@ -148,6 +151,30 @@ Fires: the backup-metrics collector's last completed scan is over 900 seconds ol
 `backup.prom` at all (it is on tmpfs, so a collector that never ran since boot leaves nothing), for 15 minutes.
 First: on the host, `systemctl status backup-metrics.timer backup-metrics` and `journalctl -u backup-metrics -n 20`.
 
+### Drill: a blind collector
+
+A live fire and resolve of a monitoring-blindness alert through the real rule, Alertmanager and ntfy, with nothing
+real made blind: black-pi runs no backup, so a synthetic collector series there fires BackupCollectorStale for
+`node="black-pi"` alone, and no other rule reads that metric. The `backup.yaml` rule test runs these steps in promtool;
+the `alert-fire-resolve` VM check proves the page's format. Run it in the daytime and say so first: it pages once.
+
+1. As root on black-pi, write the series an hour stale (node-exporter reads only `*.prom`):
+   `ssh -t black-pi 'printf "homelab_backup_collector_last_success_timestamp_seconds %d\n" $(( $(date +%s) - 3600 )) | sudo tee /run/node-exporter-textfile/synthetic.tmp >/dev/null && sudo mv /run/node-exporter-textfile/synthetic.tmp /run/node-exporter-textfile/synthetic.prom'`
+2. Within a minute, `time() - homelab_backup_collector_last_success_timestamp_seconds{node="black-pi"}` reads about
+   3600 at `http://192.168.10.137:9090/graph`, and `http://192.168.10.137:9090/alerts` shows BackupCollectorStale
+   pending for black-pi.
+3. After 15 minutes it fires: `http://192.168.10.137:9093` lists one BackupCollectorStale, `node="black-pi"`,
+   `severity="warning"`, `team="homelab"`, and within the 30 s group wait ntfy's `homelab-alerts` gets one
+   `[WARNING]` page at priority 3: the summary "The backup-metrics collector on black-pi is stale or missing", its
+   description, `Query: time() - homelab_backup_collector_last_success_timestamp_seconds{job="node-exporter",node="black-pi"}`
+   and a tap to this runbook. Note both times.
+4. Remove it: `ssh -t black-pi sudo rm /run/node-exporter-textfile/synthetic.prom`. At the next scrape the series is
+   stale, the alert resolves and ntfy gets its resolved message at priority 1 within one group interval (5 minutes).
+   Note the time; no second firing page may arrive.
+
+If step 4 is missed the page repeats every 12 hours until black-pi reboots (`/run` is tmpfs). The edge dashboard's
+collector-age panel shows a black-pi line for the drill.
+
 ## OtlpWritesRejected
 
 Fires: acer's alloy-otlp receiver (`otelcol.receiver.otlp.native`, behind `otlp.sammasak.dev`) answered OTLP POSTs
@@ -177,7 +204,7 @@ First: in Grafana's Explore on Loki, the events of that worker by session (ids a
 `sum by (attributes_session_id) (count_over_time({observer="harness", service_name="claude-code", event_name="compaction", host_name="<host>"} | json | attributes_trigger="auto" | attributes_worker="<worker>" [1h]))`.
 For an empty worker, filter `attributes_worker=""`. One session with most of them is the loop: stop it there. Many sessions each compacting a few times is load, not a
 loop.
-Rollback: for herman on acer, remove `sam.claude.autoCompactWindow` from `hosts/acer-swift/configuration.nix` (an
+Rollback: for a worker with `sam.claude.autoCompactWindow` set, remove it from its host's guest module (an
 approved deploy); a session keeps the window it started with until restarted.
 Do not: raise the threshold before the events show which session it was.
 
@@ -198,23 +225,6 @@ LAN; on acer, `journalctl -u caddy --since -10m`.
 
 Fires: the certificate a public name serves expires in under 14 days, for an hour.
 First: on acer, `journalctl -u caddy | grep -i acme` for the renewal's error.
-
-## TargetDown
-
-Fires: over 10 % of one job's scrape targets are down for 10 minutes. Inhibited for a host inside its planned
-power-off (HostExpectedOff), so a sleeping host's node-exporter and nvidia-gpu targets stay quiet.
-First: the query lists every down target; `http://192.168.10.137:9090/targets?search=<job>` for the scrape error.
-
-## Watchdog
-
-Fires: always, to prove the rule-to-Alertmanager path works. Null route, never notifies; lenovo's watchdog
-(`modules/homelab/cluster-watchdog.nix`) alerts when it is missing from Alertmanager.
-First: nothing to do while it fires. If the query is empty, Prometheus's rule evaluation is broken.
-
-## InfoInhibitor
-
-Fires: an info alert is firing with no warning or critical alert beside it. Null route; it only inhibits.
-First: nothing to do; the query lists the info alerts it covers.
 
 ## PrometheusTargetsMostlyDown
 
@@ -247,11 +257,85 @@ rewritten `/var/lib/exec-pool-metrics/exec-pool.prom` for over 10 minutes. An em
 never fires; a sleeping host never does. A failing collector unit also fires SystemdUnitFailed.
 First: on the host, `systemctl status postgresql.service exec-pool-migrate.service exec-pool-metrics.timer
 exec-pool-metrics.service` and `journalctl -u exec-pool-metrics.service -u exec-pool-migrate.service`; the CLI names the
-error there (exit 75: the database is unavailable). Authentik shares the PostgreSQL cluster, so its health is the same check.
+error there (exit 75: the database is unavailable). Authentik's database is on the same server (`modules/homelab/postgresql.nix`), so its health is the same check.
 Do not: delete the textfile or write `exec_pool_queue_up 1` by hand; nothing dispatches from the queue yet, so there
 is no task to rescue.
 Rollback: drop the `exec-pool.nix` import from acer's configuration and deploy; the `exec_pool` database stays until
 dropped by hand.
+
+## ExecPoolLeaseOverdue
+
+Fires: on the pool host (acer), `exec_pool_lease_overdue` has been above zero for 10 minutes: an attempt is leased,
+running or checkpointing past its lease deadline and no `reconcile` has expired it. Its runner died or stopped
+heartbeating, or no runner reconciles at all yet (nothing runs `reconcile` on a timer on main), so the task neither
+runs nor goes back to the queue; its slot counts as busy.
+First: on the host, the overdue attempts:
+`sudo -u exec_pool psql -h /run/postgresql exec_pool -c "SELECT id, status, lease_epoch, slot, lease_deadline FROM
+attempts WHERE status IN ('leased', 'running', 'checkpointing') AND lease_deadline <= now()"`; where a runner is
+deployed (#652), `journalctl -u 'exec-pool-runner*'` holds its last `state_change` line and why it stopped. Once no
+runner is working that attempt, `sudo -u exec_pool env EXEC_POOL_DB='host=/run/postgresql dbname=exec_pool user=exec_pool' exec-pool-queue reconcile`: a lease that never started goes back to queued, a
+started one to `needs_review` (ExecPoolNeedsReview).
+Do not: edit `lease_deadline` or `status` in the database; the fence refuses a stale writer only if the epochs move.
+Rollback: stop the runner; the queue keeps the attempt for the reconcile.
+
+## ExecPoolNeedsReview
+
+Fires: an attempt has been in `needs_review` for an hour on the pool host: it started and then lost its lease, or
+settled there, so whether its effects (a push, a PR, a comment) happened is unknown. Nothing resolves it automatically.
+First: its id and epoch: `sudo -u exec_pool psql -h /run/postgresql exec_pool -c "SELECT id, task_id, lease_epoch,
+slot FROM attempts WHERE status = 'needs_review'"` (where a runner is deployed, its `state_change` lines in
+`journalctl -u 'exec-pool-runner*'` say how it got there). Check its effects in the task's repository, then
+`sudo -u exec_pool env EXEC_POOL_DB='host=/run/postgresql dbname=exec_pool user=exec_pool' exec-pool-queue resolve --attempt ID --epoch N --to succeeded|failed|queued` (queued only if the effects did not
+happen).
+Do not: resolve to queued without checking the effects; a replay can push or comment twice.
+Rollback: none; the alert clears when no attempt is left in needs_review.
+
+## ExecPoolSlotQuarantined
+
+Fires: a slot in the pool host's queue (acer's, for acer's and msi's slots) has been in `quarantined_slots` for 5
+minutes: its runner's `dev-env-reset@<slot>` refused three times (an agent running in the guest, or unpushed work
+outside `~/attempts`), so the runner wrote `/var/lib/exec-pool-runner/<slot>.quarantined`, cleared the reset unit's
+failed state, and keeps running without claiming for that slot. Its other slots and the queue are unaffected.
+First: which slot and why: `sudo -u exec_pool psql -h /run/postgresql exec_pool -c "SELECT host, slot, reason, since
+FROM quarantined_slots"`; on that host, `journalctl -u exec-pool-runner-<slot> -u dev-env-reset@<slot>` has the
+refusal. Stop the agent or push (or deliberately discard) the work in the guest, then on that host
+`sudo rm /var/lib/exec-pool-runner/<slot>.quarantined`: the runner's next pass resets the slot and deletes the row, and
+the alert clears.
+A slot quarantined for a session tree left in its dock (the reason names `dock-busy`): once nothing of the turn runs,
+move `<stateDir>/.sessions/dock/<slot>/cur` back to its task's `<stateDir>/.sessions/<hex task id>/tree` (or archive
+it), then remove `/var/lib/exec-pool-exec/<slot>/dock-busy` and the quarantine marker; the reason names both paths.
+Do not: delete the row alone while the slot exists; the runner rewrites it while its marker stands. A slot no longer
+declared (fewer slots, a renamed host) has no runner to clear it: delete its row with
+`DELETE FROM quarantined_slots WHERE host = '<host>' AND slot = '<slot>'` as `exec_pool`.
+Rollback: none; a slot that resets clears itself.
+
+## ExecPoolSessionsLarge
+
+Fires: on a pool host (acer, msi), the session trees, parked (`/var/lib/workers/.sessions/<id>/tree`), docked in a
+slot (`.sessions/dock/<slot>/cur`) and, on acer, the pushed copies (`.sessions-store/<id>`), have held over 70% of the
+workers' state filesystem for 30 minutes. `dev-env-sessions-metrics` (`modules/workers/core.nix`) writes the bytes and
+counts every 15 minutes, by kind and with no ids, and `.trash`'s share as `homelab_dev_env_trash_bytes`. Removal is the
+queue's call: `exec-pool-sessions-gc` (`modules/homelab/exec-pool-sessions-gc.nix`, acer and msi, daily) moves what
+the queue lists as eligible into `.trash`, which frees it a week later.
+First: `homelab_dev_env_sessions_bytes` and `homelab_dev_env_session_trees` on the node say which kind grew,
+`homelab_exec_pool_sessions_orphaned` how many trees the queue does not know; on the host,
+`sudo du -sh /var/lib/workers/.sessions/*/tree /var/lib/workers/.sessions-store/* | sort -h | tail` names the largest.
+A large `.trash` is space already on its way out.
+Do not: delete a docked tree (`.sessions/dock/*/cur`) or a session whose `tree` is missing (it is docked); a turn is
+using it. Delete a parked tree by hand only once the queue has its task final and its work pushed.
+Rollback: none; the alert clears when the trees fall under 70%.
+
+## ExecPoolSessionStuck
+
+Fires: for a day, a session in the pool host's queue has been in `needs_review` (a turn lost its lease; only its
+owner's `send` or an operator's resolve moves it), or stale: waiting 14 days untouched with no unread message, and its
+last turn's branch not known to hold its tree, so `session_gc` keeps it and the tree stays on disk.
+First: `exec-pool sessions` (one JSON line each: state, last change, hosts, eligible, stale) and `exec-pool status ID`
+for its events. In review: check the last turn's effects, then `exec-pool send ID --prompt TEXT` to go on, or resolve
+it as in ExecPoolNeedsReview. Stale: on each of its hosts, look at the tree for unpushed work; push it and send the
+session a message, or `exec-pool cancel ID`, which makes it eligible 7 days later.
+Do not: delete a stale session's tree by its age; it is kept because the queue cannot tell it holds nothing unpushed.
+Rollback: none; the alert clears when no session is left in review or stale.
 
 ## ShuntDelegationFailing
 
@@ -269,7 +353,7 @@ Rollback: `SHUNT_DISABLE=1` in the environment the sessions start from, or `sam.
 ## ShuntSilent
 
 Fires: on a host or worker whose series say `shunt="on"` (its declared `sam.claude.bulkReader.enable`: lenovo, acer's
-a1), the agent made a Bash call in the last hour (validate-bash logged it) but no Shunt hook has logged for 2 h, for an
+slot pool1), the agent made a Bash call in the last hour (validate-bash logged it) but no Shunt hook has logged for 2 h, for an
 hour; or a Shunt hook logged `error` (shunt-spill could not save an output) or `nostate` (shunt-read/shunt-bash could
 not keep its state) in the collector's 24 h window. An off worker never fires, so the on/off comparison it guards is
 the one between `shunt="on"` and `shunt="off"` series.
@@ -281,22 +365,22 @@ not registered, e.g. a skills pin without them), then the results without any co
 the hooks it started with: restart it.
 Rollback: `sam.claude.bulkReader.enable = false` for that host or worker (acer: the guest module in its configuration).
 
+## LLMGatewayDown
+
+Fires: black-pi's Prometheus cannot scrape llm-gateway's admin port on acer (9091) for 5 minutes, or has no such
+target. Pi, Open WebUI and factum have no LLM path.
+First: on acer, `systemctl status llm-gateway` and `journalctl -u llm-gateway --since -15m`. A unit skipped, not
+failed, has no `state.sqlite3` (the header of `modules/homelab/llm-gateway.nix`).
+
 ## LLMGatewayFreeFloorLow
 
-Fires: every tier-2 (free floor) quota group has under 10 % of its daily allowance left, for 10 minutes; it resets at
-00:00 UTC. Requests fall to msi or get 429s.
-First: the query shows each group's ratio; the gateway's `/status` `quota_groups`. Runbook:
-[llm-gateway.md](https://github.com/sammasak/homelab-gitops/blob/main/docs/runbooks/llm-gateway.md#provider-exhausted-clients-get-429-with-retry-after).
+Fires: every tier-2 (free floor) quota group has under 10 % of its daily allowance left, for 10 minutes. Requests fall
+to msi or get a 429 until 00:00 UTC.
+First: from lenovo, `curl -s http://acer-swift:9091/status | jq .quota_groups` for which group is spent.
 
 ## LLMGatewayBatchHittingReserve
 
-Fires: llm-gateway refused a batch project's request because only the interactive reserve of the free quota is left.
-First: the query shows that project's refusals by reason; `/status` `projects` and `quota_groups`. Same runbook as
-[LLMGatewayFreeFloorLow](#llmgatewayfreefloorlow).
-
-## LLMGatewayDown
-
-Fires: Prometheus on black-pi cannot scrape llm-gateway's admin port on acer for 5 minutes: Pi, Open WebUI and factum
-have no LLM path.
-First: on acer, `systemctl status llm-gateway` and `journalctl -u llm-gateway --since -15m`. Runbook:
-[llm-gateway.md](https://github.com/sammasak/homelab-gitops/blob/main/docs/runbooks/llm-gateway.md#gateway-down-unit-not-running-clients-get-connection-refused--502).
+Fires: llm-gateway refused a batch project's request in the last 15 minutes because only the interactive reserve of
+the free quota is left (`interactive_reserve`).
+First: from lenovo, `curl -s http://acer-swift:9091/status | jq '.projects, .quota_groups'`; the batch work waits for
+00:00 UTC or moves to a paid tier.

@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use crate::{Attempt, Error, Placement, RetryPolicy, Status};
 
 /// Where a checkpoint leaves an attempt.
@@ -8,6 +10,14 @@ pub enum Settle {
     Succeeded,
     Failed,
     NeedsReview,
+    /// The runner stopped the run for a cancel its submitter asked for; it carries no receipt.
+    Cancelled,
+    /// The runner stopped the run before its agent started because its host powers off: it goes back to the queue
+    /// with its try given back, as the host, not the task, ended it. It carries no receipt.
+    Drained,
+    /// The runner stopped the run after its agent started because its host powers off: what it did by then (a push,
+    /// a pull request) is unknown, so it goes to review, never replayed, as a lost lease does. Its receipt says so.
+    Interrupted,
 }
 
 /// How an operator closes a `needs_review` attempt once they know what its effects were. Only an explicit
@@ -18,6 +28,45 @@ pub enum Resolution {
     Failed,
     /// The effects did not happen: run it again, if an attempt is left.
     Queued,
+    /// A session's owner sent it a message: its next turn runs with the try given back, whatever its effects were.
+    /// `send_message` (migration 0009) is what does this, for sessions only; this is its model.
+    Resume,
+}
+
+/// Why a session's turn parked it in `waiting`; a bounded code, the event's reason.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParkReason {
+    TurnEnd,
+    WaitingUntil,
+    Preempted,
+    HostDraining,
+    TurnError,
+    /// The agent's call was stopped at the turn's time limit.
+    TurnTimeout,
+}
+
+impl ParkReason {
+    pub const ALL: [Self; 6] = [
+        Self::TurnEnd,
+        Self::WaitingUntil,
+        Self::Preempted,
+        Self::HostDraining,
+        Self::TurnError,
+        Self::TurnTimeout,
+    ];
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::TurnEnd => "turn_end",
+            Self::WaitingUntil => "waiting_until",
+            Self::Preempted => "preempted",
+            Self::HostDraining => "host_draining",
+            Self::TurnError => "turn_error",
+            Self::TurnTimeout => "turn_timeout",
+        }
+    }
 }
 
 /// One change to an attempt, under the lease epoch it was decided on.
@@ -36,6 +85,8 @@ pub enum Kind {
     Start,
     Checkpoint,
     Settle(Settle),
+    /// A session's turn ended: running or checkpointing to `waiting`, the try given back.
+    Park(ParkReason),
     Wake,
     Expire,
     Resolve(Resolution),
@@ -48,6 +99,7 @@ impl Kind {
             Self::Start => "start",
             Self::Checkpoint => "checkpoint",
             Self::Settle(_) => "settle",
+            Self::Park(_) => "park",
             Self::Wake => "wake",
             Self::Expire => "expire",
             Self::Resolve(_) => "resolve",
@@ -61,7 +113,8 @@ impl Kind {
 /// accepted goes back to `queued`, one that was running or checkpointing goes to `needs_review`, as its effects are
 /// unknown. That is only safe while a runner begins no work before its `start` is accepted.
 ///
-/// Every lease counts against `retry.max_attempts` but one that settles to `waiting`. An expiry or a retry with no
+/// Every lease counts against `retry.max_attempts` but one that settles or parks to `waiting`, that a drain sends
+/// back to the queue, or that a resume gives back. An expiry or a retry with no
 /// attempt left fails the attempt instead of queueing it, so neither loops forever; an operator's resolve to `queued`
 /// with none left is refused.
 ///
@@ -102,10 +155,19 @@ pub fn transition(attempt: &Attempt, retry: &RetryPolicy, event: &Event) -> Resu
                     Status::Waiting
                 }
                 Settle::Queued => Status::Queued,
+                Settle::Drained => {
+                    next.tries = attempt.tries.saturating_sub(1);
+                    Status::Queued
+                }
                 Settle::Succeeded => Status::Succeeded,
                 Settle::Failed => Status::Failed,
-                Settle::NeedsReview => Status::NeedsReview,
+                Settle::NeedsReview | Settle::Interrupted => Status::NeedsReview,
+                Settle::Cancelled => Status::Cancelled,
             };
+        }
+        (Status::Running | Status::Checkpointing, Kind::Park(_)) => {
+            next.tries = attempt.tries.saturating_sub(1);
+            next.status = Status::Waiting;
         }
         (Status::Waiting, Kind::Wake) => next.status = Status::Queued,
         (Status::Leased | Status::Running | Status::Checkpointing, Kind::Expire) => {
@@ -124,6 +186,10 @@ pub fn transition(attempt: &Attempt, retry: &RetryPolicy, event: &Event) -> Resu
                     return Err(Error::AttemptsExhausted(retry.max_attempts));
                 }
                 Resolution::Queued => Status::Queued,
+                Resolution::Resume => {
+                    next.tries = attempt.tries.saturating_sub(1);
+                    Status::Queued
+                }
             };
         }
         (from, kind) => {

@@ -42,6 +42,8 @@ What a host writes into node-exporter's textfile directory (`/run/node-exporter-
 Two collectors keep their own textfile directory, which node-exporter also reads: `shipping.prom` on lenovo
 (`shipping-metrics.nix`) and `nav.prom` on acer, lenovo, asus and msi (`nav-metrics.nix`), plus one
 `nav-guest-<name>.prom` per guest on a host with dev environments (acer, `/var/lib/nav-metrics-guests`).
+The scheduled full gate on acer writes `scheduled-gate.prom` in its own, `/var/lib/scheduled-gate/metrics`
+(`scheduled-gate.nix`, docs/shipping.md).
 
 Every journal-collector host also exposes bounded local reader/export/filter counters
 through `/run/journal-metrics/journal.prom`; see [delivery semantics and acceptance](journal-delivery-metrics.md).
@@ -62,9 +64,9 @@ See [the measured improvement cycle](monitoring-improvement-cycle.md) for the fl
   cannot be saved: change the JSON.
 - Agent harnesses, "On versus off": the table gives each host/worker's Shunt and window; compare per Bash call or
   main-thread request, never raw totals. "Shunt helps": on workers spill and redirect and send fewer context tokens
-  per request than off ones, compactions per request not rising. "The 300K window helps": herman compacts less per
-  request than a default worker with the same Shunt. Today a1 (on, default) and herman (off, 300K) differ in both and
-  acer's host sends no Claude events, so neither claim isolates until two workers differ in one setting.
+  per request than off ones, compactions per request not rising. "The 300K window helps": a worker with a 300K window
+  compacts less per request than a default one with the same Shunt. Today no worker sets the window and acer's host sends no Claude
+  events, so neither claim isolates until two workers differ in one setting.
   A guest's token and cost series carry `worker` (the relay's stamp), so tokens per session split by worker too.
 
 ## Rules and paging
@@ -113,7 +115,7 @@ See [the measured improvement cycle](monitoring-improvement-cycle.md) for the fl
 | `grafana-dashboard-removal` | Grafana itself, with black-pi's provider settings, deletes a removed file's dashboard and keeps ids across a restart |
 | `gpu-telemetry-exporter` | the GPU exporter's fields against a fake nvidia-smi that heads the throttle fields `clocks_event_reasons`, as asus's driver does |
 | `monitoring-alert-routes` | Alertmanager's routing (amtool) on black-pi's configuration: `notify="none"` and `severity="info"` reach no one, NodeTemperatureHigh and a warning reach ntfy, and the same alert without the label would notify |
-| `monitoring-alert-annotations` | every homelab, Shunt, execution pool, general, llm-gateway, shipping and Loki-ruler alert carries `summary`, `description`, `query` and a `runbook_url` naming a heading in a tracked doc ([alert-runbooks.md](alert-runbooks.md)); a rule file with no alert fails; seeds without a query, without an anchor, with a dangling anchor and with an empty file beside a good one fail it. The `grafana-dashboards` check holds each `query`'s PromQL and names |
+| `monitoring-alert-annotations` | every alert in a rule file black-pi's Prometheus loads, every shipping and every Loki-ruler alert carries `summary`, `description`, `query` and a `runbook_url` naming a heading in a tracked doc ([alert-runbooks.md](alert-runbooks.md)), or upstream's page for a kube-prometheus-stack rule; a rule file with no alert fails; seeds without a query, without an anchor, with a dangling anchor and with an empty file beside a good one fail it. The `grafana-dashboards` check holds each `query`'s PromQL and names |
 | `monitoring-rules-tests` | `promtool test rules` on every file in `modules/homelab/monitoring/rules/tests`, against `homelab.yaml` as rendered |
 | `monitoring-config-msi-ms7758`, `monitoring-rules-sleeping-hosts` | black-pi's Prometheus, Alertmanager and blackbox configs checked on an x86 seed; the sleeping-host rules per host |
 | `loki-config-msi-ms7758`, `loki-ruler-black-pi`, `journal-collector-config-black-pi` | Loki's config, black-pi's ruler and rules end to end (synthetic lines to Prometheus and a stub Alertmanager) and the Pi's journal collector, on x86 |

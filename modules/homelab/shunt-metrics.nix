@@ -16,7 +16,9 @@ let
   user = config.sam.profile.username;
   logDir = "/home/${user}/.local/state/claude-hooks";
   onOff = enable: if enable then "on" else "off";
-  envs = config.services.devEnvironments or { instances = { }; };
+  envs =
+    config.services.devEnvironments
+      or (throw "${config.networking.hostName}: services.devEnvironments is not declared (modules/workers, in every host's fleetModules); modules/homelab/shunt-metrics.nix reads it");
   guests = lib.attrNames envs.instances;
   guestDir = "/var/lib/shunt-metrics-guests";
   guestUnit = n: "shunt-metrics-guest-${n}";

@@ -7,9 +7,9 @@ and the owners; it adds no daemon, database, socket, port, Nix option or host ch
 
 | Concern | Owner | Where |
 |---|---|---|
-| Static slot capacity (how many reusable nspawn slots a host declares, their closure, cgroups, egress) | NixOS `services.devEnvironments`, changed only by a reviewed deploy | `modules/workers/core.nix`, `modules/workers/default.nix` |
-| Task and attempt state (queued to terminal, leases, epochs, idempotency keys) | the queue (#651, PostgreSQL) | `pkgs/exec-pool/src/queue.rs`, CLI `exec-pool-queue`; on acer (`modules/homelab/exec-pool.nix`), nothing claims yet |
-| Slot assignment on a host (claim, start, stop, sanitise, resource accounting) | a host-local dispatcher (#652) | not built |
+| Static slot capacity (how many reusable nspawn slots a host declares, their closure, cgroups, egress) | NixOS `services.devEnvironments`, changed only by a reviewed deploy | `modules/workers/core.nix`, `modules/workers/default.nix`, `modules/workers/execution-pool.nix` |
+| Task and attempt state (queued to terminal, leases, epochs, idempotency keys) | the queue (#651, PostgreSQL) | `pkgs/exec-pool/src/queue.rs`, CLI `exec-pool-queue`; on acer (`modules/homelab/exec-pool.nix`) |
+| Slot assignment on a host (claim, start, stop, sanitise, resource accounting) | a host-local runner (#652) | `pkgs/exec-pool/src/runner.rs`, `exec-pool-runner`; `modules/homelab/exec-pool-runner.nix`, on acer and msi, one per slot |
 | The inner tool loop | the native Claude, Codex and Pi CLIs, unchanged | `docs/herdr.md` |
 | Viewing sessions | Herdr, observe only: never the source of queue truth | `docs/herdr.md` |
 | Power windows and placement facts | `sam.fleet.hosts.*` | `modules/core/fleet.nix` |
@@ -27,16 +27,17 @@ disagrees with its status (required while leased, running or checkpointing, abse
 record rejects unknown fields, so no token, secret or credential can ride along: a task names a `credential_class`
 the host resolves. `TaskSpec::fits` admits a slot only when it is idle, offers the task's agent and capabilities and equals
 every pin the task sets (`runner_version`, `nix_closure_digest`, `agent_version`, `skill_revision`, reserved for #657).
-`CheckpointRef` is an opaque versioned pointer (uri, digest) until #656 defines the manifest.
+`CheckpointRef` names where a session's tree is: its generation (the lease epoch that parked it) and hosts.
 
 States (`pkgs/exec-pool/src/state.rs`, snake_case on the wire):
 
 ```text
-queued -> leased -> running -> checkpointing -> waiting | queued | succeeded | failed | needs_review
-waiting -> queued            (explicit wake)
+queued -> leased -> running -> checkpointing -> waiting | queued | succeeded | failed | needs_review | cancelled
+waiting -> queued            (a wake: for a session task, a message in its inbox)
 leased  -> queued            (lease expired before its start was accepted)
 running | checkpointing -> needs_review   (lease expired: effects unknown, never replayed blindly)
 needs_review -> succeeded | failed | queued   (resolve: an operator's explicit decision, never automatic)
+queued | waiting -> cancelled                 (cancel_task; a live attempt is marked and its runner stops it)
 any return to queued with no attempt left -> failed
 ```
 
@@ -50,9 +51,27 @@ review. Delivery is **at-least-once**: a resubmission under the same idempotency
 a different task under that key is refused, and no external effect (a GitHub mutation included) is claimed
 exactly-once. A `Receipt` lists the effects an attempt reports, for reconciliation; it counts only with the `settle`
 accepted at its lease epoch: `Receipt::settles` checks the task, attempt, epoch and outcome against the attempt the
-settle left, and only a settle to succeeded, failed or needs_review takes one (and must). Every lease but one that settles to
-`waiting` (a planned pause) counts against `retry.max_attempts` (at least 1), so an expiring lease cannot loop. `TaskSpec`, `Attempt`, `Slot` and `Receipt` each
-have a `parse()` that reads the version before any other field.
+settle left, and only a settle to succeeded, failed or needs_review takes one (and must). Every lease but one that
+parks in `waiting` counts against `retry.max_attempts` (at least 1), so an expiring lease cannot loop. `TaskSpec`,
+`Attempt`, `Slot` and `Receipt` each have a `parse()` that reads the version before any other field.
+
+### Sessions, turns, park and wake (#656)
+
+A task with `tasks.session` (queued by `exec-pool start`; the queue's side is under Sessions below) is a session: one
+agent session (its id the queue's `session_uuid`) that lives across
+leases. Each lease is one **turn**, and a turn ends in a **park** to `waiting`, never in a settle: `turn_end` when the
+agent finished its turn, `turn_error` when its call failed or left no verdict, `turn_timeout` when it was stopped at
+the turn's time limit, `waiting_until` when it finished and asked for a timer (later also `host_draining`,
+`preempted`). A failed turn never fails the session. The time limit is `homelab.execPool.runner.timeoutSecs`
+(default 1800 s, the same bound as a one-shot run). A timed-out turn leaves a `continue` row, so the session resumes
+its own transcript in a new turn told to check its last action; the third timeout in a row with no message read
+since the first parks with no `continue` row and stays in `waiting` until a message. A
+**wake** is a row in the task's inbox due: a message (`exec-pool send`) at once, a timer (`exec-pool send --at`, or the
+agent's own `pool-wait`) at its `due_at`. It queues the session again, and the next claim carries the turn's input (the task's prompt on the
+first turn, the messages since on a later one) and `upto`, the last message it holds, which the park hands back. A
+turn with no result, or whose lease was lost, goes to `needs_review` as any run does. The park records the result and
+a `CheckpointRef` (`generation` the lease epoch, `hosts` the host that holds the session's tree), so a send wakes it
+where its tree is. One-shot tasks keep the lifecycle above unchanged.
 
 ## Queue (#651)
 
@@ -70,18 +89,82 @@ holds ids, states and reason codes.
 
 Instrumentation (#658's first slice): every change is one JSON line on stdout, `{"msg":"state_change","change":{
 task_id, attempt, lease_epoch, host, slot, from, to, reason, durations: {in_state_ms, since_submit_ms}}}`, and
-`exec-pool-queue metrics` renders `exec_pool_queue_up`, `exec_pool_attempts{state}`,
-`exec_pool_queued_oldest_seconds` and `exec_pool_transitions_total{from,to,reason}` for a textfile collector. Ids
-stay in the log line, never in a label. When the render fails for any reason it prints only `exec_pool_queue_up 0`
+`exec-pool-queue metrics` renders `exec_pool_queue_up`, `exec_pool_attempts{state,agent}`,
+`exec_pool_queued_oldest_seconds`, `exec_pool_lease_overdue{state}`, `exec_pool_slots{state="busy"}`,
+`exec_pool_slots_declared` (from `EXEC_POOL_SLOTS`), the histograms `exec_pool_queue_wait_seconds{agent}` and
+`exec_pool_run_seconds{agent}` and `exec_pool_transitions_total{from,to,reason}` for a textfile collector; lease
+expiries are the transitions with `reason="lease_expired"`. Ids stay in the log line, never in a label. When the render fails for any reason it prints only `exec_pool_queue_up 0`
 and exits non-zero; the collector installs stdout whatever the exit code, so a missing source reads as absent, not as
 zero traffic or as the last good counts.
 
-On acer (`modules/homelab/exec-pool.nix`): database and role `exec_pool` in the host's PostgreSQL (Authentik's
-cluster), peer over `/run/postgresql` alone; `exec-pool-migrate.service` runs `migrate` at start, and the minutely
+On acer (`modules/homelab/exec-pool.nix`): database and role `exec_pool` in the host's one PostgreSQL server
+(`modules/homelab/postgresql.nix`, which Authentik's database shares), peer over `/run/postgresql` alone; `exec-pool-migrate.service` runs `migrate` at start, and the minutely
 `exec-pool-metrics` writes `/var/lib/exec-pool-metrics/exec-pool.prom`, alert ExecPoolQueueDown. The nightly
 `exec-pool-backup` dumps the database beside it, on the same disk, like open-webui's backup; nothing copies it off the
 host (lenovo pulls Authentik's dump alone, `modules/homelab/authentik-offhost.nix`), which a queue holding real tasks
 needs before a runner lands.
+
+## Agent adapter (#655)
+
+`exec_pool::agent::argv(&task)` is what a runner executes in the task's workdir: a `none` task's own argv, or for an
+agent task, whose argv is `[prompt]` or `[prompt, model]`, the agent's non-interactive call (`claude -p
+--output-format json`, `codex exec`, `pi -p`, unattended as the workers run them, the prompt after `--`) under the
+slot's own credentials and egress. `agent::outcome(agent, exit, stdout)` maps the exit to the settle: Claude's final
+JSON `is_error` decides for Claude, the exit code for the rest; a signal, or a Claude run with no result, is
+`needs_review`. Neither `failed` nor `needs_review` requeues, so no ambiguous external effect is replayed.
+
+## Runner (#652)
+
+`exec-pool-runner-<slot>` (`modules/homelab/exec-pool-runner.nix`, `homelab.execPool.runner`; on acer for `pool1` to `pool3`, and
+on msi for its slots against acer's queue as `exec_pool_runner` over TCP) loops: `reconcile`, `claim` for its slot
+(its agents and capabilities; with a poweroff timer only while the claim's hold ends before it), `start`, then
+`systemctl start exec-pool-exec@<slot>`, then `checkpoint` and the settle or park, the result recorded
+(`Store::record_result`: outcome, exit code, up to 16 KiB of output, the branch), then `dev-env-reset@<slot>`. The lease
+is 300 s and the runner renews it every 10 s while the helper runs; each heartbeat reads a cancel its submitter asked
+for, and a cancel, or a lease found lost, writes the marker the helper stops the run at. A polkit rule lets `exec_pool`
+start those two units of its own slots, and clear the failed state of its reset, and nothing else.
+
+The helper `exec-pool-exec@<slot>` runs as root and has no queue access. It reads the versioned manifest
+(`runner::Manifest`: slot, attempt, epoch, task, and a session turn's `session { uuid, input, upto }`) from
+`/run/exec-pool-runner/<slot>/`, refusing a symlink, and admits it only to a slot home `dev-env-reset@` replaced since
+the last run (`workspace::admit`). In the guest, as its user and through `systemd-run -M`, every step an argv and never
+a shell string: a one-shot run makes its workspace `~/attempts/<hex attempt>-<epoch>/{home,work,tmp,out}`, clones
+`source.repo` into `work`, checks out `source.rev` (an agent task on `-b pool/<task id>`, with the hand-back rules
+before its prompt) and runs `agent::argv(&task)` in `command.workdir` with that HOME and TMPDIR, stopped at
+`timeoutSecs`. Before and after, `git ls-remote` of the task's branch tells whether the run handed code back. Up to
+1 MiB of each stream and the result go to `/var/lib/exec-pool-exec/<slot>/<hex attempt>-<epoch>/`, kept 30 days.
+
+A session turn runs in the task's **tree**, `${stateDir}/.sessions/<hex task id>/tree/{home,work}` on the host, root's
+only. The helper attaches it for the turn by renaming it to the slot's dock `${stateDir}/.sessions/dock/<slot>/cur`,
+which the guest sees at `/session/cur` (the tree's root root-owned 0711, its `home` and `work` the guest user's),
+the same path in every slot on every host: HOME `/session/cur/home`, cwd
+`/session/cur/work/<workdir>`, TMPDIR in the slot home's workspace as for a one-shot run. A dock that still holds a
+tree refuses the attach. The first turn creates the tree (owned as the slot home is) and clones and checks out into it;
+until that finished, a later turn makes it afresh. Every turn links the guest user's current Home Manager files into
+the session's HOME (they dangle after a deploy), probes for Claude's transcript `$HOME/.claude/projects/*/<uuid>.jsonl`
+and runs `claude -p --output-format json` with `--resume <uuid>` when it exists and `--session-id <uuid>` (and the
+hand-back rules) when it does not, the turn's input as the prompt; a probe that does not finish fails the turn's
+preparing. The helper marks the dock busy (`/var/lib/exec-pool-exec/<slot>/dock-busy`) before the attach and clears
+the mark only after the detach, so whatever stops it in between (an error, its timeout, a kill) leaves the runner to
+quarantine the slot rather than reset and reuse it. Once the turn's units are gone from the guest (or the guest is
+down) it detaches the tree; one it could not detach stays in the dock, marked. A prepared tree missing, or one with
+other ids than the slot's, sends the turn to `needs_review` rather than spending its attempts. Known limits: a guest
+process outside the step units (none is started: slots run no agent session and no cron) would keep the tree's inode
+after the detach; nothing yet removes the trees of sessions that ended. Codex and Pi run no sessions yet.
+
+Settling a one-shot run (`runner::decide`): a cancel is `cancelled`; a clone or checkout that fails never started the
+task's argv, so the attempt goes back to `queued`. A timeout, a guest that went away, or a missing result (or one for
+another attempt or epoch) goes to `needs_review`. Otherwise `agent::outcome` decides from the exit code and the
+captured stdout. A session turn (`runner::decide_turn`) parks instead on every end of the agent's call, a timeout
+included. The command runs as a oneshot unit, so only exit 0 is clean, and systemd-run's 255 (killed by a signal)
+counts as no exit code. A helper that finds its attempt's run directory already there refuses to run it again. An
+event the queue refuses, or one whose commit is unknown, is never re-sent: the lease expires and `reconcile` decides.
+The runner resets the slot at startup (its state then is unknown) and after every run. A reset that fails three times,
+or a dock left holding a tree, writes `/var/lib/exec-pool-runner/<slot>.quarantined` and a row in the queue's
+`quarantined_slots` (ExecPoolSlotQuarantined), and that slot is not claimed for again until an operator removes the
+marker. Every state change is one JSON line with its ids, and the `run` line carries exit code, output tails,
+`claim_to_exec_ms`, `exec_ms`, `prepare_ms` and `run_ms`. `slot_reset` carries `sanitize_ms`. There are no metric
+labels but states, agents, reasons and hosts.
 
 ## Not `sam.agentRuntime`
 
@@ -89,8 +172,86 @@ The historical `sam.agentRuntime` (#133, #138) made one ephemeral nspawn instanc
 absent on main, its module directory was deleted in #210 (`git show 5a40362 --stat`). The current `modules/workers`
 declares long-lived, named instances (`sam.workers.instances`, a `worker-herdr-<name>` unit per agent), each a Nix
 deploy. The pool keeps those untouched and adds dynamic work on top of declared slots. `scripts/test-workers-eval.py`
-pins it: msi declares no `executionPool` or `agentRuntime` option, and its instances (`m1`, `m2`, `t1`) and their
-Herdr units are pinned by name.
+pins it: `sam.workers.executionPool` (#650, `docs/nspawn-workers.md`, Execution pool) unset or off moves no
+worker unit, container or toplevel on msi, and a named instance beside the slots keeps its units and its Herdr unit (msi itself declares none since its
+named workers were retired).
+
+## Submitting
+
+`exec-pool submit | status | list` (`pkgs/exec-pool/src/bin/exec-pool.rs`, installed beside `exec-pool-queue` on acer)
+is how a user without root queues an agent task and watches it. It logs in as `exec_pool_submit`, a role with no
+database of its own: `homelab.postgresql.clients` in `modules/homelab/exec-pool.nix` lets the listed system users
+(`lukas`; a worker guest's user goes beside it) reach `exec_pool` as that role through a pg_ident peer map, still over
+the socket alone, with no password. Migration 0002 gives it no table write: it queues only through `submit_task`, a
+SECURITY DEFINER function that takes the one shape `submit` builds (agent claude, codex or pi, an https repo, a rev
+that is not an option, a workdir inside the checkout, a prompt and maybe a model; no capability, one attempt,
+credential class `slot`) and assigns the task's id from its key, and it reads attempts, events and `task_summaries`,
+which leaves out the prompt. So a submitter chooses no policy, forges no event and queues nothing a claim cannot
+decode. Migration 0008 puts an agent check in front of it: every claim records its slot's agents in `slots`, and
+`submit_task` refuses an agent no slot seen in the last day offers, naming the ones on offer, instead of queuing a task
+nothing would claim. `submit` prints the task id; the idempotency key is `--key`, or else derived from the flags, so the same
+submission again returns the same task. `exec-pool-migrate` is ordered after `postgresql-setup.service`, which
+creates the role. From lenovo, the coordinator's host, `exec-pool` is a wrapper
+(`sam.herdr.coordinatorWakeup.poolHost`, `modules/programs/cli/coordinator-wakeup.nix`) that runs acer's over ssh as
+the same user, each argument single-quoted and the prompt on stdin (`--prompt-file -`), so the database stays
+socket-only and lenovo holds no credential for it; skills `coordinator.poolCommand` names the wrapper.
+
+## Sessions
+
+`exec-pool start` (submit's flags, claude only) queues a session through `start_session` (migration 0009): a task
+whose every lease is one turn. A turn ends in `Store::park`, one transaction fenced on its epoch, to `waiting` with
+the try given back, so turns spend no `max_attempts` (a prepare failure still does); the park records the checkpoint
+and the turn's result, marks the inbox rows the turn was handed read, and queues the next turn at once if an unread
+row is due. `exec-pool send ID --prompt TEXT` puts a message in the session's inbox through `send_message`: a waiting
+session is queued for it, one in `needs_review` is queued with its try given back (the owner's decision; besides an
+operator's resolve the only way out of review), a queued or live one reads it at its next turn. There is no pause or
+resume verb. A claim hands the turn the session's uuid, the prompt on its first turn or else the unread rows as one
+text, and the highest row id it holds; rows are marked read at the park, so a turn that never ran is handed them
+again. `exec-pool send ID --at HH:MM|RFC3339 --prompt TEXT` puts a timer row instead (`send_timer`, migration 0014),
+due at that time (HH:MM the next one, local time); it changes no state, and `Store::reconcile`, which every runner runs
+each loop, queues a waiting session once a row is due (one in `needs_review` stays there). In a slot,
+`pool-wait --until HH:MM|RFC3339 [--note TEXT]` (no queue credential) writes one line
+`{"due_at": "<RFC 3339 with offset>", "note": "<1 to 4096 bytes>" | null}` to `/session/cur/home/.pool-wait`, the
+last call in a turn winning; the helper takes it from the detached tree (a regular file only, removed whatever it
+held, one that does not parse dropped and noted), and the park puts it in through `wake_at` (the runner writes no
+message), its note the turn's input and a `turn_end` parked as `waiting_until`. A message before the timer wakes the
+session at once, and the timer row stays unread until it is due. `wait` returns on `waiting` too, `status` and `list` show `session` and, while waiting, the park reason, and
+`exec_pool_waiting{reason}` counts waiting sessions by it.
+
+Each park also writes a `turns` row (migration 0010): the tokens and cost Claude's result JSON reported, and
+`handed_back`, whether the branch holds everything its tree had (`TaskResult::handed_back`): after a turn its agent
+reached, the helper lists `pool/<task id>` and runs `git status --porcelain=v2` in the checkout, true only when the
+branch's commit is HEAD and nothing is uncommitted or untracked (`runner::holds_tree`), false otherwise, a failed
+listing or status included. The textfile's `exec_pool_session*` series count sessions by state and waiting reason, turns by
+park reason, turn and wake latency, closed sessions' turns and age, parked sessions by idle age, host changes between
+turns and the reported tokens and cost; the Agent harnesses dashboard's Sessions row draws them. `session_gc` decides
+which session trees may be removed, never a file's age: only one whose last turn is `handed_back` (its branch held the
+whole tree, migration 0012), and then final for 7 days or waiting 14 days untouched with no unread row; one waiting
+that long without that is stale and kept, a final one without it that ran a turn kept and counted
+(`exec_pool_sessions_gc_kept`, no alert), and `needs_review` is never eligible.
+`exec-pool sessions` prints every session, one JSON object per line (task_id, state, last_change, hosts, handed_back,
+eligible, stale, kept, and dir, the hex of the task id its trees are named by under `.sessions` and `.sessions-store`,
+`Sessions::hex`), and the remover moves only a line both eligible and handed_back, by its dir; ExecPoolSessionStuck fires on a session in review or stale for a day.
+A park's own time (the agent's exit to the settle) is not
+measured: no exit time reaches the queue. Wake latency starts when a row is due: when it was sent, or a timer's
+`due_at`.
+
+## How work is dispatched
+
+The Coordinator hands out work only as pool sessions; there are no Herdr worker panes to hand to. On lenovo the
+wake-up session's `coordinator-act` and `coordinator-read` reach the skills `pool:*` tasks, which call the `exec-pool`
+wrapper above (`start`, `send`, `submit`, `wait`, `status`, `result`).
+
+- An issue gets one session: `pool:start` under the key `coord:OWNER/REPO#N`, the issue text and rules as the first
+  prompt. Its branch is `pool/<task id>`.
+- Follow-up work on it (review findings, a merge conflict, "merge main and push") is `pool:send` to that same session,
+  never a new one: the turn resumes the same transcript and tree.
+- `waiting` means the turn ended and the slot is free for other work; it needs nothing until there is a message to
+  send. No session has to stay up for it.
+- `needs_review` is the one state that wants a look: read `pool:result`, then `pool:send` the next step (that resumes
+  it) or ask the owner on the issue.
+- A review of an unreviewed PR head is a one-shot `pool:submit` at that head. A pool task cannot merge; a head graded
+  9 or more is reported as ready to merge, and the interactive coordinator session merges it.
 
 ## Phase gates (detail in #646)
 

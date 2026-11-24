@@ -3,8 +3,14 @@
 //! Every record carries `schema_version`, rejects unknown fields (so a token or secret field cannot ride along) and is
 //! checked by `validate()` before anything acts on it. A version or path that is wrong does not deserialise at all.
 
+pub mod agent;
 pub mod queue;
+pub mod runner;
 mod state;
+pub mod sync;
+pub mod task_result;
+pub mod wake;
+pub mod workspace;
 
 use std::collections::BTreeSet;
 use std::path::{Component, Path};
@@ -12,7 +18,7 @@ use std::path::{Component, Path};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-pub use state::{Event, Kind, Resolution, Settle, transition};
+pub use state::{Event, Kind, ParkReason, Resolution, Settle, transition};
 
 /// The only schema version this crate reads or writes.
 pub const SCHEMA_VERSION: u32 = 1;
@@ -123,11 +129,15 @@ pub enum Error {
     NoAttempts,
     #[error("all {0} attempts are used")]
     AttemptsExhausted(u32),
+    #[error("an agent task's id {0:?} makes no branch name (agent::branch)")]
+    BranchId(String),
     #[error("the receipt's {0} does not match the settled attempt")]
     Receipt(&'static str),
     /// The parser's message: `serde_json::Error` is not `Eq`.
     #[error("{0}")]
     Json(String),
+    #[error("wake: {0}")]
+    Wake(String),
 }
 
 impl From<serde_json::Error> for Error {
@@ -156,6 +166,8 @@ pub enum Status {
     Succeeded,
     Failed,
     NeedsReview,
+    /// Its submitter called it off: at once while queued or waiting, by its runner's settle once running.
+    Cancelled,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -278,6 +290,9 @@ pub struct Slot {
     pub agents: BTreeSet<Agent>,
     #[serde(default)]
     pub pins: Pins,
+    /// The host can pull a parked session's tree from the store ([`STORE`]), and pushes its own there.
+    #[serde(default)]
+    pub store: bool,
 }
 
 /// An opaque, versioned pointer to a checkpoint manifest; its contents are not part of this contract yet.
@@ -287,6 +302,12 @@ pub struct CheckpointRef {
     pub schema_version: SchemaVersion,
     pub uri: String,
     pub digest: String,
+    /// The lease epoch of the turn that wrote it; 0 in a checkpoint from before sessions.
+    #[serde(default)]
+    pub generation: u64,
+    /// The hosts that hold it.
+    #[serde(default)]
+    pub hosts: Vec<String>,
 }
 
 /// One external effect an attempt reports, e.g. `kind = "github_pr"`, `id = "sammasak/nixos-config#649"`.
@@ -342,10 +363,13 @@ impl TaskSpec {
     }
 
     /// # Errors
-    /// An empty `id`, `idempotency_key`, `source.repo`, `source.rev` or `command.argv`, a zero
-    /// `retry.max_attempts`, or a capability outside `granted`.
+    /// An empty `id`, `idempotency_key`, `source.repo`, `source.rev` or `command.argv`, an agent task whose id
+    /// [`agent::branch`] refuses, a zero `retry.max_attempts`, or a capability outside `granted`.
     pub fn validate(&self, granted: &BTreeSet<String>) -> Result<(), Error> {
         non_empty("id", &self.id)?;
+        if self.command.agent != Agent::None && agent::branch(self).is_err() {
+            return Err(Error::BranchId(self.id.clone()));
+        }
         non_empty("idempotency_key", &self.idempotency_key)?;
         non_empty("source.repo", &self.source.repo)?;
         non_empty("source.rev", &self.source.rev)?;
@@ -442,7 +466,9 @@ impl Attempt {
         let placed = match self.status {
             Status::Leased | Status::Running | Status::Checkpointing => true,
             Status::Queued | Status::Waiting => false,
-            Status::Succeeded | Status::Failed | Status::NeedsReview => return Ok(()),
+            Status::Succeeded | Status::Failed | Status::NeedsReview | Status::Cancelled => {
+                return Ok(());
+            }
         };
         if placed == self.placement.is_some() {
             Ok(())
@@ -479,6 +505,20 @@ impl CheckpointRef {
         non_empty("uri", &self.uri)?;
         non_empty("digest", &self.digest)
     }
+}
+
+/// The name in [`CheckpointRef::hosts`] of the always-on store a parked tree is pushed to.
+pub const STORE: &str = "store";
+
+/// Whether a runner on `host` may claim an attempt with `checkpoint`; a host without the tree would start afresh.
+///
+/// Any host before the first park (no checkpoint, or one that names no host, as one from before sessions); after it,
+/// a host that holds the tree, or, when `store` says `host` can pull from the store, any host while the store does.
+#[must_use]
+pub fn reachable(checkpoint: Option<&CheckpointRef>, host: &str, store: bool) -> bool {
+    checkpoint.is_none_or(|c| {
+        c.hosts.is_empty() || c.hosts.iter().any(|h| h == host || (store && h == STORE))
+    })
 }
 
 impl Receipt {

@@ -1,11 +1,12 @@
 # The execution pool's contract and queue CLI: the build is its tests (each against a throwaway PostgreSQL on a Unix
-# socket in the build directory), clippy with warnings denied and rustfmt.
+# socket in the build directory, and rsync for the session store's round trip), clippy with warnings denied and rustfmt.
 {
   lib,
   rustPlatform,
   clippy,
   rustfmt,
   postgresql,
+  rsync,
 }:
 let
   manifest = (lib.importTOML ./Cargo.toml).package;
@@ -29,7 +30,10 @@ rustPlatform.buildRustPackage {
     clippy
     rustfmt
   ];
-  nativeCheckInputs = [ postgresql ];
+  nativeCheckInputs = [
+    postgresql
+    rsync
+  ];
   postCheck = ''
     cargo fmt --check
     cargo clippy --offline --all-targets -- -D warnings

@@ -797,6 +797,7 @@ let
           loki = blackPi.homelab.loki.port;
           ollama-msi = msi.services.ollama.port;
           ollama-asus = hosts.asus-b460m.config.services.ollama.port;
+          exec-pool-db = acer.services.postgresql.settings.port;
           alloy-http = lib.head (
             builtins.match ".*--server[.]http[.]listen-addr=[^ ]*:([0-9]+).*" (
               builtins.unsafeDiscardStringContext acer.systemd.services.alloy-otlp.serviceConfig.ExecStart
