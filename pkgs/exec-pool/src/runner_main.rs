@@ -6,9 +6,9 @@
 //! begins no work before `start` is accepted, and never re-sends an event whose outcome is unknown: the lease expires
 //! and `reconcile` decides. While the helper runs it renews the lease every [`HEARTBEAT`]; a cancel the heartbeat
 //! reports, or a lease it finds lost, writes the cancel marker the helper stops at. A runner that dies renews nothing,
-//! and the lease expires. A reset that fails quarantines the slot until an operator removes the marker. With
-//! `EXEC_POOL_OFF_TIMER` it claims only while a claim, held up to `EXEC_POOL_CLAIM_SECS`, ends before that timer powers
-//! the host off; with a credentials directory it is a remote slot's runner, reaching the queue over TCP with the
+//! and the lease expires. A reset that fails quarantines the slot, in the queue too, until an operator removes the
+//! marker. With `EXEC_POOL_OFF_TIMER` it claims only while a claim, held up to `EXEC_POOL_CLAIM_SECS`, ends before that
+//! timer powers the host off; with a credentials directory it is a remote slot's runner, reaching the queue over TCP with the
 //! `db-password` credential. Each state change is one JSON line on stdout.
 //!
 //! `exec SLOT` (root, from `exec-pool-exec@<slot>.service`) reads the manifest, admits the attempt only to a slot home
@@ -67,10 +67,11 @@ fn ms(since: Instant) -> u64 {
     u64::try_from(since.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
-/// `systemctl start` as the runner's user: the polkit rule admits exactly this slot's two units.
-fn start_unit(unit: &str) -> Result<(), String> {
+/// `systemctl VERB UNIT` as the runner's user: the polkit rule admits exactly starting this slot's two units and
+/// clearing its reset's failed state.
+fn systemctl(verb: &str, unit: &str) -> Result<(), String> {
     let out = Command::new("systemctl")
-        .args(["start", unit])
+        .args([verb, unit])
         .stdin(Stdio::null())
         .output()
         .map_err(|e| format!("systemctl: {e}"))?;
@@ -78,7 +79,7 @@ fn start_unit(unit: &str) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "systemctl start {unit}: {} {}",
+            "systemctl {verb} {unit}: {} {}",
             out.status,
             String::from_utf8_lossy(&out.stderr).trim()
         ))
@@ -161,13 +162,14 @@ impl Runner {
     }
 
     /// The slot back to a fresh home, or quarantined: a reset refuses a running agent or unpushed work, and a slot
-    /// it could not reset is not offered again.
-    fn release(&self) -> bool {
+    /// it could not reset is not offered again. The refused unit's failed state is cleared, so the host is not left
+    /// degraded; the marker, the queue's row and `ExecPoolSlotQuarantined` carry it instead.
+    fn release(&self, store: &mut Store) -> bool {
         let t = Instant::now();
         let unit = format!("dev-env-reset@{}.service", self.slot.id);
         let mut last = String::new();
-        for _ in 0..RESET_TRIES {
-            match start_unit(&unit) {
+        for try_ in 1..=RESET_TRIES {
+            match systemctl("start", &unit) {
                 Ok(()) => {
                     line(
                         &json!({ "msg": "slot_reset", "slot": self.slot.id, "sanitize_ms": ms(t) }),
@@ -176,12 +178,22 @@ impl Runner {
                 }
                 Err(e) => last = e,
             }
-            thread::sleep(BACKOFF);
+            if try_ < RESET_TRIES {
+                thread::sleep(BACKOFF);
+            }
         }
-        let _ = fs::write(&self.quarantine, format!("{last}\n"));
+        if let Err(e) = systemctl("reset-failed", &unit) {
+            self.error("reset_failed", &e);
+        }
+        if let Err(e) = fs::write(&self.quarantine, format!("{last}\n")) {
+            self.error("quarantine_marker", &e);
+        }
+        if let Err(e) = store.quarantine(&self.slot, &last) {
+            self.error("quarantine", &e);
+        }
         line(
             &json!({ "msg": "slot_quarantined", "slot": self.slot.id, "reason": last,
-                      "release": format!("rm {} and restart the runner", self.quarantine.display()) }),
+                      "release": format!("rm {}", self.quarantine.display()) }),
         );
         false
     }
@@ -224,6 +236,8 @@ impl Runner {
         // the slot's state at startup is unknown: a runner that died mid-run left it as it was
         let mut dirty = true;
         let mut paused = false;
+        // whether the queue may still hold a quarantine row for the slot: unknown at startup, so cleared once
+        let mut listed = true;
         loop {
             // a guest down or restarting (a switch restarts it) is waited for, not a reset that fails
             // a helper a dead runner started runs on with no one renewing its lease: expire it, reset nothing under it
@@ -234,9 +248,26 @@ impl Runner {
                 thread::sleep(BACKOFF);
                 continue;
             }
-            if self.quarantine.exists() || (dirty && (!self.guest_up() || !self.release())) {
+            // the queue's row is rewritten while the marker stands: a write the database missed is not lost
+            if let Ok(reason) = fs::read_to_string(&self.quarantine) {
+                listed = true;
+                if let Err(e) = store.quarantine(&self.slot, reason.trim_end()) {
+                    self.error("quarantine", &e);
+                }
                 thread::sleep(BACKOFF);
                 continue;
+            }
+            if dirty && (!self.guest_up() || !self.release(store)) {
+                listed = true;
+                thread::sleep(BACKOFF);
+                continue;
+            }
+            // a clear the database missed is retried each pass until it lands
+            if listed {
+                match store.clear_quarantine(&self.slot) {
+                    Ok(()) => listed = false,
+                    Err(e) => self.error("clear_quarantine", &e),
+                }
             }
             dirty = false;
             match store.reconcile() {

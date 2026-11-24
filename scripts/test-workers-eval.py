@@ -965,8 +965,8 @@ def check_pool_compat():
 
 
 # modules/homelab/exec-pool-runner.nix: on acer one runner per slot as the queue's role, its root helper, and a
-# polkit rule that lets that role start exactly the helper and the reset of its own slot; msi's one slot alike, its
-# runner on acer's queue (exec-pool-db-acer-swift checks how it connects).
+# polkit rule that lets that role start exactly the helper and the reset of its own slot, and clear that reset's failed
+# state; msi's one slot alike, its runner on acer's queue (exec-pool-db-acer-swift checks how it connects).
 # The slot claims for its pool agents, the helper hands a step the agent's route, and the reset never waits on an
 # attempt's workspace.
 RUNNER = r"""
@@ -1010,6 +1010,10 @@ def check_runner():
           and got.get("wanted") == ["multi-user.target"] and got.get("slot", {}).get("id") == "pool1" and got.get("slot", {}).get("agents") == ["none", "claude", "pi"]
           and got.get("exec", "").endswith("/bin/exec-pool-runner exec %i") and rule in got.get("polkit", "") and 'subject.user == "exec_pool"' in got.get("polkit", ""),
           f"acer runs exec-pool-runner-pool1 as exec_pool with its root helper exec-pool-exec@, and polkit lets exec_pool start only {rule}; acer also sets the role's password, msi runs the same two ({ {k: got.get(k) for k in ('acer', 'msi', 'user', 'slot', 'exec')} or out.stderr.strip()[-300:]})")
+    polkit = got.get("polkit", "")
+    check('var resets = ["dev-env-reset@pool1.service"];' in polkit
+          and '(action.lookup("verb") == "reset-failed" && resets.indexOf(action.lookup("unit")) >= 0)' in polkit,
+          f"polkit lets exec_pool clear the failed state of its slot's reset only, so a refused reset quarantines the slot without leaving the host degraded ({polkit[-400:]!r})")
     env, agent = got.get("env", {}), got.get("agentEnv", {})
     check(agent.get("ANTHROPIC_BASE_URL") == "http://127.0.0.1:4100" and agent.get("CLAUDE_CODE_OAUTH_TOKEN") == "held-by-the-host"
           and "/etc/profiles/per-user/" in agent.get("PATH", "") and not {"EDITOR", "XDG_CONFIG_HOME"} & set(agent)

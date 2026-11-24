@@ -237,11 +237,104 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
         .get(0);
     assert_eq!(version, 8);
     submit(&mut s, &task("t-1", 1));
+    // a newer binary's additive migration keeps the floor: this one still serves the database, as after a rollback
     pg.sql()
-        .execute("INSERT INTO schema_migrations (version) VALUES (9)", &[])
+        .execute(
+            "INSERT INTO schema_migrations (version, floor) VALUES (9, 8)",
+            &[],
+        )
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(9))));
-    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(9))));
+    s.migrate().unwrap();
+    assert!(s.claim(&slot("s0"), 60).unwrap().is_some());
+    // one this binary would misread, or one that names no floor, is refused
+    pg.sql()
+        .execute("INSERT INTO schema_migrations (version) VALUES (10)", &[])
+        .unwrap();
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(10))));
+    pg.sql()
+        .execute(
+            "UPDATE schema_migrations SET floor = 10 WHERE version = 10",
+            &[],
+        )
+        .unwrap();
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(10))));
+    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(10))));
+}
+
+#[test]
+fn a_database_that_took_0008_before_0007_takes_0007_and_its_floor() {
+    let pg = Pg::new();
+    let mut s = pg.migrated();
+    // as on a host deployed with 0008 before the quarantine landed: 0007 undone, 0008 kept
+    pg.sql()
+        .batch_execute(
+            "DROP TABLE quarantined_slots; DELETE FROM schema_migrations WHERE version = 7; \
+             ALTER TABLE schema_migrations DROP COLUMN floor",
+        )
+        .unwrap();
+    s.migrate().unwrap();
+    let floors: Vec<(i32, Option<i32>)> = pg
+        .sql()
+        .query(
+            "SELECT version, floor FROM schema_migrations ORDER BY version",
+            &[],
+        )
+        .unwrap()
+        .iter()
+        .map(|r| (r.get(0), r.get(1)))
+        .collect();
+    assert_eq!(
+        floors.last(),
+        Some(&(8, None)),
+        "0008 names no floor: it counts as 8"
+    );
+    assert!(floors.contains(&(7, Some(6))));
+    s.quarantine(&slot("s0"), "refused").unwrap();
+}
+
+#[test]
+fn a_quarantined_slot_shows_in_the_metrics_until_its_runner_clears_it() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let has = |text: &str, line: &str| text.lines().any(|l| l == line);
+    assert!(has(
+        &owner.metrics(None).unwrap(),
+        "exec_pool_slots{state=\"quarantined\"} 0"
+    ));
+    // the remote slot's role writes it, and a second refusal only updates the reason
+    let conninfo = pg
+        .conninfo()
+        .replace("user=exec_pool ", "user=exec_pool_runner ");
+    let mut runner = Store::open(&conninfo).unwrap();
+    runner
+        .quarantine(&slot("s0"), "an agent is running")
+        .unwrap();
+    runner
+        .quarantine(&slot("s0"), &"unpushed work ".repeat(200))
+        .unwrap();
+    runner
+        .quarantine(&slot("s1"), "an agent is running")
+        .unwrap();
+    assert!(has(
+        &owner.metrics(None).unwrap(),
+        "exec_pool_slots{state=\"quarantined\"} 2"
+    ));
+    let reason: String = pg
+        .sql()
+        .query_one(
+            "SELECT reason FROM quarantined_slots WHERE slot = 's0'",
+            &[],
+        )
+        .unwrap()
+        .get(0);
+    assert_eq!(reason.chars().count(), 1024);
+    assert!(reason.starts_with("unpushed work"));
+    runner.clear_quarantine(&slot("s0")).unwrap();
+    runner.clear_quarantine(&slot("s0")).unwrap();
+    assert!(has(
+        &owner.metrics(None).unwrap(),
+        "exec_pool_slots{state=\"quarantined\"} 1"
+    ));
 }
 
 /// The one shape `submit_task` takes: what `exec-pool submit` builds.
