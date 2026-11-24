@@ -60,7 +60,7 @@ covers 21:00 to 08:30 Stockholm in both seasons, and mutes one hour more: 20:00 
 | GateFailRateHigh | The fleet's fail rate (run-weighted over the hosts) is over `maxRatio` over a full sample of `lastRuns` full gates |
 | ScheduledGateRed | The scheduled full gate on main failed (`homelab_scheduled_gate_red`), for `forMinutes`. It names the head, the first failed step and the last green head; see [below](#scheduledgatered) |
 | ScheduledGateOverdue | No scheduled full gate has finished for `hours` while main has moved since the last one, or the scheduler has not read main for `hours`, for `forMinutes`; see [below](#scheduledgateoverdue) |
-| HostBehindMain | The host has been up and more than `maxHours` behind main for `upHours`. A sleeping host is not paged |
+| HostBehindMain | The host has been up and more than `maxHours` behind main for `upHours` (`shipping_deploy_lag_hours`: the age of the oldest merge its last good `just deploy` lacks). A sleeping host is not paged. Fix: `just deploy <host>` from lenovo, after `git fetch` on main |
 | DeployRolledBack | Rollbacks in the last 24 h exceed `max` |
 | EscapeFound | Escapes in the last 24 h exceed `max` |
 | RetroDueGateSlower | Per host: its median full gate (`shipping_gate_seconds{quantile="0.5"}`) is over `factor` times its own 7-d average and its gate fail ratio is above its own 7-d average, for `forMinutes`, once its series is at least 5 d old (`offset 5d`): slower alone is no retro, a bigger change gates longer, and a new host (a guest) slow from the start fires nothing and moves no other host's median |
