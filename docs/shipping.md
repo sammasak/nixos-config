@@ -51,7 +51,7 @@ covers 21:00 to 08:30 Stockholm in both seasons, and mutes one hour more: 20:00 
 
 | Alert | Fires when |
 |---|---|
-| OpenIssuesUntouched | More than `max` actionable open issues have had no update (comment, label, edit) for `days` days (`shipping_issues_untouched{repo}`). Its summary carries the `gh search issues` command that lists them, oldest update first: close, park or work each. It replaced OpenIssuesGrowing, which fired on a week of many small tickets opened on purpose and named no issue |
+| OpenIssuesUntouched | More than `max` actionable open issues have had no update (comment, label, edit) for `days` days (`shipping_issues_untouched{repo}`). Its summary carries the `gh search issues` command that lists them, oldest update first: close, park or work each. |
 | PrLeadTimeHigh | The median lead time is over `medianHours` |
 | LeadTimeFallbacksHigh | More than `maxRatio` of the PRs merged in 7 d took their lead time from their open time after an HTTP error on GitHub's commits API, so the lead time reads low while the section looks fresh |
 | ReviewFirstPassLow | The first-pass rate is under `minRatio` over a full sample of `lastVerdicts` reviewed PRs |

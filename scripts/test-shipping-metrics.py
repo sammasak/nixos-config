@@ -52,9 +52,10 @@ def pr(n, opened, merged):
 
 parked = json.loads(POLICY.read_text())["issues"]["parkedRepos"]["value"][0]
 idle_hours = json.loads(POLICY.read_text())["alerts"]["OpenIssuesUntouched"]["days"]["value"] * 24
-# issue 1 is older than the policy's untouched days but updated since; parked and archived issues never count
+# issue 1 is older than the policy's untouched days but updated since; parked and archived issues never count; skills
+# has only a fresh issue
 OPEN = [issue("nixos-config", 1, idle_hours + 10, ["needs-live"], 10), issue("nixos-config", 2, idle_hours + 50, ["approved"]),
-        issue(parked, 3, idle_hours + 100), issue("old", 4, idle_hours + 1000)]
+        issue(parked, 3, idle_hours + 100), issue("old", 4, idle_hours + 1000), issue("skills", 5, 5)]
 PRS = [pr(10, 5, 1), pr(11, 30, 2), pr(12, 3, 2.5), pr(13, 4.2, 0.2)]
 # PR 10 is a batch: opened 5 h ago, its lanes' commits authored 40 and 20 h ago; PR 11's oldest commit is on its
 # second page; PR 12's commits answer 404 (a deleted repo), so it falls back to its open time
@@ -115,7 +116,8 @@ class Fake(http.server.BaseHTTPRequestHandler):
         elif not github_up:
             return self.send_error(503)
         elif u.path in ("/user/repos", "/users/sammasak/repos"):
-            body = [{"name": "nixos-config", "archived": False}, {"name": parked, "archived": False}, {"name": "old", "archived": True}]
+            body = [{"name": "nixos-config", "archived": False}, {"name": parked, "archived": False}, {"name": "old", "archived": True},
+                    {"name": "skills", "archived": False}]
         elif u.path == "/search/issues":
             s = q["q"][0]
             items = (OPEN if "is:open" in s else PRS if "is:merged" in s else [issue("nixos-config", 9, 2, ["escape"])] if "label:escape" in s else [])
@@ -216,8 +218,9 @@ with tempfile.TemporaryDirectory() as tmp:
           and m.get('shipping_issues_open{class="archived",repo="old"}') == 1,
           "open issues split into actionable, parked (policy) and archived (the API's flag)")
     check(m.get('shipping_issues_open_labelled{label="needs-live"}') == 1, "labels count actionable issues")
-    check(m.get('shipping_issues_untouched{repo="nixos-config"}') == 1 and not any(k.startswith("shipping_issues_untouched{") and "nixos-config" not in k for k in m),
-          "untouched counts actionable issues by their last update, not their age")
+    check(m.get('shipping_issues_untouched{repo="nixos-config"}') == 1 and m.get('shipping_issues_untouched{repo="skills"}') == 0
+          and not any(k.startswith("shipping_issues_untouched{") and not ("nixos-config" in k or "skills" in k) for k in m),
+          "untouched counts actionable issues by their last update, not their age; a repo with none reads 0")
     check(m.get("shipping_review_prs_counted") == 3 and abs(m.get("shipping_review_first_pass_ratio", 0) - 2 / 3) < 1e-9
           and m.get("shipping_review_unreviewed_prs") == 1,
           "first verdict against the policy grade; a PR without a verdict is unreviewed, not a pass")

@@ -81,7 +81,7 @@ in
       rules = [
         (alert "OpenIssuesUntouched"
           "sum(shipping_issues_untouched) > ${toString a.OpenIssuesUntouched.max.value}"
-          "{{ $value }} open actionable issues have had no update for ${toString untouchedDays} d. List them with gh search issues --owner sammasak --state open --archived=false --updated \"<$(date -u -d -${toString untouchedDays}days +%F)\" --sort updated --order asc -- ${parkedOut}, then close, park or work each."
+          "{{ $value }} open actionable issues have had no update for ${toString untouchedDays} d. List them with gh search issues --owner sammasak --state open --archived=false --updated \"<$(date -u -d -${toString untouchedDays}days +%FT%TZ)\" --sort updated --order asc -- ${parkedOut}, then close, park or work each."
           { }
         )
         (alert "PrLeadTimeHigh"
