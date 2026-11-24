@@ -588,7 +588,7 @@ fn the_queue_survives_a_restart_and_says_when_the_database_is_down() {
         s.claim(&slot("s1"), 60).map(|_| ()),
         s.apply(&a, &ev(1, Kind::Start), None).map(|_| ()),
         s.reconcile().map(|_| ()),
-        s.metrics().map(|_| ()),
+        s.metrics(None).map(|_| ()),
     ] {
         assert!(
             matches!(result, Err(QueueError::Unavailable(_))),
@@ -614,8 +614,9 @@ fn state_changes_and_metrics_keep_ids_and_prompts_where_they_belong() {
     let mut s = pg.migrated();
     // no traffic: every state is present at zero, unlike the unavailable rendering
     let has = |text: &str, line: &str| text.lines().any(|l| l == line);
-    let idle = s.metrics().unwrap();
+    let idle = s.metrics(None).unwrap();
     assert!(has(&idle, "exec_pool_queue_up 1"));
+    let agents = ["none", "claude", "codex", "pi"];
     let states = [
         "queued",
         "leased",
@@ -627,17 +628,22 @@ fn state_changes_and_metrics_keep_ids_and_prompts_where_they_belong() {
         "needs_review",
     ];
     for state in states {
-        assert!(
-            has(&idle, &format!("exec_pool_attempts{{state=\"{state}\"}} 0")),
-            "{state}"
-        );
+        for agent in agents {
+            assert!(
+                has(
+                    &idle,
+                    &format!("exec_pool_attempts{{state=\"{state}\",agent=\"{agent}\"}} 0")
+                ),
+                "{state} {agent}"
+            );
+        }
     }
     let series = |text: &str| {
         text.lines()
             .filter(|l| l.starts_with("exec_pool_attempts{"))
             .count()
     };
-    assert_eq!(series(&idle), states.len());
+    assert_eq!(series(&idle), states.len() * agents.len());
     assert!(has(&idle, "exec_pool_queued_oldest_seconds 0"));
     assert_eq!(
         idle.strip_suffix("exec_pool_queue_up 1\n").map(|_| ()),
@@ -666,10 +672,16 @@ fn state_changes_and_metrics_keep_ids_and_prompts_where_they_belong() {
     assert!(line["durations"]["in_state_ms"].as_i64().unwrap() >= 0);
     assert!(line["durations"]["since_submit_ms"].as_i64().unwrap() >= 0);
 
-    let text = s.metrics().unwrap();
-    assert!(has(&text, "exec_pool_attempts{state=\"leased\"} 1"));
-    assert!(has(&text, "exec_pool_attempts{state=\"queued\"} 0"));
-    assert_eq!(series(&text), states.len());
+    let text = s.metrics(None).unwrap();
+    assert!(has(
+        &text,
+        "exec_pool_attempts{state=\"leased\",agent=\"none\"} 1"
+    ));
+    assert!(has(
+        &text,
+        "exec_pool_attempts{state=\"queued\",agent=\"none\"} 0"
+    ));
+    assert_eq!(series(&text), states.len() * agents.len());
     assert!(has(
         &text,
         "exec_pool_transitions_total{from=\"queued\",to=\"leased\",reason=\"lease\"} 1"
@@ -694,6 +706,99 @@ fn state_changes_and_metrics_keep_ids_and_prompts_where_they_belong() {
             "{row}"
         );
     }
+}
+
+#[test]
+fn an_idle_queue_renders_slots_leases_and_durations_at_zero() {
+    let pg = Pg::new();
+    let mut s = pg.migrated();
+    let idle = s.metrics(None).unwrap();
+    let has = |line: &str| idle.lines().any(|l| l == line);
+    assert!(has("exec_pool_slots{state=\"busy\"} 0"));
+    for state in ["leased", "running", "checkpointing"] {
+        assert!(has(&format!(
+            "exec_pool_lease_overdue{{state=\"{state}\"}} 0"
+        )));
+    }
+    assert!(
+        !idle.contains("exec_pool_slots_declared"),
+        "no declared count when the caller gives none"
+    );
+    for agent in ["none", "claude", "codex", "pi"] {
+        for h in ["exec_pool_queue_wait_seconds", "exec_pool_run_seconds"] {
+            assert!(
+                has(&format!("{h}_count{{agent=\"{agent}\"}} 0")),
+                "{h} {agent}"
+            );
+            assert!(has(&format!(
+                "{h}_bucket{{agent=\"{agent}\",le=\"+Inf\"}} 0"
+            )));
+            assert!(has(&format!("{h}_bucket{{agent=\"{agent}\",le=\"10\"}} 0")));
+        }
+    }
+}
+
+#[test]
+fn a_wait_a_run_and_an_overdue_lease_show_in_the_metrics() {
+    let pg = Pg::new();
+    let mut s = pg.migrated();
+    let has = |text: &str, line: &str| text.lines().any(|l| l == line);
+    let a = submit(&mut s, &task("t-1", 2));
+    s.claim(&slot("s0"), 60).unwrap().unwrap();
+    let text = s.metrics(Some(2)).unwrap();
+    assert!(has(&text, "exec_pool_slots{state=\"busy\"} 1"));
+    assert!(has(&text, "exec_pool_slots_declared 2"));
+    // the wait was well under ten seconds: in every bucket, and counted once
+    assert!(has(
+        &text,
+        "exec_pool_queue_wait_seconds_bucket{agent=\"none\",le=\"10\"} 1"
+    ));
+    assert!(has(
+        &text,
+        "exec_pool_queue_wait_seconds_count{agent=\"none\"} 1"
+    ));
+    assert!(has(
+        &text,
+        "exec_pool_queue_wait_seconds_count{agent=\"claude\"} 0"
+    ));
+    assert!(has(&text, "exec_pool_lease_overdue{state=\"leased\"} 0"));
+    s.apply(&a, &ev(1, Kind::Start), None).unwrap();
+    s.apply(&a, &ev(1, Kind::Checkpoint), None).unwrap();
+    let text = s.metrics(None).unwrap();
+    assert!(has(&text, "exec_pool_run_seconds_count{agent=\"none\"} 1"));
+    assert!(has(
+        &text,
+        "exec_pool_run_seconds_bucket{agent=\"none\",le=\"10\"} 1"
+    ));
+    assert!(has(
+        &text,
+        "exec_pool_lease_overdue{state=\"checkpointing\"} 0"
+    ));
+
+    // a dead runner: the lease is past its deadline and nothing has reconciled it yet
+    overdue(&pg, &a);
+    let text = s.metrics(None).unwrap();
+    assert!(has(
+        &text,
+        "exec_pool_lease_overdue{state=\"checkpointing\"} 1"
+    ));
+    assert!(has(&text, "exec_pool_slots{state=\"busy\"} 1"));
+
+    assert_eq!(s.reconcile().unwrap().len(), 1);
+    let text = s.metrics(None).unwrap();
+    assert!(has(
+        &text,
+        "exec_pool_lease_overdue{state=\"checkpointing\"} 0"
+    ));
+    assert!(has(&text, "exec_pool_slots{state=\"busy\"} 0"));
+    assert!(has(
+        &text,
+        "exec_pool_attempts{state=\"needs_review\",agent=\"none\"} 1"
+    ));
+    assert!(has(
+        &text,
+        "exec_pool_transitions_total{from=\"checkpointing\",to=\"needs_review\",reason=\"lease_expired\"} 1"
+    ));
 }
 
 #[test]

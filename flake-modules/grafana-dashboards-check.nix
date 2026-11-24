@@ -537,8 +537,11 @@ in
             python3 -I ${../scripts/guest-records.py} --list > guest-records.prom
             # acer's scheduled full gate textfile (modules/homelab/scheduled-gate.nix)
             python3 -I ${../pkgs/scheduled-gate/scheduled_gate.py} --list > scheduled-gate.prom
-            # acer's execution pool textfile (modules/homelab/exec-pool.nix): every series its renderer types
-            rg --no-filename -o '# TYPE (exec_pool_[a-z_]+) ' -r '$1' ${../pkgs/exec-pool/src} | sort -u > exec-pool.prom
+            # acer's execution pool textfile (modules/homelab/exec-pool.nix): every series its renderer types, a
+            # histogram's with its _bucket, _sum and _count
+            rg --no-filename -o '# TYPE exec_pool_[a-z_]+ [a-z]+' ${../pkgs/exec-pool/src} \
+              | awk '{ print $3 } $4 == "histogram" { print $3 "_bucket"; print $3 "_sum"; print $3 "_count" }' \
+              | sort -u > exec-pool.prom
             grep -qx exec_pool_queue_up exec-pool.prom
             # Authentik's names from the Python package and the Go server acer runs
             python3 -I ${../scripts/authentik-metric-names.py} ${acer.systemd.services.authentik-worker.environment.PYTHONPATH} \

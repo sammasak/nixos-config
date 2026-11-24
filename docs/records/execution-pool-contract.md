@@ -70,9 +70,11 @@ holds ids, states and reason codes.
 
 Instrumentation (#658's first slice): every change is one JSON line on stdout, `{"msg":"state_change","change":{
 task_id, attempt, lease_epoch, host, slot, from, to, reason, durations: {in_state_ms, since_submit_ms}}}`, and
-`exec-pool-queue metrics` renders `exec_pool_queue_up`, `exec_pool_attempts{state}`,
-`exec_pool_queued_oldest_seconds` and `exec_pool_transitions_total{from,to,reason}` for a textfile collector. Ids
-stay in the log line, never in a label. When the render fails for any reason it prints only `exec_pool_queue_up 0`
+`exec-pool-queue metrics` renders `exec_pool_queue_up`, `exec_pool_attempts{state,agent}`,
+`exec_pool_queued_oldest_seconds`, `exec_pool_lease_overdue{state}`, `exec_pool_slots{state="busy"}`,
+`exec_pool_slots_declared` (from `EXEC_POOL_SLOTS`), the histograms `exec_pool_queue_wait_seconds{agent}` and
+`exec_pool_run_seconds{agent}` and `exec_pool_transitions_total{from,to,reason}` for a textfile collector; lease
+expiries are the transitions with `reason="lease_expired"`. Ids stay in the log line, never in a label. When the render fails for any reason it prints only `exec_pool_queue_up 0`
 and exits non-zero; the collector installs stdout whatever the exit code, so a missing source reads as absent, not as
 zero traffic or as the last good counts.
 
