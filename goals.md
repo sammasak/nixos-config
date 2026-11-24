@@ -20,25 +20,28 @@ PRs merge.
 
 ## Queue
 
-In flight (24 Nov, 07:00): second alert slice of #600 (`a1`); live evidence written onto #624, #625 and #626 (lenovo
-subagent). Parked until msi is on (08:30): pool slot declaration (`m2`, built and tested locally, unpushed); one full
-gate on main for the night's pushes (`just qa-owed`); msi and asus deploys.
-Merged and live since 05:00: flake check green again (#695, step passed in 1263 s); worker guests leave record
-shipping to the host, no more false "Loki unreachable" (#697; 789 gate-step records from `a1` are in Loki); night
-pushes run a 90 s evaluation step that refuses a break like #691's (#698); role adapters name one place and take the
-task checkout from the handoff (skills#157, #158; pin #699, #158 not pinned yet).
+Owner, 24 Nov morning: full gates need not run for every change; run them on a schedule to catch regressions. And the
+pool database sitting in the Authentik module's PostgreSQL server is confusing and bad practice.
+
+In flight (24 Nov, 09:00): fast checks on every push plus a scheduled full gate on main with a red-gate alert (`a1`);
+PostgreSQL server into its own module, Authentik and the pool as plain tenants (`m2`); msi builds die before agent
+sessions when the worker pool fills (#647, `m1`, built, waiting to push); two #624 items (`m1`).
+Merged and live since 07:00: `OpenIssuesUntouched` replaces `OpenIssuesGrowing` (#701); worker label on token metrics
+and `ClaudeCompactionLoop` (#702); all ten role adapters take the checkout from the handoff (skills#159, pin #703);
+record-shipper backlog figure and `GuestRecordsNotShipping` (#705); pool slot declaration, off by default (#704, merged
+on its own tests, not deployed to msi yet). asus deployed #703 at 08:25; msi owes a deploy (a gate runs on it).
 
 Waiting, in pick-up order:
 
 | # | Topic | Pain now | Next small change |
 |---|-------|----------|-------------------|
-| 1 | Workers | msi sessions die when the pool runs out of memory (#647) | cap or slot limit (needs msi on) |
-| 2 | Pool | no task has run through it | push slots (#650), then the runner (#652); enqueue smoke test on acer |
-| 3 | Live comparison | first numbers only | read a day of Shunt on/off and of herman against default; decide to widen or switch off |
-| 4 | Gates | flake check took 1263 s after #683, not less than the 13.1 min median; a build-only break (#693's kind) still passes at night | read the morning gate per step; find what grew |
-| 5 | Roles | four write roles still say `devenv tasks run` with no directory; sandbox test cannot run in a guest | same wording fix for the four; pin skills#158; a handoff through Herdr |
-| 6 | Monitoring | no backlog figure for the guest record shipper | whichever of the two candidates slice 2 did not take; Alertmanager 0.34 |
-| 7 | Leftovers | two drafts open | #616 black-pi kernel (needs a build path that is not the Pi), skills#106 (fixes named on the PR) |
+| 1 | Pool | no task has run through it | runner (#652); enqueue smoke test on acer |
+| 2 | Workers | msi guests have no working DNS; `m1`'s SSH host key changed over the power-off | find the cause after the msi deploy |
+| 3 | Live comparison | first numbers only; labels are fresh from 07:40 on 24 Nov | read a day of Shunt on/off and of herman against default on 25 Nov; widen or switch off |
+| 4 | Records | 37 gate-step and 45 coverage records from `a1` are in its retry file but not in Loki | find why before deleting the retry files |
+| 5 | Gates | flake check took 1263 s after #683 | read the per-step times of the first scheduled gate; find what grew |
+| 6 | Monitoring | no new alert has been seen arriving on the phone | fire one "blind" alert live with the #624 steps; Alertmanager 0.34 |
+| 7 | Leftovers | two drafts open; skills operator runbook names the old checkout | #616, skills#106, the runbook line |
 
 ## Priorities
 

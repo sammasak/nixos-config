@@ -25,7 +25,7 @@ node-exporter. Its calls are read-only:
 | `shipping_pr_lead_time_fallbacks{reason,window}` | Of those PRs, how many fell back to their open time: `http_error`, `no_commits`, `no_token`, `pending` (not read yet: a run reads new PRs for at most 90 s, the rest on the next runs); every reason is written, 0 included. `http_error` close to `shipping_prs_merged` means the commits API failed for every PR, so the lead time quantiles are open-to-merge and read low (Shipping dashboard, beside PRs merged) |
 | `shipping_review_rounds`, `_first_pass_ratio`, `_prs_counted`, `_unreviewed_prs` | `Grade: N/10` comments per PR, over the last reviewed merged PRs; first pass means the first grade reached `review.passGrade` |
 | `shipping_escapes{kind,window}` | Commits starting `Revert "` on default branches, and issues labelled `escape` |
-| `shipping_gate_fail_ratio{host}`, `_runs_counted{host}`, `shipping_gate_seconds{host,quantile}` | The last push-mode `nixos-qa` gates, by the host that ran them (the record stream's `host`: a guest is its own) |
+| `shipping_gate_fail_ratio{host}`, `_runs_counted{host}`, `shipping_gate_seconds{host,quantile}` | The last full `nixos-qa` gates (`mode=push`, as the pre-push hook ran them before 24 Nov, and `mode=scheduled`), by the host that ran them (the record stream's `host`: a guest is its own) |
 | `shipping_gate_step_failures{step,check}` (distinct heads; the flake check by inner check), `shipping_deploys{result}`, `shipping_deploy_rollbacks{window}` | From the gate-step and deploy records |
 | `shipping_deploy_lag_commits` / `_hours{host,node}` | Commits on main that the host's last good `just deploy` lacks, and the age of the oldest merge among them |
 | `shipping_pr_phase_hours{phase,quantile}` | Where a deploy-repo (nixos-config) PR merged in 7 d spent its time, median and p90 per phase. `idle`: its last commit's committer time to the start of the first passing push gate on one of its commits after it (end minus `seconds`). It **includes any gate queue wait**: the gate record carries no queue time, so the wait cannot be split out without a new collector. `gate`: that gate's `seconds`. `gate_to_merge`: the gate's end to the merge. `merge_to_deploy`: the merge to the end of the first good deploy record after it whose sha has the merge commit (GitHub compare `ahead` or `identical`) |
@@ -36,8 +36,10 @@ node-exporter. Its calls are read-only:
 Not measured:
 - Hosts with no good deploy record in the last 14 days of Loki have no lag series. A `just switch` writes no record.
 - Reviews posted as PR reviews rather than issue comments are not counted.
-- PR phases see only push-mode `nixos-qa` gates and `just deploy` records: a PR gated another way (a green-tree
-  shortcut, a host whose record never reached Loki) is `no_gate`, and a `just switch` writes no deploy record, so its PRs match the next `just deploy`.
+- PR phases see only push and scheduled `nixos-qa` gates on a PR's own commits before its merge, and `just deploy`
+  records: since the push runs the fast set only (24 Nov), new PRs read `no_gate`, as the scheduled gate runs on main
+  after the merge and a `just full-gate` is `mode=manual`. A PR gated another way (a green-tree shortcut, a host whose record
+  never reached Loki) is `no_gate` too, and a `just switch` writes no deploy record, so its PRs match the next `just deploy`.
   PRs in other repos have no phases. A PR whose commits were not read yet (`pending`) is left out until a run reads it.
 - Until the gate and deploy records cover the whole week (they begin 16 Nov), PRs merged before them read `no_gate`,
   and their `merge_to_deploy` runs to the first recorded deploy.
@@ -55,13 +57,45 @@ covers 21:00 to 08:30 Stockholm in both seasons, and mutes one hour more: 20:00 
 | PrLeadTimeHigh | The median lead time is over `medianHours` |
 | LeadTimeFallbacksHigh | More than `maxRatio` of the PRs merged in 7 d took their lead time from their open time after an HTTP error on GitHub's commits API, so the lead time reads low while the section looks fresh |
 | ReviewFirstPassLow | The first-pass rate is under `minRatio` over a full sample of `lastVerdicts` reviewed PRs |
-| GateFailRateHigh | The fleet's fail rate (run-weighted over the hosts) is over `maxRatio` over a full sample of `lastRuns` push gates |
+| GateFailRateHigh | The fleet's fail rate (run-weighted over the hosts) is over `maxRatio` over a full sample of `lastRuns` full gates |
+| ScheduledGateRed | The scheduled full gate on main failed (`homelab_scheduled_gate_red`), for `forMinutes`. It names the head, the first failed step and the last green head; see [below](#scheduledgatered) |
+| ScheduledGateOverdue | No scheduled full gate has finished for `hours` while main has moved since the last one, or the scheduler has not read main for `hours`, for `forMinutes`; see [below](#scheduledgateoverdue) |
 | HostBehindMain | The host has been up and more than `maxHours` behind main for `upHours`. A sleeping host is not paged |
 | DeployRolledBack | Rollbacks in the last 24 h exceed `max` |
 | EscapeFound | Escapes in the last 24 h exceed `max` |
-| RetroDueGateSlower | Per host: its median push gate (`shipping_gate_seconds{quantile="0.5"}`) is over `factor` times its own 7-d average and its gate fail ratio is above its own 7-d average, for `forMinutes`, once its series is at least 5 d old (`offset 5d`): slower alone is no retro, a bigger change gates longer, and a new host (a guest) slow from the start fires nothing and moves no other host's median |
-| RetroDueStepFailsRepeat | One push-gate step, or one check inside the flake check, failed on at least `minFailures` distinct heads in 7 d (`shipping_gate_step_failures`) over a full sample of `lastRuns` push gates, for `forMinutes`. One bad change that fails on a second host makes 2, so 3 is a pattern; it names the step. It clears `newFailureHours` after that unit's last failure (`shipping_gate_step_last_failure_timestamp_seconds`) unless its count rose since (a failure Loki received late), so a handled pattern stops paging within a day instead of a week, and fires again on its next failure while the count holds; the window outlasts the quiet hours (asserted), so a night's failure still pages in the morning |
+| RetroDueGateSlower | Per host: its median full gate (`shipping_gate_seconds{quantile="0.5"}`) is over `factor` times its own 7-d average and its gate fail ratio is above its own 7-d average, for `forMinutes`, once its series is at least 5 d old (`offset 5d`): slower alone is no retro, a bigger change gates longer, and a new host (a guest) slow from the start fires nothing and moves no other host's median |
+| RetroDueStepFailsRepeat | One full-gate step, or one check inside the flake check, failed on at least `minFailures` distinct heads in 7 d (`shipping_gate_step_failures`) over a full sample of `lastRuns` full gates, for `forMinutes`. One bad change that fails on a second host makes 2, so 3 is a pattern; it names the step. It clears `newFailureHours` after that unit's last failure (`shipping_gate_step_last_failure_timestamp_seconds`) unless its count rose since (a failure Loki received late), so a handled pattern stops paging within a day instead of a week, and fires again on its next failure while the count holds; the window outlasts the quiet hours (asserted), so a night's failure still pages in the morning |
 | ShippingCollectorStale | A section has not succeeded for `maxHours`, or failed two runs in a row, or the collector ran without the owner's gh login (`shipping_collector_authenticated` under `minAuthenticated`: public repos only), unless lenovo itself is down |
+
+## The scheduled full gate
+
+A push runs the fast set only (CLAUDE.md, the pre-push hook) and owes the full gate. `scheduled-gate.timer` on
+acer-swift (`modules/homelab/scheduled-gate.nix`, at 03:20, 09:20, 15:20 and 21:20) fetches origin/main into
+`/var/lib/scheduled-gate/repo` and, when main has moved since the last finished run, runs `devenv tasks run nixos:qa`
+in a worktree just added at that commit, as the owner. nixos:qa waits for the heavy-work lock itself and records the
+gate (`gate=nixos-qa mode=scheduled`) and its steps in Loki, as a push's gate did; its step times are in
+`/var/lib/scheduled-gate/nixos-qa-times`. `pkgs/scheduled-gate` keeps the last finished run in `state.json` there and
+writes `metrics/scheduled-gate.prom` (`homelab_scheduled_gate_*`) for acer's node-exporter. A red head is not run
+again: the next run is on the next commit to main. To gate a branch now, before merging a risky change:
+`just full-gate [REF]`.
+
+### ScheduledGateRed
+
+Fires: the last finished scheduled gate failed. The summary names the head, the first failed step (for the flake
+check, the check inside it) and `green..head`, the commits since the last green scheduled run; `unrecorded` means
+nixos:qa failed before its first step record (devenv's evaluation, the devenv-fresh guard).
+First: on acer, `journalctl -u scheduled-gate -n 200`, and `git log --oneline <green>..<head>` for the suspects.
+Reproduce on one commit with `just full-gate <sha>`. The alert clears when a later scheduled run on main passes.
+Do not: edit `state.json` to clear it; a fix merged to main is what clears it.
+
+### ScheduledGateOverdue
+
+Fires: main has moved and no scheduled gate has finished for `hours`, or the scheduler has not read main for that
+long (`homelab_scheduled_gate_checked_timestamp_seconds`). Usually a long wait for the heavy-work lock, a run killed
+at its 8 h `TimeoutStartSec`, or a failed fetch.
+First: on acer, `systemctl status scheduled-gate.timer scheduled-gate`, `just heavy-busy` for the lock's holder, and
+`journalctl -u scheduled-gate -n 50`. A failed unit also shows as NodeSystemdUnitFailed. The textfile is absent until
+the unit's first run, and then this alert cannot fire: after a deploy of acer, check that the series exists.
 
 ## Changing a number
 

@@ -440,6 +440,16 @@ let
   guestRecordsTest = gate "guest-records-test" (with pkgs; [ python3 ]) ''
     ${pkgs.python3}/bin/python scripts/test-guest-records.py
   '';
+  scheduledGateTest =
+    gate "scheduled-gate-test"
+      (with pkgs; [
+        python3
+        git
+        coreutils
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-scheduled-gate.py
+      '';
 
   # sam.claude.bulkReader: shunt hooks only when on and pinned, appended after the fleet's; guests via a guest module
   bulkReaderTest =
@@ -843,13 +853,14 @@ let
     lintShell
     deployRsPins
   ];
-  # the pre-push hook's night mode: no nix fmt (it evaluates the flake and may build the formatter)
-  nightLints = lints ++ [ secretsVerify ];
-  # the night push's one evaluation: the flake check's nix flake show, import-from-derivation off, so an output that
+  # the pre-push hook's fast set: no nix fmt (it evaluates the flake and may build the formatter)
+  pushLints = lints ++ [ secretsVerify ];
+  # the push's one evaluation: the flake check's nix flake show, import-from-derivation off, so an output that
   # needs IFD fails the push (about 90 s, 3.9 GiB on acer; the light lane, as eval-only). No check's derivation is
-  # evaluated, each host's needs stylix's IFD, and nothing is built: a check failing only when built waits for the day.
-  nightEval =
-    gate "nixos-night-eval"
+  # evaluated, each host's needs stylix's IFD, and nothing is built: a check failing only when built waits for the
+  # scheduled full gate on main (modules/homelab/scheduled-gate.nix) or a `just full-gate`.
+  pushEval =
+    gate "nixos-push-eval"
       (with pkgs; [
         nix
         util-linux
@@ -909,6 +920,7 @@ let
     scorecardTest
     trashSweepTest
     guestRecordsTest
+    scheduledGateTest
     shippingMetricsTest
     navMetricsTest
     shuntMetricsTest
@@ -1005,12 +1017,13 @@ let
         NIXOS_QA_HEAD=$(git rev-parse HEAD 2>/dev/null || echo none)
         # a record with a kind or field metrics/records.json does not list fails the gate, not just the dashboard
         export NIXOS_QA_HEAD PLATFORM_RECORD_STRICT=1
+        # scheduled: modules/homelab/scheduled-gate.nix, on a worktree it just added at origin/main
         mode=manual
-        [ -z "''${NIXOS_QA_TIMES:-}" ] || mode=push
+        [ "''${NIXOS_QA_MODE:-}" != scheduled ] || mode=scheduled
         # a manual run's green counts for the pre-push hook when the checkout was clean throughout (scripts/qa-green.sh)
         began=
         [ "$mode" != manual ] || began=$(${lib.getExe qaGreen} begin 2>/dev/null) || began=
-        # whether head= names what was checked: the hook's worktree is the pushed commit; a manual run may be dirty
+        # whether head= names what was checked: the scheduled gate's worktree is clean; a manual run may be dirty
         checkout=clean
         [ "$mode" != manual ] || checkout=''${began##* }
         checkout=''${checkout:-unknown}
@@ -1116,17 +1129,16 @@ let
         ${timed tests}
       '';
 
-  # Runs the gate on the PUSHED commit in a throwaway worktree, so neither
+  # Checks the PUSHED commit in a throwaway worktree, so neither
   # unstaged edits nor a different checked-out branch can make it pass.
   # prek runs it for the first ref that brings new commits only (the shim refuses a push that brings them to
   # two refs), and not at all for a push that brings none. A push that changes only
   # documentation (docs/ or a top-level *.md) since origin/main gets the lints, plus the tests that read a changed doc
-  # (a scripts/test-* names it: CLAUDE.md, docs/ssh-host-keys.md); no merge-base means the full gate, and so does a
-  # nested *.md, which can be deployed config. On top of a green tree, a doc a test reads still means the full gate.
-  # A docs-only push on top of a main merged on GitHub skips that combined tree's first full gate.
-  # A green full gate records the tree in the clone's git dir with the gate executable and the system generation
-  # (tests run its tools); that tree, or it plus documentation, gets the lints. Nothing else is keyed: a flaky green,
-  # an age key or the caller's PATH are not re-sampled until the record is deleted (nixos-qa-green).
+  # (a scripts/test-* names it: CLAUDE.md, docs/ssh-host-keys.md). A tree a manual full gate passed (scripts/qa-green.sh
+  # records it in the clone's git dir with the gate executable and the system generation, as tests run its tools), or
+  # it plus documentation, gets the lints. Nothing else is keyed: a flaky green, an age key or the caller's PATH are
+  # not re-sampled until the record is deleted (nixos-qa-green). Everything else, no merge-base and a nested *.md
+  # (deployable config) included, gets the fast set and owes the full gate, which never runs here.
   qaPush =
     gate "nixos-qa-push"
       (with pkgs; [
@@ -1189,32 +1201,18 @@ let
             exit
           fi
         done < <(tail -n 50 "$green" 2>/dev/null || true)
-        # The owner's night, host local time (23 Nov): the lints and secrets-verify only, the full gate owed. TZ is
-        # dropped so the caller's environment cannot move the window; the record's result=owed is never a pass to
-        # deferred-checks.py, and no green tree is recorded, so the next push of this tree by day runs the full gate.
-        night_from=2100 night_until=0830
-        now=$(env -u TZ date +%H%M)
-        if ((10#$now >= 10#$night_from || 10#$now < 10#$night_until)); then
-          t=$SECONDS
-          ${run nightLints}
-          e=$SECONDS
-          if ${lib.getExe nightEval}; then r=pass; else r=fail; fi
-          echo "nixos-qa: ${nightEval.name} took $((SECONDS - e)) s" | tee -a "$gitdir/nixos-qa-times"
-          ${lib.getExe record} gate-step gate=nixos-qa-push step=${nightEval.name} seconds=$((SECONDS - e)) result=$r sha="$(git rev-parse --short HEAD)"
-          [ "$r" = pass ] || { echo "nixos-qa: ${nightEval.name} failed for $(git rev-parse HEAD)" >&2; exit 1; }
-          echo "nixos-qa: night mode: full QA not run for $(git rev-parse HEAD), owed" | tee -a "$gitdir/nixos-qa-times"
-          PLATFORM_RECORD_STRICT=1 ${lib.getExe record} gate gate=nixos-qa-push seconds=$((SECONDS - t)) result=owed sha="$(git rev-parse --short HEAD)" mode=night head="$(git rev-parse HEAD)" checkout=clean
-          exit
-        fi
-        NIXOS_QA_TIMES=$gitdir/nixos-qa-times
-        export NIXOS_QA_TIMES
-        trim "$NIXOS_QA_TIMES" 2000
-        echo "$(date -Is) nixos-qa on pushed commit $(git rev-parse --short HEAD)" | tee -a "$NIXOS_QA_TIMES"
-        ${lib.getExe qa}
-        # A switch during the run leaves a green that no key describes.
-        if [ "$gate" = "${lib.getExe qa} $(readlink -f /run/current-system)" ]; then
-          { echo "$this $gate" >> "$green" && trim "$green" 50; } || echo "nixos-qa: green tree not recorded in $green" >&2
-        fi
+        # Every other push gets the fast set and owes the full gate: the scheduled gate runs it on main, `just full-gate`
+        # on a branch. The record's result=owed is never a pass to deferred-checks.py, and no green tree is recorded.
+        trim "$gitdir/nixos-qa-times" 2000
+        t=$SECONDS
+        ${run pushLints}
+        e=$SECONDS
+        if ${lib.getExe pushEval}; then r=pass; else r=fail; fi
+        echo "nixos-qa: ${pushEval.name} took $((SECONDS - e)) s" | tee -a "$gitdir/nixos-qa-times"
+        ${lib.getExe record} gate-step gate=nixos-qa-push step=${pushEval.name} seconds=$((SECONDS - e)) result=$r sha="$(git rev-parse --short HEAD)"
+        [ "$r" = pass ] || { echo "nixos-qa: ${pushEval.name} failed for $(git rev-parse HEAD)" >&2; exit 1; }
+        echo "nixos-qa: full QA not run for $(git rev-parse HEAD), owed to the scheduled gate on main" | tee -a "$gitdir/nixos-qa-times"
+        PLATFORM_RECORD_STRICT=1 ${lib.getExe record} gate gate=nixos-qa-push seconds=$((SECONDS - t)) result=owed sha="$(git rev-parse --short HEAD)" mode=fast head="$(git rev-parse HEAD)" checkout=clean
       '';
 
   # Operator side of the naked-pi RF kit. Each SSHes the Pi (the `naked-pi` ssh
@@ -1541,7 +1539,7 @@ in
     "nixos:build-bounds-test" =
       task "nix-daemon builds are bounded (cores, jobs, MemoryHigh/Max) on lenovo and the environment hosts; lenovo's user slice has a ceiling" buildBoundsTest;
     "nixos:qa-push-test" =
-      task "The pre-push hook without Nix: a green tree is recorded per gate and generation, by the hook or a clean manual nixos:qa, lints only for it plus docs, a linked worktree is judged on the pushed commit; the shim refuses new commits to two refs; nixos:qa takes the heavy-work lock once (an ancestor's counts); a deferred check is recorded owner:check per head, and built by its owner; deferred-checks.py says which still wait for their owner" qaPushTest;
+      task "The pre-push hook without Nix: every push runs the fast set and records the full gate owed, never a green; a clean manual nixos:qa records its tree per gate and generation, lints only for it plus docs; a linked worktree is judged on the pushed commit; the shim refuses new commits to two refs; nixos:qa takes the heavy-work lock once (an ancestor's counts); a deferred check is recorded owner:check per head, and built by its owner; deferred-checks.py says which still wait for their owner" qaPushTest;
     "nixos:journal-collector-test" =
       task "homelab.journalCollector on msi only: journald to Loki, no secret, a local readiness probe" journalCollectorTest;
     "nixos:fleet-endpoints-test" =
@@ -1558,6 +1556,8 @@ in
       task "The environments' .trash sweep, its core.nix text run: a week-old entry goes, a fresh one and a live dir stay, a .trash that is a link, a file or another mount is refused; each timer run records its counts, never a name" trashSweepTest;
     "nixos:guest-records-test" =
       task "The host ships guest platform records on a fake Loki: each line once, also after a rewrite; host labels only; label keys, unknown kinds, oversize and too-old lines dropped; 500 per run; a link or FIFO on the spool's path refused; trashOne ships before its rename" guestRecordsTest;
+    "nixos:scheduled-gate-test" =
+      task "The scheduled full gate on a throwaway origin, devenv stubbed: nixos:qa once per new main head, mode=scheduled, in a clean worktree at it; a red run names its first failed step and the last green head (unrecorded with no record); a run killed mid-gate records nothing; the textfile is what --list names" scheduledGateTest;
     "nixos:platform-records-test" =
       task "Platform health records: dashboard kinds match the helper and its callers, labels job/kind/host only, a down Loki or unknown kind never fails the caller" platformRecordsTest;
     "nixos:measurement-test" =

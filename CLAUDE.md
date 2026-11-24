@@ -16,20 +16,23 @@ devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks,
 # Hooks: the shims in .githooks/ (core.hooksPath) run prek on the checkout's .pre-commit-config.yaml,
 # which entering the devenv generates (.envrc does it on cd); without one, the main checkout's:
 #   pre-commit: lint-comments + lint-shell; commit-msg: subject <= 72 chars, a body needs a `Why:` line;
-#   pre-push:   no-force guard, one ref with new commits per push, + nixos:qa on the PUSHED commit in a temp worktree
-#               (lints only when everything changed since origin/main is docs/ or a top-level *.md,
-#               plus the tests whose scripts/test-* names a changed file; also lints only for a tree
-#               already green here under the same gate and system generation, or it plus such docs;
-#               deleting nixos-qa-green in the common git dir forces the full gate.
-#               From 21:00 to 08:30 host local time (night_from/night_until in qaPush) a push that would run the
-#               full gate runs the lints, secrets-verify and nixos-night-eval only (the flake check's
+#   pre-push:   no-force guard, one ref with new commits per push, + the fast set on the PUSHED commit in a temp
+#               worktree, at any hour: the lints, secrets-verify and nixos-push-eval (the flake check's
 #               `nix flake show --all-systems`, import-from-derivation off, ~90 s: no check's derivation, no build;
-#               its own gate-step record), prints `night mode: full QA not run for <sha>, owed` and records
-#               `gate … result=owed mode=night`: never a pass, no green tree; `just qa-owed` lists them.
-#               nixos:qa runs scripts/test-qa-push.py on the hook's own text, without Nix).
-#               A manual nixos:qa that passes on a clean checkout, unchanged through the run, records its tree the
-#               same way (scripts/qa-green.sh), so pushing that commit afterwards runs the lints only; with any
-#               change no commit holds it records nothing. A re-push of a green tree also runs the lints only.
+#               its own gate-step record). It prints `full QA not run for <sha>, owed to the scheduled gate on main`
+#               and records `gate … result=owed mode=fast`: never a pass, no green tree; `just qa-owed` lists them.
+#               Lints only when everything changed since origin/main is docs/ or a top-level *.md, plus the
+#               tests whose scripts/test-* names a changed file; also lints only for a tree a full gate passed here
+#               under the same gate and system generation, or it plus such docs. Other changed paths map to no
+#               single check cheaply (the tests read the hosts through the probe, a full evaluation), so none run.
+#               nixos:qa runs scripts/test-qa-push.py on the hook's own text, without Nix.
+#   The full gate: `scheduled-gate.timer` on acer (modules/homelab/scheduled-gate.nix, 4 times a day) runs
+#               nixos:qa on origin/main in a fresh worktree when main has moved, mode=scheduled, under the heavy
+#               lock; ScheduledGateRed and ScheduledGateOverdue report it (docs/shipping.md#the-scheduled-full-gate).
+#               For a risky change before merging: `just full-gate [REF]` (a clean worktree at REF, nixos:qa).
+#               A manual nixos:qa that passes on a clean checkout, unchanged through the run, records its tree
+#               (scripts/qa-green.sh, in the common git dir's nixos-qa-green), so pushing that commit afterwards runs
+#               the lints only; with any change no commit holds it records nothing.
 #               Tracked files only: what .gitignore hides is not compared.
 #               nixos:qa takes /run/work-locks/heavy-work.lock itself (pkgs/heavy-lock); an ancestor that
 #               holds it (`flock -o`) counts, and a launcher holding it across systemd-run sets NIXOS_QA_LOCKED=1.
@@ -71,8 +74,8 @@ just build  [HOST]            # Build only
 just diff   [HOST]            # Build and print the package diff vs the running system
 
 # Push from lenovo with deploy-rs (magic rollback; logs in as `deploy`, no password).
-# --skip-checks under a 7G, no-swap cap on the deploy-rs client. The pre-push gate runs the
-# flake check on pushed non-docs commits; a dirty tree or a HEAD not on origin/main is refused (DEPLOY_UNGATED=1 breaks glass).
+# --skip-checks under a 7G, no-swap cap on the deploy-rs client. The scheduled gate runs the
+# flake check on main; a dirty tree or a HEAD not on origin/main is refused (DEPLOY_UNGATED=1 breaks glass).
 just deploy HOST              # HOST: a deploy-rs node, any other name is refused
 #   then, whatever deploy-rs returned, it checks the target (scripts/post-deploy-check.sh: running,
 #   no unit in a restart loop, condition-skipped units listed; /run/current-system = the system profile's
