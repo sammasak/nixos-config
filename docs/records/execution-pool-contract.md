@@ -83,6 +83,15 @@ On acer (`modules/homelab/exec-pool.nix`): database and role `exec_pool` in the 
 host (lenovo pulls Authentik's dump alone, `modules/homelab/authentik-offhost.nix`), which a queue holding real tasks
 needs before a runner lands.
 
+## Agent adapter (#655)
+
+`exec_pool::agent::argv(&task)` is what a runner executes in the task's workdir: a `none` task's own argv, or for an
+agent task, whose argv is `[prompt]` or `[prompt, model]`, the agent's non-interactive call (`claude -p
+--output-format json`, `codex exec`, `pi -p`, unattended as the workers run them, the prompt after `--`) under the
+slot's own credentials and egress. `agent::outcome(agent, exit, stdout)` maps the exit to the settle: Claude's final
+JSON `is_error` decides for Claude, the exit code for the rest; a signal, or a Claude run with no result, is
+`needs_review`. Neither `failed` nor `needs_review` requeues, so no ambiguous external effect is replayed.
+
 ## Not `sam.agentRuntime`
 
 The historical `sam.agentRuntime` (#133, #138) made one ephemeral nspawn instance per task with no scheduler; it is
