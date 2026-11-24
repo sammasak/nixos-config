@@ -132,26 +132,20 @@ let
     severity = "warning";
     team = "shipping";
   };
-  # behind: main moved since the last finished gate; checked: the scheduler still reads main (else frozen at 0)
-  overdueCase = name: behind: checked: fires: {
+  # movedAt: minutes after the epoch main moved past the last finished gate (null: it has not); checked: the scheduler
+  # still reads main (else frozen at 0). The alert counts from the move, never from the last finished run
+  samples = n ((overdueAt + overdueFor + 10) / 4);
+  overdueCase = name: movedAt: checked: fires: {
     inherit name;
     interval = "4m";
     input_series = [
       {
-        series = "homelab_scheduled_gate_finished_timestamp_seconds{${gateNode}}";
-        values = "0x${n ((overdueAt + overdueFor + 10) / 4)}";
-      }
-      {
-        series = "homelab_scheduled_gate_main_behind{${gateNode}}";
-        values = "${n behind}x${n ((overdueAt + overdueFor + 10) / 4)}";
+        series = "homelab_scheduled_gate_behind_since_timestamp_seconds{${gateNode}}";
+        values = if movedAt == null then "0x${samples}" else "${n (movedAt * 60 + 1)}x${samples}";
       }
       {
         series = "homelab_scheduled_gate_checked_timestamp_seconds{${gateNode}}";
-        values =
-          if checked then
-            "0+240x${n ((overdueAt + overdueFor + 10) / 4)}"
-          else
-            "0x${n ((overdueAt + overdueFor + 10) / 4)}";
+        values = if checked then "0+240x${samples}" else "0x${samples}";
       }
     ];
     alert_rule_test = [
@@ -247,9 +241,16 @@ let
           }
         ];
       }
-      (overdueCase "main moved and no scheduled gate finished for the limit: overdue" 1 true true)
-      (overdueCase "main not moved since the last finished gate: not overdue, however old" 0 true false)
-      (overdueCase "the scheduler stopped reading main: overdue, behind or not" 0 false true)
+      (overdueCase "main moved at the start and no scheduled gate finished for the limit: overdue" 0 true
+        true
+      )
+      (overdueCase "main moved an hour ago after a long quiet stretch: not overdue" (
+        overdueAt - 60
+      ) true false)
+      (overdueCase "main not moved since the last finished gate: not overdue, however old" null true
+        false
+      )
+      (overdueCase "the scheduler stopped reading main: overdue, behind or not" null false true)
       {
         name = "gate fail rate: over the threshold on a full sample of two hosts' runs fires, on a short sample not";
         interval = "1m";
