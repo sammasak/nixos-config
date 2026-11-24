@@ -1241,24 +1241,46 @@ def check_submitter():
 
 
 SESSIONS_GC = r"""
-((builtins.getFlake (toString %(root)s)).nixosConfigurations.acer-swift.extendModules {
-  modules = [ { homelab.execPool.sessionGc.enable = true; } ];
-}).config.systemd.units."exec-pool-sessions-gc.service".unit
+let u = (builtins.getFlake (toString %(root)s)).nixosConfigurations.acer-swift.config.systemd.units;
+in (import <nixpkgs> { }).linkFarm "gc" [
+  { name = "gc"; path = u."exec-pool-sessions-gc.service".unit; }
+  { name = "list"; path = u."exec-pool-sessions-list.service".unit; }
+]
+"""
+
+SESSIONS_GC_MSI = r"""
+let c = (builtins.getFlake (toString %(root)s)).nixosConfigurations.msi-ms7758.config.systemd.services;
+  s = c.exec-pool-sessions-list; g = c.exec-pool-sessions-gc;
+in { inherit (s.environment) EXEC_POOL_DB; inherit (s.serviceConfig) User LoadCredential PrivateNetwork;
+  gc = { inherit (g.serviceConfig) PrivateNetwork RestrictAddressFamilies; cred = g.serviceConfig ? LoadCredential; env = g.environment ? EXEC_POOL_DB; }; }
 """
 
 
 def check_sessions_gc():
-    """Runs acer's session remover, built with the option on, against a scratch state dir and a fake `sessions` CLI."""
+    """Runs acer's session remover against a scratch state dir and a written `sessions` list; msi's lists over TCP."""
     out = subprocess.run(["nix", "build", "--no-link", "--print-out-paths", "--impure", "--expr", SESSIONS_GC % {"root": json.dumps(ROOT)}],
                          capture_output=True, text=True)
-    unit = pathlib.Path(out.stdout.strip(), "exec-pool-sessions-gc.service") if out.returncode == 0 else None
+    unit = pathlib.Path(out.stdout.strip(), "gc/exec-pool-sessions-gc.service") if out.returncode == 0 else None
+    lunit = pathlib.Path(out.stdout.strip(), "list/exec-pool-sessions-list.service") if out.returncode == 0 else None
     exe = re.search(r"^ExecStart=(\S+)", unit.read_text(), re.M) if unit else None
-    if not exe:
-        check(False, f"the session remover builds with the option on ({out.stderr.strip()[-300:]})")
+    pre = re.search(r"^ExecStart=(\S+)", lunit.read_text(), re.M) if lunit else None
+    if not exe or not pre:
+        check(False, f"acer's session remover and its lister are on ({out.stderr.strip()[-300:]})")
         return
+    g = unit.read_text()
+    check("User=exec_pool" in lunit.read_text() and "User=" not in g and "PrivateNetwork=true" in g
+          and "Requires=exec-pool-sessions-list.service" in g
+          and re.search(r"exec-pool sessions > /run/exec-pool-sessions-gc-list/sessions.tmp$", pathlib.Path(pre.group(1)).read_text(), re.M) is not None,
+          "acer lists every session as exec_pool, by peer, in its own unit; root's remover, after it, has no network")
+    out = run_eval(SESSIONS_GC_MSI % {"root": json.dumps(ROOT)})
+    got = json.loads(out.stdout) if out.returncode == 0 else {}
+    check(got.get("EXEC_POOL_DB", "").endswith("dbname=exec_pool user=exec_pool_runner") and got.get("User") == "exec_pool"
+          and got.get("PrivateNetwork") is False and [c.split(":")[0] for c in got.get("LoadCredential", [])] == ["db-password"]
+          and got.get("gc") == {"PrivateNetwork": True, "RestrictAddressFamilies": ["AF_UNIX"], "cred": False, "env": False},
+          f"msi's lister reads acer's queue as exec_pool_runner with its runner's password credential; root's remover has neither network nor credential ({got or out.stderr.strip()[-300:]})")
     text = pathlib.Path(exe.group(1)).read_text()
     with tempfile.TemporaryDirectory() as d:
-        state, metrics, own, fake = (pathlib.Path(d, n) for n in ("state", "metrics", "own", "cli"))
+        state, metrics, own, listed = (pathlib.Path(d, n) for n in ("state", "metrics", "own", "sessions"))
         for p in (state / ".trash", metrics, own, state / ".sessions/dock/pool1/cur/work"):
             p.mkdir(parents=True)
         for t in ("t1/tree/work", "t3/tree/work", "o1/tree/work"):
@@ -1266,18 +1288,20 @@ def check_sessions_gc():
         (state / ".sessions/t2").mkdir()
         for c in ("t1", "t2", "o2"):
             (state / ".sessions-store" / c / "tree").mkdir(parents=True)
-        script = re.sub(r"cli\(\) \{.*\}", 'cli() { "$FAKE_CLI" "$@"; }', text)
+        script = text.replace("/run/exec-pool-sessions-gc-list/sessions", str(listed)).replace("/var/lib/exec-pool-sessions-gc", str(own))
         script = script.replace("/var/lib/workers", str(state)).replace("/run/exec-pool-sessions-gc", str(metrics))
         pathlib.Path(d, "gc").write_text(script)
-        line = lambda i: json.dumps({"task_id": i, "state": "final", "last_change": "2026-11-01T00:00:00Z", "hosts": ["acer-swift"]})
+        line = lambda i, eligible=True, handed_back=True: json.dumps({"task_id": i, "state": "cancelled", "last_change": "2026-11-01T00:00:00Z",
+                                                                      "hosts": ["acer-swift"], "eligible": eligible, "handed_back": handed_back})
+        known = lambda i: json.dumps({"task_id": i, "eligible": False, "handed_back": None})
 
-        def run(eligible, fail=False):
-            fake.write_text("#!/bin/sh\n" + ("exit 75\n" if fail else "") + "if [ \"$1\" = --gc ]; then cat " + str(pathlib.Path(d, "eligible"))
-                            + "; else printf '%s\\n' " + " ".join(json.dumps(json.dumps({"task_id": i})) for i in ("t1", "t2", "t3", "t4")) + "; fi\n")
-            fake.chmod(0o755)
-            pathlib.Path(d, "eligible").write_text("".join(e + "\n" for e in eligible))
-            return subprocess.run(["bash", str(pathlib.Path(d, "gc"))], capture_output=True, text=True,
-                                  env={**os.environ, "STATE_DIRECTORY": str(own), "FAKE_CLI": str(fake)})
+        # the list as `exec-pool sessions` prints it: t1 to t4 known, the given lines eligible; None: no list
+        def run(eligible, listed_ok=True):
+            listed.unlink(missing_ok=True)
+            if listed_ok:
+                ids = {json.loads(e).get("task_id") for e in eligible if e.startswith("{")}
+                listed.write_text("".join(e + "\n" for e in eligible) + "".join(known(i) + "\n" for i in ("t1", "t2", "t3", "t4") if i not in ids))
+            return subprocess.run(["bash", str(pathlib.Path(d, "gc"))], capture_output=True, text=True)
 
         r = run([line("t1"), line("t2")])
         events = [json.loads(l) for l in r.stdout.splitlines() if l.startswith("{")]
@@ -1286,7 +1310,7 @@ def check_sessions_gc():
               and (state / ".sessions/t3/tree").is_dir() and (state / ".sessions-store/t2").is_dir() and (state / ".sessions/t2").is_dir()
               and (state / ".sessions/dock/pool1/cur/work").is_dir()
               and [(e["event"], e.get("kind")) for e in events] == [("removed", "session"), ("removed", "store"), ("skipped", None)]
-              and all(e.get("state") == "final" and e.get("hosts") == ["acer-swift"] for e in events[:2]),
+              and all(e.get("state") == "cancelled" and e.get("hosts") == ["acer-swift"] for e in events[:2]),
               f"an eligible parked tree and its store copy move to .trash with one JSON line each; a docked one, an ineligible one and the dock stay ({r.returncode}, {trash}, {events}, {r.stderr.strip()[-200:]})")
         prom = (metrics / "sessions-gc.prom").read_text() if (metrics / "sessions-gc.prom").exists() else ""
         check('homelab_exec_pool_sessions_removed_total{kind="session"} 1' in prom and 'homelab_exec_pool_sessions_removed_total{kind="store"} 1' in prom
@@ -1294,19 +1318,26 @@ def check_sessions_gc():
               and (state / ".sessions/o1/tree").is_dir() and (state / ".sessions-store/o2").is_dir(),
               f"the removed totals count each move, and a tree the queue does not know is counted as an orphan and stays ({prom!r})")
         (state / "outside").mkdir()
-        r = run([json.dumps({"task_id": "../outside"}), "not json", line("t1")])
+        r = run([line("../outside"), line("t1")])
         prom = (metrics / "sessions-gc.prom").read_text()
         check(r.returncode != 0 and (state / "outside").is_dir() and 'homelab_exec_pool_sessions_removed_total{kind="session"} 1' in prom
-              and r.stdout.count('"refused"') == 2,
+              and r.stdout.count('"refused"') == 1,
               f"an id that is not a plain name is refused and fails the run, moving nothing; the totals carry over runs ({r.returncode}, {r.stdout.strip()[-300:]})")
-        (state / ".sessions/t3/tree/work/x").write_text("x")
-        r = run([line("t3")], fail=True)
+        r = run(["not json", line("t3")])
         check(r.returncode != 0 and (state / ".sessions/t3/tree").is_dir() and (metrics / "sessions-gc.prom").read_text() == prom,
-              f"a CLI that fails fails the run with nothing moved and the textfile left as it was ({r.returncode})")
+              f"a list that does not parse fails the run before any move ({r.returncode})")
+        (state / ".sessions/t3/tree/work/x").write_text("x")
+        r = run([line("t3")], listed_ok=False)
+        check(r.returncode != 0 and (state / ".sessions/t3/tree").is_dir() and (metrics / "sessions-gc.prom").read_text() == prom,
+              f"no list (the lister failed) fails the run with nothing moved and the textfile left as it was ({r.returncode})")
+        r = run([line("t3", handed_back=False), line("t3x", eligible=False)])
+        check(r.returncode == 0 and (state / ".sessions/t3/tree/work/x").exists() and '"removed"' not in r.stdout,
+              f"a line the queue calls eligible whose branch was not handed back whole, or one it does not call eligible, moves nothing ({r.returncode}, {r.stdout.strip()[-300:]})")
+        prom = (metrics / "sessions-gc.prom").read_text()
         (state / ".sessions/t4").symlink_to(state / ".sessions/t3")
         (state / ".sessions-store/t4/tree").mkdir(parents=True)
         own.joinpath("removed-store").write_text("garbage")
-        r = run([json.dumps({"task_id": "dock"}), line("t4")])
+        r = run([line("dock"), line("t4")])
         prom = (metrics / "sessions-gc.prom").read_text()
         check(r.returncode != 0 and (state / ".sessions/dock/pool1/cur/work").is_dir() and (state / ".sessions-store/t4/tree").is_dir()
               and (state / ".sessions/t3/tree/work/x").exists() and r.stdout.count('"refused"') == 2

@@ -14,4 +14,5 @@
     enable = true;
     queue = "exec-pool-db";
   };
+  homelab.execPool.sessionGc.enable = true;
 }

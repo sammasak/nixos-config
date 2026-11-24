@@ -1,7 +1,7 @@
 //! `exec-pool`: submit an agent task to the queue and watch it, for a user `homelab.postgresql.clients` lets log in
 //! as `exec_pool_submit`, whose grants (migrations 0002 and 0005) allow queueing a task through `submit_task`,
 //! cancelling one it queued through `cancel_task`, starting a session through `start_session` and messaging it through
-//! `send_message` (migration 0009), and reading the queue without its prompts, nothing else. It reaches the queue over the Unix socket in `EXEC_POOL_DB`, by default [`DB`]. Exit codes are
+//! `send_message` (migration 0009), and reading the queue without its prompts, nothing else. It reaches the queue over the Unix socket in `EXEC_POOL_DB`, by default [`DB`], or, with a unit's `db-password` credential, over TCP. Exit codes are
 //! `exec-pool-queue`'s: 0 done, 1 refused, 2 usage, 3 outcome unknown (run `status` before submitting again), 75
 //! database unavailable; `wait` adds 124, not settled by its timeout.
 
@@ -35,8 +35,9 @@ const USAGE: &str = "usage: exec-pool COMMAND
                     blocks until the task settles (succeeded, failed, needs_review or cancelled) or, a session,
                     parks waiting, then prints its result
   sessions [--gc]   one JSON object per line for each session, as the queue decides its removal: task_id, state,
-                    last_change, the hosts its tree may be on, eligible and stale; with --gc only the eligible ones,
-                    which a remover may delete (a stale one is kept: its tree may hold unpushed work)
+                    last_change, the hosts its tree may be on, handed_back, eligible and stale; with --gc only the
+                    eligible ones, which a remover may delete: only a session whose last turn's branch held its whole
+                    tree (handed_back) is (a stale one is kept: its tree may hold unpushed work)
   cancel ID         cancels a task you submitted: a queued one at once; a running one is stopped by its runner within
                     seconds and settles cancelled (follow it with wait). Prints the attempt and its status after";
 /// Flags that take no value.
@@ -362,7 +363,19 @@ fn main() -> ExitCode {
             .ok_or_else(|| Fail::Usage("no command".to_owned()))?;
         let args = Args::parse(rest)?;
         let conninfo = std::env::var("EXEC_POOL_DB").unwrap_or_else(|_| DB.to_owned());
-        run(cmd, &args, &mut Store::open(&conninfo)?)
+        // a unit's db-password credential (LoadCredential), as exec-pool-runner's: another host's queue over TCP
+        let password = std::env::var_os("CREDENTIALS_DIRECTORY")
+            .map(|dir| std::path::Path::new(&dir).join("db-password"))
+            .filter(|p| p.exists())
+            .map(|p| {
+                std::fs::read(&p).map_err(|e| Fail::Usage(format!("db-password credential: {e}")))
+            })
+            .transpose()?;
+        let mut store = match password {
+            Some(pw) => Store::open_remote(&conninfo, pw.strip_suffix(b"\n").unwrap_or(&pw))?,
+            None => Store::open(&conninfo)?,
+        };
+        run(cmd, &args, &mut store)
     })();
     match outcome {
         Ok(()) => ExitCode::SUCCESS,

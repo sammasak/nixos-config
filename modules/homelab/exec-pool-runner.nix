@@ -67,6 +67,9 @@ let
   resets = map (n: "dev-env-reset@${n}.service") slotNames;
 in
 {
+  # the removal of this runner's session trees, by its queue's list
+  imports = [ ./exec-pool-sessions-gc.nix ];
+
   options.homelab.execPool.runner = {
     enable = lib.mkEnableOption "the execution pool's runner, one per sam.workers.executionPool slot";
     timeoutSecs = lib.mkOption {
@@ -79,6 +82,13 @@ in
       default = null;
       example = "exec-pool-db";
       description = "The sam.fleet listener of the queue's PostgreSQL on another host, reached as exec_pool_runner with the sops password; null: this host's own queue (exec-pool.nix), by peer.";
+    };
+    conninfo = lib.mkOption {
+      type = lib.types.str;
+      readOnly = true;
+      internal = true;
+      default = db;
+      description = "The queue the runner claims from, as its EXEC_POOL_DB; exec-pool-sessions-gc.nix lists by it.";
     };
     capabilities = lib.mkOption {
       type = lib.types.listOf lib.types.str;
@@ -145,7 +155,7 @@ in
           );
           path = [ config.systemd.package ];
           environment = {
-            EXEC_POOL_DB = db;
+            EXEC_POOL_DB = cfg.conninfo;
             EXEC_POOL_SLOT = slot n;
             EXEC_POOL_LEASE_SECS = toString leaseSecs;
             EXEC_POOL_RUNTIME = "/run/exec-pool-runner/${n}";

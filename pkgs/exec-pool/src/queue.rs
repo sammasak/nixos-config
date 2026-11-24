@@ -25,7 +25,7 @@ pub const DOWN: &str = include_str!("../migrations/0001_queue.down.sql");
 /// From 7 each records its floor, the oldest VERSION whose reads and writes stay correct on it: an additive one keeps
 /// the previous floor, so a binary rolled back across it still serves; one an older binary would misread or break by
 /// its writes records its own version.
-const STEPS: [(i32, &str); 11] = [
+const STEPS: [(i32, &str); 12] = [
     (1, UP),
     (2, include_str!("../migrations/0002_submitter.up.sql")),
     (3, include_str!("../migrations/0003_result.up.sql")),
@@ -40,6 +40,10 @@ const STEPS: [(i32, &str); 11] = [
         include_str!("../migrations/0010_session_metrics.up.sql"),
     ),
     (11, include_str!("../migrations/0011_claim_host.up.sql")),
+    (
+        12,
+        include_str!("../migrations/0012_session_gc_handed_back.up.sql"),
+    ),
 ];
 const DOWN_SUBMITTER: &str = include_str!("../migrations/0002_submitter.down.sql");
 const DOWN_RESULT: &str = include_str!("../migrations/0003_result.down.sql");
@@ -49,7 +53,7 @@ const DOWN_SLOTS: &str = include_str!("../migrations/0008_slots.down.sql");
 const DOWN_SESSION: &str = include_str!("../migrations/0009_session.down.sql");
 const DOWN_SESSION_METRICS: &str = include_str!("../migrations/0010_session_metrics.down.sql");
 const DOWN_CLAIM_HOST: &str = include_str!("../migrations/0011_claim_host.down.sql");
-const VERSION: i32 = 11;
+const VERSION: i32 = 12;
 /// The fence's SQLSTATE, raised by `attempts_fence`.
 const FENCED: &str = "XP409";
 const LIVE: &str = "('leased', 'running', 'checkpointing')";
@@ -1118,7 +1122,7 @@ impl Store {
         self.tx(|tx| {
             tx.query(
                 "SELECT jsonb_build_object('task_id', task, 'state', state, 'last_change', changed_at, 'hosts', hosts, \
-                 'handed_back', handed_back, 'eligible', eligible, 'stale', stale) \
+                 'handed_back', handed_back, 'eligible', eligible, 'stale', stale, 'kept', kept) \
                  FROM session_gc WHERE eligible OR NOT $1 ORDER BY changed_at, task",
                 &[&eligible_only],
             )?
@@ -1635,15 +1639,17 @@ fn session_totals(tx: &mut Transaction<'_>, out: &mut String) -> Result<(), Queu
              FROM events e JOIN tasks t ON t.id = e.task_id WHERE t.session AND e.to_status = 'running') l (host, prev) \
              WHERE l.prev IS NOT NULL AND l.host IS DISTINCT FROM l.prev), \
              (SELECT count(*) FILTER (WHERE eligible) FROM session_gc), \
-             (SELECT count(*) FILTER (WHERE stale) FROM session_gc) {waiting}"
+             (SELECT count(*) FILTER (WHERE stale) FROM session_gc), \
+             (SELECT count(*) FILTER (WHERE kept) FROM session_gc) {waiting}"
         ),
         &[],
     )?;
-    let (oldest, moved, eligible, stale): (f64, i64, i64, i64) = (
+    let (oldest, moved, eligible, stale, kept): (f64, i64, i64, i64, i64) = (
         row.try_get(0)?,
         row.try_get(1)?,
         row.try_get(2)?,
         row.try_get(3)?,
+        row.try_get(4)?,
     );
     let _ = write!(
         out,
@@ -1654,7 +1660,9 @@ fn session_totals(tx: &mut Transaction<'_>, out: &mut String) -> Result<(), Queu
          # HELP exec_pool_sessions_gc_eligible Sessions session_gc lets the remover delete.\n\
          # TYPE exec_pool_sessions_gc_eligible gauge\nexec_pool_sessions_gc_eligible {eligible}\n\
          # HELP exec_pool_sessions_stale Sessions waiting unchanged for 14 days that session_gc keeps: their tree may hold unpushed work.\n\
-         # TYPE exec_pool_sessions_stale gauge\nexec_pool_sessions_stale {stale}\n"
+         # TYPE exec_pool_sessions_stale gauge\nexec_pool_sessions_stale {stale}\n\
+         # HELP exec_pool_sessions_gc_kept Sessions final for 7 days that ran a turn and session_gc keeps: their tree was not handed back whole.\n\
+         # TYPE exec_pool_sessions_gc_kept gauge\nexec_pool_sessions_gc_kept {kept}\n"
     );
     let rows = tx.query(
         "SELECT t.spec->'command'->>'agent', count(u.input_tokens), coalesce(sum(u.input_tokens), 0)::bigint, \
