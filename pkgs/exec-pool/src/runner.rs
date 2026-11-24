@@ -52,16 +52,26 @@ pub struct Session {
     pub upto: i64,
 }
 
-/// One guest command of a run, under its transient unit's name.
+/// One guest command of a run, under its transient unit's name; `limit_secs` bounds a quick one tighter than its
+/// stage does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Step {
     pub stage: Stage,
     pub unit: &'static str,
     pub argv: Vec<String>,
+    pub limit_secs: Option<u64>,
 }
 
+/// The bound of a quick step: a relink or the transcript probe.
+pub const QUICK_SECS: u64 = 30;
+
 const fn step(stage: Stage, unit: &'static str, argv: Vec<String>) -> Step {
-    Step { stage, unit, argv }
+    Step {
+        stage,
+        unit,
+        argv,
+        limit_secs: None,
+    }
 }
 
 impl Manifest {
@@ -165,7 +175,10 @@ impl Manifest {
             steps.push(step(Stage::Prepare, "exec-pool-clone", clone));
             steps.push(step(Stage::Prepare, "exec-pool-checkout", checkout));
         }
-        steps.push(step(Stage::Prepare, "exec-pool-relink", relink));
+        steps.push(Step {
+            limit_secs: Some(QUICK_SECS),
+            ..step(Stage::Prepare, "exec-pool-relink", relink)
+        });
         Ok(steps)
     }
 
@@ -263,7 +276,8 @@ impl Manifest {
 pub fn relink(cp: &str, guest_home: &str) -> Vec<String> {
     [
         cp,
-        "-rsT",
+        // -H: the generation's home-files is itself a link to the files
+        "-rsTH",
         "--no-preserve=mode",
         "--remove-destination",
         &format!("{guest_home}/.local/state/home-manager/gcroots/current-home/home-files"),
@@ -301,8 +315,8 @@ pub enum TurnSettle {
 
 /// Where the session turn `attempt` at `epoch` goes after its run.
 ///
-/// No result (or someone else's), or a guest that went away, is `needs_review` as for any run, its tree left where it
-/// is; a cancel is `cancelled`; a turn that never reached the agent goes back to `queued`. Every end of the agent's
+/// No result (or someone else's), a guest that went away, or a tree it could not find, is `needs_review`, its tree
+/// left where it is; a cancel is `cancelled`; a turn that never reached the agent goes back to `queued`. Every end of the agent's
 /// call, a timeout included, parks the session: `turn_end` for Claude's verdict of success, `turn_error` otherwise. A
 /// failed turn never fails the session.
 #[must_use]
@@ -312,7 +326,9 @@ pub fn decide_turn(
     result: Option<&ExecResult>,
     stdout: &str,
 ) -> TurnSettle {
-    let Some(r) = result.filter(|r| r.attempt_id == attempt && r.lease_epoch == epoch) else {
+    let Some(r) = result
+        .filter(|r| r.attempt_id == attempt && r.lease_epoch == epoch && r.tree_lost.is_none())
+    else {
         return TurnSettle::Settle(Settle::NeedsReview);
     };
     if r.cancelled {
@@ -423,6 +439,10 @@ pub struct ExecResult {
     /// The task's branch, `pool/<task id>`, when the repository shows it after the run.
     #[serde(default)]
     pub branch: Option<String>,
+    /// Why a session task's tree, prepared on an earlier turn, could not be attached here (none to attach, or one
+    /// this slot may not take): its session is not lost to a retry, it goes to review.
+    #[serde(default)]
+    pub tree_lost: Option<String>,
     /// `container@<slot>` was active when the command ended; a guest that went away leaves the outcome unknown.
     pub container_active: bool,
     pub stdout_tail: String,
@@ -444,6 +464,7 @@ impl ExecResult {
             timed_out: false,
             cancelled: false,
             branch: None,
+            tree_lost: None,
             container_active: true,
             stdout_tail: String::new(),
             stderr_tail: String::new(),
@@ -637,6 +658,7 @@ mod tests {
             timed_out: false,
             cancelled: false,
             branch: None,
+            tree_lost: None,
             container_active: true,
             stdout_tail: String::new(),
             stderr_tail: String::new(),
@@ -759,7 +781,7 @@ mod tests {
             first[4].argv,
             [
                 "/cp",
-                "-rsT",
+                "-rsTH",
                 "--no-preserve=mode",
                 "--remove-destination",
                 "/home/u/.local/state/home-manager/gcroots/current-home/home-files",
@@ -833,6 +855,15 @@ mod tests {
             );
         }
         assert_eq!(turn(None, ""), TurnSettle::Settle(Settle::NeedsReview));
+        let lost = ExecResult {
+            tree_lost: Some("no session tree at /x".to_owned()),
+            ..result(Stage::Prepare, None)
+        };
+        assert_eq!(
+            turn(Some(&lost), ""),
+            TurnSettle::Settle(Settle::NeedsReview),
+            "a prepared tree it could not find is not retried away"
+        );
         assert_eq!(
             decide_turn("t1.a", 2, Some(&ok), ""),
             TurnSettle::Settle(Settle::NeedsReview),

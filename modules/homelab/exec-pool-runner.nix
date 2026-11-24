@@ -29,7 +29,8 @@ let
   slotNames = map (n: "pool${toString n}") (lib.range 1 pool.slots);
   execDir = "/var/lib/exec-pool-exec";
   # the helper stops the task at timeoutSecs; above it, four prepare steps of up to 300 s, the branch listed before and
-  # after the run (60 s each) and the stop's own wait
+  # after the run (60 s each) and the stop's own wait; a session turn adds a 30 s relink, a 30 s probe and 15 s for
+  # its units to leave before the detach
   execTimeout = cfg.timeoutSecs + 1500;
   # the runner renews it every 10 s while the helper runs, so a run may outlast it; a runner that dies sends its
   # running attempt to review this long after its last renewal

@@ -301,6 +301,9 @@ FROM quarantined_slots"`; on that host, `journalctl -u exec-pool-runner-<slot> -
 refusal. Stop the agent or push (or deliberately discard) the work in the guest, then on that host
 `sudo rm /var/lib/exec-pool-runner/<slot>.quarantined`: the runner's next pass resets the slot and deletes the row, and
 the alert clears.
+A slot quarantined for a session tree left in its dock (the reason names `dock-busy`): once nothing of the turn runs,
+move `<stateDir>/.sessions/dock/<slot>/cur` back to its task's `<stateDir>/.sessions/<hex task id>/tree` (or archive
+it), then remove `/var/lib/exec-pool-exec/<slot>/dock-busy` and the quarantine marker; the reason names both paths.
 Do not: delete the row alone while the slot exists; the runner rewrites it while its marker stands. A slot no longer
 declared (fewer slots, a renamed host) has no runner to clear it: delete its row with
 `DELETE FROM quarantined_slots WHERE host = '<host>' AND slot = '<slot>'` as `exec_pool`.

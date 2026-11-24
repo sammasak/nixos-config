@@ -130,15 +130,21 @@ before its prompt) and runs `agent::argv(&task)` in `command.workdir` with that 
 
 A session turn runs in the task's **tree**, `${stateDir}/.sessions/<hex task id>/tree/{home,work}` on the host, root's
 only. The helper attaches it for the turn by renaming it to the slot's dock `${stateDir}/.sessions/dock/<slot>/cur`,
-which the guest sees at `/session/cur`, the same path in every slot on every host: HOME `/session/cur/home`, cwd
+which the guest sees at `/session/cur` (the tree's root root-owned 0711, its `home` and `work` the guest user's),
+the same path in every slot on every host: HOME `/session/cur/home`, cwd
 `/session/cur/work/<workdir>`, TMPDIR in the slot home's workspace as for a one-shot run. A dock that still holds a
 tree refuses the attach. The first turn creates the tree (owned as the slot home is) and clones and checks out into it;
 until that finished, a later turn makes it afresh. Every turn links the guest user's current Home Manager files into
 the session's HOME (they dangle after a deploy), probes for Claude's transcript `$HOME/.claude/projects/*/<uuid>.jsonl`
 and runs `claude -p --output-format json` with `--resume <uuid>` when it exists and `--session-id <uuid>` (and the
-hand-back rules) when it does not, the turn's input as the prompt. Once the turn's units are gone from the guest it
-detaches the tree; one it could not detach stays in the dock, and the runner quarantines the slot. Codex and Pi run no
-sessions yet.
+hand-back rules) when it does not, the turn's input as the prompt; a probe that does not finish fails the turn's
+preparing. The helper marks the dock busy (`/var/lib/exec-pool-exec/<slot>/dock-busy`) before the attach and clears
+the mark only after the detach, so whatever stops it in between (an error, its timeout, a kill) leaves the runner to
+quarantine the slot rather than reset and reuse it. Once the turn's units are gone from the guest (or the guest is
+down) it detaches the tree; one it could not detach stays in the dock, marked. A prepared tree missing, or one with
+other ids than the slot's, sends the turn to `needs_review` rather than spending its attempts. Known limits: a guest
+process outside the step units (none is started: slots run no agent session and no cron) would keep the tree's inode
+after the detach; nothing yet removes the trees of sessions that ended. Codex and Pi run no sessions yet.
 
 Settling a one-shot run (`runner::decide`): a cancel is `cancelled`; a clone or checkout that fails never started the
 task's argv, so the attempt goes back to `queued`. A timeout, a guest that went away, or a missing result (or one for

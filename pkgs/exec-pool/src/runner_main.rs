@@ -27,12 +27,12 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use exec_pool::agent;
 use exec_pool::queue::{Change, Claim, QueueError, Store};
 use exec_pool::runner::{
-    CAPTURE_BYTES, ExecResult, Listed, Manifest, Session, Stage, Step, TurnEnd, TurnSettle,
-    claim_fits, decide, decide_turn, guest_exit, handed_back, read_regular, receipt, relink,
-    remote_head, tail,
+    CAPTURE_BYTES, ExecResult, Listed, Manifest, QUICK_SECS, Session, Stage, Step, TurnEnd,
+    TurnSettle, claim_fits, decide, decide_turn, guest_exit, handed_back, read_regular, receipt,
+    relink, remote_head, tail,
 };
 use exec_pool::task_result::TaskResult;
-use exec_pool::workspace::{HomeId, SESSION_HOME, Sessions, Workspace, admit};
+use exec_pool::workspace::{self, HomeId, SESSION_HOME, Sessions, Workspace, admit};
 use exec_pool::{Agent, Event, Kind, Receipt, SchemaVersion, Settle, Slot};
 use serde_json::{Value, json};
 
@@ -53,11 +53,21 @@ const PUSHED_TIMEOUT: Duration = Duration::from_secs(60);
 /// Beside the slot's run directories: why a session tree is still in the slot's dock, while one is.
 const DOCK_BUSY: &str = "dock-busy";
 /// How long a turn's steps may take to leave the guest after the last one returned, before its tree is detached.
-const DETACH_WAIT: Duration = Duration::from_secs(30);
+const DETACH_WAIT: Duration = Duration::from_secs(15);
 const RESET_TRIES: u32 = 3;
 
 fn var(name: &str) -> Result<String, String> {
     std::env::var(name).map_err(|_| format!("{name} is not set"))
+}
+
+/// Each of `names` from the environment, or the first one missing.
+fn vars<const N: usize>(names: [&str; N]) -> Result<[String; N], String> {
+    let mut out = Vec::with_capacity(N);
+    for name in names {
+        out.push(var(name)?);
+    }
+    out.try_into()
+        .map_err(|_| "a variable went missing".to_owned())
 }
 
 fn line(v: &Value) {
@@ -697,7 +707,13 @@ impl Guest {
         (out, err): (&File, &File),
         result: &mut ExecResult,
     ) -> bool {
-        for Step { stage, unit, argv } in steps {
+        for Step {
+            stage,
+            unit,
+            argv,
+            limit_secs,
+        } in steps
+        {
             if stage == Stage::Run {
                 result.prepare_ms = ms(t);
             }
@@ -706,9 +722,10 @@ impl Guest {
                 result.cancelled = true;
                 break;
             }
-            let limit = match stage {
-                Stage::Prepare => PREPARE_TIMEOUT,
-                Stage::Run => timeout,
+            let limit = match (stage, limit_secs) {
+                (_, Some(secs)) => Duration::from_secs(secs),
+                (Stage::Prepare, None) => PREPARE_TIMEOUT,
+                (Stage::Run, None) => timeout,
             };
             let started = Instant::now();
             let end = self
@@ -748,7 +765,7 @@ impl Guest {
             .session
             .as_ref()
             .ok_or("a one-shot manifest has no turn")?;
-        let turn = if self.transcript(find, session, (dir, err)) {
+        let turn = if self.transcript(find, session, (dir, err))? {
             agent::Turn::Resume
         } else {
             agent::Turn::Start
@@ -756,15 +773,26 @@ impl Guest {
         m.turn(ws, env, turn).map_err(|e| format!("manifest: {e}"))
     }
 
-    /// Whether the session's transcript exists in its attached tree, by [`agent::transcript_probe`]; a probe that
-    /// fails reads as none, so the turn starts the session rather than resuming nothing.
-    fn transcript(&self, find: &str, session: &Session, (dir, err): (&Path, &File)) -> bool {
+    /// Whether the session's transcript exists in its attached tree, by [`agent::transcript_probe`]: found, none
+    /// (also when Claude has written no project yet, find's exit 1), or a probe that did not finish, which fails the
+    /// turn's preparing rather than start a session that may exist.
+    fn transcript(
+        &self,
+        find: &str,
+        session: &Session,
+        (dir, err): (&Path, &File),
+    ) -> Result<bool, String> {
         let path = dir.join("transcript");
         let argv = agent::transcript_probe(find, SESSION_HOME, &session.uuid);
-        File::create(&path)
-            .and_then(|f| self.step(("exec-pool-probe", false), &argv, PUSHED_TIMEOUT, &f, err))
-            .is_ok_and(|end| end.exit_code == Some(0))
-            && !read_capture(&path).is_empty()
+        let limit = Duration::from_secs(QUICK_SECS);
+        let end = File::create(&path)
+            .and_then(|f| self.step(("exec-pool-probe", false), &argv, limit, &f, err))
+            .map_err(|e| format!("exec-pool-probe: {e}"))?;
+        match end.exit_code {
+            Some(0) => Ok(!read_capture(&path).is_empty()),
+            Some(1) => Ok(false),
+            other => Err(format!("exec-pool-probe ended with {other:?}")),
+        }
     }
 
     /// Whether the turn's steps are all gone from the guest, waiting up to [`DETACH_WAIT`]: a step's process left
@@ -772,6 +800,18 @@ impl Guest {
     fn steps_gone(&self) -> bool {
         let t = Instant::now();
         loop {
+            // a guest that is not running holds no process
+            let up = Command::new("systemctl")
+                .args([
+                    "is-active",
+                    "--quiet",
+                    &format!("container@{}.service", self.slot),
+                ])
+                .status()
+                .is_ok_and(|s| s.success());
+            if !up {
+                return true;
+            }
             let running = Command::new("systemctl")
                 .args([
                     "-M",
@@ -797,32 +837,103 @@ struct Dock<'a> {
     sessions: Sessions,
     busy: PathBuf,
     slot: &'a str,
+    /// `cp` and `find`, the store paths of the relink and the transcript probe.
+    cp: String,
+    find: String,
 }
 
 impl Dock<'_> {
     /// Attaches the task's tree, creating it until a first turn prepared it, owned as the slot home is; whether it
-    /// was created. A dock a dead helper left a tree in is marked for the runner, which quarantines the slot.
-    fn attach(&self, m: &Manifest, slot_home: &Path) -> Result<bool, String> {
+    /// was created. The dock is marked busy before the rename and stays marked until a detach, so the runner
+    /// quarantines the slot whatever stops this helper in between; a dock a dead helper left a tree in is marked too.
+    /// The error's flag: the task's tree is lost to this slot (a prepared one missing, or one with other ids), not the
+    /// slot's to retry.
+    fn attach(&self, m: &Manifest, slot_home: &Path) -> Result<bool, (bool, String)> {
         use std::os::unix::fs::MetadataExt as _;
+        let mark = |why: &str| fs::write(&self.busy, format!("{why}\n"));
         let home = slot_home
             .symlink_metadata()
-            .map_err(|e| format!("{}: {e}", slot_home.display()))?;
+            .map_err(|e| (false, format!("{}: {e}", slot_home.display())))?;
+        let docked = self.sessions.docked(self.slot);
+        if self.sessions.dock_busy(self.slot) {
+            let why = format!(
+                "a session tree was left in the dock at {}; {}",
+                docked.display(),
+                self.release_hint(None)
+            );
+            let _ = mark(&why);
+            return Err((false, why));
+        }
         let created = self
             .sessions
             .prepared(&m.task.id)
             .symlink_metadata()
             .is_err();
-        let attached = if created {
-            self.sessions.create(&m.task.id, (home.uid(), home.gid()))
-        } else {
-            Ok(())
+        if created {
+            self.sessions
+                .create(&m.task.id, (home.uid(), home.gid()))
+                .map_err(|e| (false, e.to_string()))?;
         }
-        .and_then(|()| self.sessions.attach(&m.task.id, self.slot, home.uid()))
-        .map_err(|e| e.to_string());
-        if let (Err(e), true) = (&attached, self.sessions.dock_busy(self.slot)) {
-            let _ = fs::write(&self.busy, format!("{e}\n"));
+        mark(&format!(
+            "the session tree of task {} is attached to the dock at {}; {}",
+            m.task.id,
+            docked.display(),
+            self.release_hint(Some(&m.task.id))
+        ))
+        .map_err(|e| (false, format!("{}: {e}", self.busy.display())))?;
+        self.sessions
+            .attach(&m.task.id, self.slot, home.uid())
+            .map(|()| created)
+            .map_err(|e| {
+                let _ = fs::remove_file(&self.busy);
+                (
+                    matches!(
+                        e,
+                        workspace::Error::NoTree(_) | workspace::Error::Owner { .. }
+                    ),
+                    e.to_string(),
+                )
+            })
+    }
+
+    /// The turn after its preparing: the first turn's prepared mark, then its agent step. A turn with no agent step
+    /// stays in preparing, so it goes back to the queue.
+    fn turn(
+        &self,
+        (m, ws, guest): (&Manifest, &Workspace, &Guest),
+        (created, env): (bool, &str),
+        (bounds, dir, out, err): ((Duration, Instant), &Path, &File, &File),
+        result: &mut ExecResult,
+    ) {
+        let note = |what: &str, e: &dyn std::fmt::Display| {
+            let _ = io::Write::write_all(
+                &mut &*err,
+                format!("exec-pool-exec: {what}: {e}\n").as_bytes(),
+            );
+        };
+        if created && let Err(e) = fs::write(self.sessions.prepared(&m.task.id), "") {
+            note("prepared mark", &e);
         }
-        attached.map(|()| created)
+        match guest.turn(m, ws, (env, &self.find), (dir, err)) {
+            Ok(run) => {
+                guest.steps(vec![run], bounds, (out, err), result);
+            }
+            Err(e) => note("no turn", &e),
+        }
+    }
+
+    /// What an operator does to free the slot once nothing of the turn runs: the tree back to its task (or archived),
+    /// then this mark and the slot's quarantine marker removed.
+    fn release_hint(&self, task: Option<&str>) -> String {
+        let to = task.map_or_else(
+            || "its task's tree (or archive it)".to_owned(),
+            |t| format!("{} (or archive it)", self.sessions.tree(t).display()),
+        );
+        format!(
+            "move {} back to {to}, then rm {} and the slot's quarantine marker",
+            self.sessions.docked(self.slot).display(),
+            self.busy.display()
+        )
     }
 
     /// Detaches the tree once the turn's steps are gone from the guest; one that lingers is left in the dock and
@@ -842,9 +953,10 @@ impl Dock<'_> {
             }
             Err(e) => {
                 let why = format!(
-                    "the session tree of task {} is still in the dock at {}: {e}",
+                    "the session tree of task {} is still in the dock at {}: {e}; {}",
                     m.task.id,
-                    self.sessions.docked(self.slot).display()
+                    self.sessions.docked(self.slot).display(),
+                    self.release_hint(Some(&m.task.id))
                 );
                 let _ = fs::write(&self.busy, format!("{why}\n"));
                 Err(why)
@@ -948,12 +1060,14 @@ fn exec(slot: &str) -> Result<(), String> {
     let ws = manifest
         .workspace(&guest_home)
         .map_err(|e| format!("manifest: {e}"))?;
-    let (git, env, mkdir) = (
-        var("EXEC_POOL_GIT")?,
-        var("EXEC_POOL_ENV")?,
-        var("EXEC_POOL_MKDIR")?,
-    );
-    let identity = (var("EXEC_POOL_GIT_NAME")?, var("EXEC_POOL_GIT_EMAIL")?);
+    let [git, env, mkdir, name, email] = vars([
+        "EXEC_POOL_GIT",
+        "EXEC_POOL_ENV",
+        "EXEC_POOL_MKDIR",
+        "EXEC_POOL_GIT_NAME",
+        "EXEC_POOL_GIT_EMAIL",
+    ])?;
+    let identity = (name, email);
     let note = |what: &str, e: &dyn std::fmt::Display| {
         let _ = io::Write::write_all(
             &mut &err,
@@ -965,29 +1079,41 @@ fn exec(slot: &str) -> Result<(), String> {
     let admitted = admit_home(&slot_home, &slot_dir.join(LAST_HOME))
         .inspect_err(|e| note("not admitted", e))
         .is_ok();
-    // a session turn runs in its tree, attached to the slot's dock for the turn
-    let dock = Dock {
-        sessions: Sessions::new(PathBuf::from(var("EXEC_POOL_SESSIONS")?)),
-        busy: slot_dir.join(DOCK_BUSY),
-        slot,
+    // a session turn runs in its tree, attached to the slot's dock for the turn; all it reads is read before the
+    // attach, and nothing between the attach and the detach returns early
+    let dock = match &manifest.session {
+        Some(_) => Some(Dock {
+            sessions: Sessions::new(PathBuf::from(var("EXEC_POOL_SESSIONS")?)),
+            busy: slot_dir.join(DOCK_BUSY),
+            slot,
+            cp: var("EXEC_POOL_CP")?,
+            find: var("EXEC_POOL_FIND")?,
+        }),
+        None => None,
     };
-    let attached = match (&manifest.session, admitted) {
-        (Some(_), true) => dock
+    let attached = match (&dock, admitted) {
+        (Some(d), true) => d
             .attach(&manifest, &slot_home)
-            .inspect_err(|e| note("not attached", e))
+            .inspect_err(|(lost, e)| {
+                if *lost {
+                    result.tree_lost = Some(e.clone());
+                }
+                note("not attached", e);
+            })
             .ok(),
         _ => None,
     };
-    let steps = match attached {
-        Some(created) => manifest.session_steps(
+    let steps = match (&dock, attached) {
+        (Some(d), Some(created)) => manifest.session_steps(
             &ws,
             (&git, &env, &mkdir),
             (&identity.0, &identity.1),
-            (created, relink(&var("EXEC_POOL_CP")?, &guest_home)),
+            (created, relink(&d.cp, &guest_home)),
         ),
-        None => manifest.steps(&ws, (&git, &env, &mkdir), (&identity.0, &identity.1)),
+        _ => manifest.steps(&ws, (&git, &env, &mkdir), (&identity.0, &identity.1)),
     }
-    .map_err(|e| format!("manifest: {e}"))?;
+    .inspect_err(|e| note("manifest", e))
+    .ok();
     let runs = admitted && (manifest.session.is_none() || attached.is_some());
     // an agent task's branch as it was, so an earlier run's push is not taken for this one's
     let agentic = manifest.task.command.agent != Agent::None;
@@ -996,21 +1122,15 @@ fn exec(slot: &str) -> Result<(), String> {
     } else {
         Listed::Unknown
     };
-    if runs {
+    if let (true, Some(steps)) = (runs, steps) {
         let prepared = guest.steps(steps, (timeout, t), (&out, &err), &mut result);
-        if attached == Some(true) && prepared {
-            if let Err(e) = fs::write(dock.sessions.prepared(&manifest.task.id), "") {
-                note("prepared mark", &e);
-            }
-        }
-        if prepared && manifest.session.is_some() {
-            let run = guest.turn(
-                &manifest,
-                &ws,
-                (&env, &var("EXEC_POOL_FIND")?),
-                (&dir, &err),
-            )?;
-            guest.steps(vec![run], (timeout, t), (&out, &err), &mut result);
+        if let (Some(d), true) = (&dock, prepared) {
+            d.turn(
+                (&manifest, &ws, &guest),
+                (attached == Some(true), &env),
+                ((timeout, t), &dir, &out, &err),
+                &mut result,
+            );
         }
         // whatever the run's end: a push may have landed before it failed
         if result.stage == Stage::Run && agentic {
@@ -1020,8 +1140,8 @@ fn exec(slot: &str) -> Result<(), String> {
                 .and_then(|b| handed_back(&before, &after, &b));
         }
     }
-    if attached.is_some() {
-        dock.detach(&manifest, &guest)
+    if let (Some(d), Some(_)) = (&dock, attached) {
+        d.detach(&manifest, &guest)
             .unwrap_or_else(|e| note("not detached", &e));
     }
     if result.stage == Stage::Prepare {

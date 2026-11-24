@@ -7,7 +7,7 @@
 )]
 
 use std::fs;
-use std::os::unix::fs::MetadataExt as _;
+use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 use std::path::Path;
 
 use exec_pool::workspace::{Error, Sessions};
@@ -34,6 +34,10 @@ fn a_tree_attaches_to_a_slots_dock_and_comes_back_intact_at_the_same_path() {
         Err(Error::NoTree(_))
     ));
     s.create("t-1", (uid, gid)).unwrap();
+    // the guest user may enter the tree's root but not change it: only home and work are its own
+    let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o7777;
+    assert_eq!(mode(&tree), 0o711);
+    assert_eq!(mode(&tree.join("home")), 0o700);
     s.attach("t-1", "pool1", uid).unwrap();
     let docked = s.docked("pool1");
     assert_eq!(docked, root.join("dock/pool1/cur"));

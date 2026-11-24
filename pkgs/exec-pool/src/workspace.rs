@@ -16,7 +16,7 @@
 use std::fmt::Write as _;
 use std::fs;
 use std::io;
-use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _};
+use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -103,8 +103,9 @@ impl Sessions {
         self.docked(slot).symlink_metadata().is_ok()
     }
 
-    /// A first turn's empty tree, its `home` and `work` owned by `owner` (the slot home's uid and gid), mode 0700; a
-    /// tree a turn left unprepared is removed first, without following a link in it.
+    /// A first turn's empty tree, its `home` and `work` owned by `owner` (the slot home's uid and gid), mode 0700, in
+    /// a root-owned 0711 directory the guest user can enter but not change; a tree a turn left unprepared is removed
+    /// first, without following a link in it.
     ///
     /// # Errors
     /// [`Error::TreeExists`] for a prepared one, or what creating it reports.
@@ -123,9 +124,11 @@ impl Sessions {
             .create(parent)
             .map_err(io_err(parent))?;
         fs::DirBuilder::new()
-            .mode(0o700)
+            .mode(0o711)
             .create(&tree)
             .map_err(io_err(&tree))?;
+        // DirBuilder's mode is masked by the umask
+        fs::set_permissions(&tree, fs::Permissions::from_mode(0o711)).map_err(io_err(&tree))?;
         for sub in ["home", "work"] {
             let d = tree.join(sub);
             fs::DirBuilder::new()
