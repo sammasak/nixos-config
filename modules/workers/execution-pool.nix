@@ -23,6 +23,10 @@ let
     )
   );
   collisions = lib.intersectLists slotNames (declaredElsewhere ++ dev.retired);
+  # pool-wait alone on the guests' PATH, not the queue's and runner's binaries
+  poolWait = pkgs.runCommand "pool-wait" { } ''
+    install -D ${pkgs.callPackage ../../pkgs/exec-pool/package.nix { }}/bin/pool-wait $out/bin/pool-wait
+  '';
 
   # State, closure and limits from the units and the container's conf, not a roster; the slot names are this generation's.
   inventory = pkgs.writeShellApplication {
@@ -130,6 +134,15 @@ in
     });
 
     environment.systemPackages = lib.optional (cfg.slots > 0) inventory;
+
+    services.devEnvironments.guestModules = [
+      (
+        { devEnvironment, ... }:
+        lib.mkIf (lib.elem devEnvironment.name slotNames) {
+          environment.systemPackages = [ poolWait ];
+        }
+      )
+    ];
 
     # over-reservation is the core's assertion (pool.memory), slots included
     assertions = [

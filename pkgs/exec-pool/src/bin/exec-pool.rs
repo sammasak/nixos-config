@@ -1,7 +1,7 @@
 //! `exec-pool`: submit an agent task to the queue and watch it, for a user `homelab.postgresql.clients` lets log in
 //! as `exec_pool_submit`, whose grants (migrations 0002 and 0005) allow queueing a task through `submit_task`,
 //! cancelling one it queued through `cancel_task`, starting a session through `start_session` and messaging it through
-//! `send_message` (migration 0009), and reading the queue without its prompts, nothing else. It reaches the queue over the Unix socket in `EXEC_POOL_DB`, by default [`DB`], or, with a unit's `db-password` credential, over TCP. Exit codes are
+//! `send_message` (migration 0009) and `send_timer` (0014), and reading the queue without its prompts, nothing else. It reaches the queue over the Unix socket in `EXEC_POOL_DB`, by default [`DB`], or, with a unit's `db-password` credential, over TCP. Exit codes are
 //! `exec-pool-queue`'s: 0 done, 1 refused, 2 usage, 3 outcome unknown (run `status` before submitting again), 75
 //! database unavailable; `wait` adds 124, not settled by its timeout.
 
@@ -11,7 +11,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use exec_pool::queue::{QueueError, Store};
+use exec_pool::wake;
 use exec_pool::{Agent, Command, Pins, RelPath, RetryPolicy, SchemaVersion, Source, TaskSpec};
+use jiff::ZonedDateTime;
 use serde_json::{Value, json};
 
 const DB: &str = "host=/run/postgresql dbname=exec_pool user=exec_pool_submit";
@@ -23,9 +25,11 @@ const USAGE: &str = "usage: exec-pool COMMAND
         task, so give a new --key to run it once more.
   start             submit's flags, claude only: starts a session, whose first turn runs the prompt and parks it
                     waiting; prints its id
-  send ID --prompt TEXT|--prompt-file FILE
+  send ID [--at HH:MM|RFC3339] --prompt TEXT|--prompt-file FILE
                     the session's next turn runs TEXT: a waiting session (or one in needs_review, which this resumes)
-                    is queued for it, a running one takes it once its turn ends. Prints the attempt and its status
+                    is queued for it, a running one takes it once its turn ends. With --at, a timer: TEXT is delivered
+                    from that time (HH:MM: the next one, local time), when it queues a waiting session; it resumes
+                    none in needs_review. Prints the attempt and its status
   status [ID]       the task (or attempt) ID with its events, or the number of attempts in each status
   list [--limit N]  the newest N tasks (20), newest first; a session's shows why it waits (parked)
   result ID         the task's state and, once the runner recorded it, its result (a session's last turn): the
@@ -279,8 +283,15 @@ fn run(cmd: &str, args: &Args, store: &mut Store) -> Result<(), Fail> {
             println!("{}", wait(store, id(args)?, timeout)?);
         }
         "send" => {
-            args.only("send", &["prompt", "prompt-file"], 1)?;
-            let (attempt, status) = store.send(id(args)?, &prompt(args)?)?;
+            args.only("send", &["prompt", "prompt-file", "at"], 1)?;
+            let (attempt, status) = match args.opt("at") {
+                None => store.send(id(args)?, &prompt(args)?)?,
+                Some(at) => {
+                    let due_at = wake::due_at(at, &ZonedDateTime::now())
+                        .map_err(|e| Fail::Usage(format!("--at {e}")))?;
+                    store.send_timer(id(args)?, &prompt(args)?, &due_at)?
+                }
+            };
             println!("{}", json!({ "attempt": attempt, "status": status }));
         }
         "sessions" => {

@@ -110,7 +110,7 @@ impl TaskResult {
             ),
             branch: result.and_then(|r| r.branch.clone()),
             usage,
-            handed_back: None,
+            handed_back: result.and_then(|r| r.handed_back),
         }
     }
 }
@@ -149,6 +149,8 @@ mod tests {
             branch: None,
             tree_lost: None,
             stored: false,
+            handed_back: None,
+            wake: None,
             drained: false,
             container_active: true,
             stdout_tail: String::new(),

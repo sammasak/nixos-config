@@ -60,9 +60,10 @@ parks in `waiting` counts against `retry.max_attempts` (at least 1), so an expir
 A task with `tasks.session` (queued by `exec-pool start`; the queue's side is under Sessions below) is a session: one
 agent session (its id the queue's `session_uuid`) that lives across
 leases. Each lease is one **turn**, and a turn ends in a **park** to `waiting`, never in a settle: `turn_end` when the
-agent finished its turn, `turn_error` when its call failed, left no verdict or timed out (later also `host_draining`,
-`preempted`, `waiting_until`). A failed turn never fails the session. A **wake** is a message in the task's inbox
-(`exec-pool send`): it queues the session again, and the next claim carries the turn's input (the task's prompt on the
+agent finished its turn, `turn_error` when its call failed, left no verdict or timed out, `waiting_until` when it
+finished and asked for a timer (later also `host_draining`, `preempted`). A failed turn never fails the session. A
+**wake** is a row in the task's inbox due: a message (`exec-pool send`) at once, a timer (`exec-pool send --at`, or the
+agent's own `pool-wait`) at its `due_at`. It queues the session again, and the next claim carries the turn's input (the task's prompt on the
 first turn, the messages since on a later one) and `upto`, the last message it holds, which the park hands back. A
 turn with no result, or whose lease was lost, goes to `needs_review` as any run does. The park records the result and
 a `CheckpointRef` (`generation` the lease epoch, `hosts` the host that holds the session's tree), so a send wakes it
@@ -202,12 +203,22 @@ session is queued for it, one in `needs_review` is queued with its try given bac
 operator's resolve the only way out of review), a queued or live one reads it at its next turn. There is no pause or
 resume verb. A claim hands the turn the session's uuid, the prompt on its first turn or else the unread rows as one
 text, and the highest row id it holds; rows are marked read at the park, so a turn that never ran is handed them
-again. `wait` returns on `waiting` too, `status` and `list` show `session` and, while waiting, the park reason, and
+again. `exec-pool send ID --at HH:MM|RFC3339 --prompt TEXT` puts a timer row instead (`send_timer`, migration 0014),
+due at that time (HH:MM the next one, local time); it changes no state, and `Store::reconcile`, which every runner runs
+each loop, queues a waiting session once a row is due (one in `needs_review` stays there). In a slot,
+`pool-wait --until HH:MM|RFC3339 [--note TEXT]` (no queue credential) writes one line
+`{"due_at": "<RFC 3339 with offset>", "note": "<1 to 4096 bytes>" | null}` to `/session/cur/home/.pool-wait`, the
+last call in a turn winning; the helper takes it from the detached tree (a regular file only, removed whatever it
+held, one that does not parse dropped and noted), and the park puts it in through `wake_at` (the runner writes no
+message), its note the turn's input and a `turn_end` parked as `waiting_until`. A message before the timer wakes the
+session at once, and the timer row stays unread until it is due. `wait` returns on `waiting` too, `status` and `list` show `session` and, while waiting, the park reason, and
 `exec_pool_waiting{reason}` counts waiting sessions by it.
 
 Each park also writes a `turns` row (migration 0010): the tokens and cost Claude's result JSON reported, and
-`handed_back`, whether the branch the turn pushed holds everything its tree had (`TaskResult::handed_back`, `None` until
-the runner can tell). The textfile's `exec_pool_session*` series count sessions by state and waiting reason, turns by
+`handed_back`, whether the branch holds everything its tree had (`TaskResult::handed_back`): after a turn its agent
+reached, the helper lists `pool/<task id>` and runs `git status --porcelain=v2` in the checkout, true only when the
+branch's commit is HEAD and nothing is uncommitted or untracked (`runner::holds_tree`), false otherwise, a failed
+listing or status included. The textfile's `exec_pool_session*` series count sessions by state and waiting reason, turns by
 park reason, turn and wake latency, closed sessions' turns and age, parked sessions by idle age, host changes between
 turns and the reported tokens and cost; the Agent harnesses dashboard's Sessions row draws them. `session_gc` decides
 which session trees may be removed, never a file's age: only one whose last turn is `handed_back` (its branch held the
@@ -217,8 +228,7 @@ that long without that is stale and kept, a final one without it that ran a turn
 `exec-pool sessions` prints every session, one JSON object per line (task_id, state, last_change, hosts, handed_back,
 eligible, stale, kept, and dir, the hex of the task id its trees are named by under `.sessions` and `.sessions-store`,
 `Sessions::hex`), and the remover moves only a line both eligible and handed_back, by its dir; ExecPoolSessionStuck fires on a session in review or stale for a day.
-No producer sets `handed_back` yet (the runner reports only the branch's name), so until one does no session is
-eligible, the remover moves nothing, and every one parked 14 days is stale and alerts. A park's own time (the agent's exit to the settle) is not
+A park's own time (the agent's exit to the settle) is not
 measured: no exit time reaches the queue. Wake latency starts when a row is due: when it was sent, or a timer's
 `due_at`.
 

@@ -29,12 +29,13 @@ use exec_pool::agent;
 use exec_pool::queue::{Change, Claim, Park, QueueError, Store};
 use exec_pool::runner::{
     CAPTURE_BYTES, ExecResult, Listed, Manifest, QUICK_SECS, Session, Stage, Step, TurnSettle,
-    claim_fits, decide, decide_turn, guest_exit, handed_back, read_regular, receipt, relink,
-    remote_head, session_checkpoint, tail,
+    claim_fits, decide, decide_turn, guest_exit, handed_back, holds_tree, read_regular, receipt,
+    relink, remote_head, session_checkpoint, tail, tree_check,
 };
 use exec_pool::sync::{self, Depot};
 use exec_pool::task_result::TaskResult;
-use exec_pool::workspace::{self, HomeId, SESSION_HOME, Sessions, Workspace, admit};
+use exec_pool::wake::{self, Wake};
+use exec_pool::workspace::{self, HomeId, SESSION_HOME, SESSION_WORK, Sessions, Workspace, admit};
 use exec_pool::{Agent, Event, Kind, ParkReason, Receipt, STORE, SchemaVersion, Slot};
 use serde_json::{Value, json};
 
@@ -464,7 +465,10 @@ impl Runner {
                 store,
                 (id, epoch, &task.id, &self.slot.host),
                 (reason, manifest.session.as_ref().map_or(0, |s| s.upto)),
-                result.is_some_and(|r| r.stored),
+                (
+                    result.is_some_and(|r| r.stored),
+                    result.and_then(|r| r.wake.clone()),
+                ),
                 &task_result,
             )
             .map(|()| false),
@@ -594,13 +598,14 @@ fn session_of(claim: &Claim) -> Option<Session> {
     })
 }
 
-/// Parks the session turn `attempt` at `epoch` with its result, the inbox read up to `upto`, and the checkpoint that
-/// names the session's tree on `host`, and in the store once the helper `stored` it there, so a message wakes it there.
+/// Parks the session turn `attempt` at `epoch` with its result, the inbox read up to `upto`, the checkpoint that
+/// names the session's tree on `host`, and in the store once the helper `stored` it there, so a message wakes it there,
+/// and the turn's `wake`.
 fn park(
     store: &mut Store,
     (attempt, epoch, task, host): (&str, u64, &str, &str),
     (reason, upto): (ParkReason, i64),
-    stored: bool,
+    (stored, wake): (bool, Option<Wake>),
     result: &TaskResult,
 ) -> Result<(), QueueError> {
     let checkpoint = session_checkpoint(task, host, epoch, stored);
@@ -612,6 +617,7 @@ fn park(
             checkpoint: Some(checkpoint),
             result: result.clone(),
             upto,
+            wake,
         },
     )?;
     changes.iter().for_each(log_change);
@@ -812,6 +818,44 @@ impl Guest {
                 Listed::Unknown
             }
         }
+    }
+
+    /// Records in `result` what the run handed back once its agent ran: the branch if it pushed to it ([`handed_back`]
+    /// against the listing `before`), and whether that branch holds the whole tree ([`holds_tree`] of [`tree_check`],
+    /// its output in the run directory's file `tree`).
+    fn hand_back(
+        &self,
+        (m, ws): (&Manifest, &Workspace),
+        (git, env): (&str, &str),
+        before: &Listed,
+        (dir, err): (&Path, &File),
+        result: &mut ExecResult,
+    ) {
+        let after = self.remote_head(m, (git, env), (dir, "pushed"), err);
+        result.branch = agent::branch(&m.task)
+            .ok()
+            .and_then(|b| handed_back(before, &after, &b));
+        let checkout = match &m.session {
+            Some(_) => SESSION_WORK.to_owned(),
+            None => ws.checkout(),
+        };
+        let path = dir.join("tree");
+        let argv = tree_check(git, env, &checkout);
+        let status = match File::create(&path)
+            .and_then(|f| self.step(("exec-pool-tree", false), &argv, PUSHED_TIMEOUT, &f, err))
+        {
+            Ok(end) if end.exit_code == Some(0) => {
+                Some(String::from_utf8_lossy(&read_capture(&path)).into_owned())
+            }
+            end => {
+                let _ = io::Write::write_all(
+                    &mut &*err,
+                    format!("exec-pool-exec: tree: {:?}\n", end.map(|e| e.exit_code)).as_bytes(),
+                );
+                None
+            }
+        };
+        result.handed_back = Some(holds_tree(&after, status.as_deref()));
     }
 
     /// Runs `steps` in order until one fails or times out, recording in `result` where it stopped; `t` is when the
@@ -1093,6 +1137,18 @@ impl<'a> Dock<'a> {
             .map_err(|e| (false, format!("prepared mark: {e}")))
     }
 
+    /// After a turn that reached its agent, once its tree is back from the dock: its wake into `result`, then
+    /// [`Dock::keep`], so the store's copy holds no wake file.
+    fn put_away(
+        &self,
+        m: &Manifest,
+        note: &dyn Fn(&str, &dyn std::fmt::Display),
+        result: &mut ExecResult,
+    ) {
+        result.wake = self.take_wake(m, note);
+        result.stored = self.keep(m, note);
+    }
+
     /// After a turn that reached its agent, once its tree is back from the dock: the tree's generation mark at the
     /// turn's epoch, then the tree to the store; whether it got there. A push that fails parks the turn here alone.
     fn keep(&self, m: &Manifest, note: &dyn Fn(&str, &dyn std::fmt::Display)) -> bool {
@@ -1153,6 +1209,23 @@ impl<'a> Dock<'a> {
             }
             Err(e) => note("no turn", &e),
         }
+    }
+
+    /// The wake the turn's agent asked for with `pool-wait`, read from the detached tree and removed from it; a file
+    /// that is not a regular one or does not parse is dropped and noted, never failing the park.
+    fn take_wake(&self, m: &Manifest, note: &dyn Fn(&str, &dyn std::fmt::Display)) -> Option<Wake> {
+        let path = self.sessions.tree(&m.task.id).join("home").join(wake::FILE);
+        let read = match read_regular(&path) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return None,
+            read => read,
+        };
+        if let Err(e) = fs::remove_file(&path) {
+            note("pool-wait", &e);
+        }
+        read.map_err(|e| e.to_string())
+            .and_then(|s| Wake::parse(s.trim_end()).map_err(|e| e.to_string()))
+            .inspect_err(|e| note("pool-wait dropped", e))
+            .ok()
     }
 
     /// What an operator does to free the slot once nothing of the turn runs: the tree back to its task (or archived),
@@ -1390,15 +1463,18 @@ fn exec(slot: &str) -> Result<(), String> {
         }
         // whatever the run's end: a push may have landed before it failed
         if result.stage == Stage::Run && agentic {
-            let after = guest.remote_head(&manifest, (&git, &env), (&dir, "pushed"), &err);
-            result.branch = agent::branch(&manifest.task)
-                .ok()
-                .and_then(|b| handed_back(&before, &after, &b));
+            guest.hand_back(
+                (&manifest, &ws),
+                (&git, &env),
+                &before,
+                (&dir, &err),
+                &mut result,
+            );
         }
     }
     if let (Some(d), Some(_)) = (&dock, attached) {
         match d.detach(&manifest, &guest) {
-            Ok(()) if result.stage == Stage::Run => result.stored = d.keep(&manifest, &note),
+            Ok(()) if result.stage == Stage::Run => d.put_away(&manifest, &note, &mut result),
             Ok(()) => {}
             Err(e) => note("not detached", &e),
         }
