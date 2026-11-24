@@ -4,6 +4,7 @@
 //! checked by `validate()` before anything acts on it. A version or path that is wrong does not deserialise at all.
 
 pub mod queue;
+pub mod runner;
 mod state;
 
 use std::collections::BTreeSet;

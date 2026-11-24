@@ -1,6 +1,6 @@
 # The execution pool's queue (pkgs/exec-pool, docs/records/execution-pool-contract.md) on this host: its own database
 # and role in the host's PostgreSQL, reached by peer over the socket alone; the schema is the CLI's `migrate` at start,
-# its metrics a minutely textfile and its backup a nightly dump. No runner and no slot: nothing claims a task yet.
+# its metrics a minutely textfile and its backup a nightly dump; the runner, off by default, is exec-pool-runner.nix.
 {
   config,
   lib,
@@ -45,6 +45,7 @@ in
   imports = [
     ./monitoring/node-exporter.nix
     ./backup-metrics.nix
+    ./exec-pool-runner.nix
   ];
 
   users.users.exec_pool = {

@@ -897,6 +897,36 @@ def check_pool_compat():
         check(out.returncode != 0 and want in out.stderr, f"executionPool, {name}: a type error naming \"{want}\" ({out.stderr.strip()[-300:]})")
 
 
+# modules/homelab/exec-pool-runner.nix: on acer one runner per slot as the queue's role, its root helper, and a
+# polkit rule that lets that role start exactly the helper and the reset of its own slot; off, msi has none of them.
+RUNNER = r"""
+let
+  flake = builtins.getFlake (toString %(root)s);
+  units = c: builtins.filter (n: builtins.match "exec-pool-(runner|exec).*" n != null) (builtins.attrNames c.systemd.services);
+  acer = flake.nixosConfigurations.acer-swift.config;
+  r = acer.systemd.services.exec-pool-runner-pool1;
+in {
+  acer = units acer;
+  msi = units flake.nixosConfigurations.msi-ms7758.config;
+  user = r.serviceConfig.User;
+  wanted = r.wantedBy;
+  slot = builtins.fromJSON r.environment.EXEC_POOL_SLOT;
+  exec = acer.systemd.services."exec-pool-exec@".serviceConfig.ExecStart;
+  polkit = acer.security.polkit.extraConfig;
+}
+"""
+
+
+def check_runner():
+    out = run_eval(RUNNER % {"root": json.dumps(ROOT)})
+    got = json.loads(out.stdout) if out.returncode == 0 else {}
+    rule = '["exec-pool-exec@pool1.service","dev-env-reset@pool1.service"]'
+    check(got.get("acer") == ["exec-pool-exec@", "exec-pool-runner-pool1"] and got.get("msi") == [] and got.get("user") == "exec_pool"
+          and got.get("wanted") == ["multi-user.target"] and got.get("slot", {}).get("id") == "pool1" and got.get("slot", {}).get("agents") == ["none"]
+          and got.get("exec", "").endswith("/bin/exec-pool-runner exec %i") and rule in got.get("polkit", "") and 'subject.user == "exec_pool"' in got.get("polkit", ""),
+          f"acer runs exec-pool-runner-pool1 as exec_pool with its root helper exec-pool-exec@, and polkit lets exec_pool start only {rule}; msi has no runner ({ {k: got.get(k) for k in ('acer', 'msi', 'user', 'slot', 'exec')} or out.stderr.strip()[-300:]})")
+
+
 def check_slot():
     """msi's t1 is sized by the msi row of docs/nspawn-workers.md (10G pool, 2G and 2 cores reserved each) and gets no
     GitHub credential: no SSH key, no gh login, no proxy site. Its assertions are the "as committed" check's."""
@@ -1159,6 +1189,7 @@ def main():
     check(out.returncode == 0 and json.loads(out.stdout) == [], f"msi-ms7758 as committed fails no assertion ({out.stdout.strip() or out.stderr.strip()[-600:]})")
     check_slot()
     check_pool_compat()
+    check_runner()
     out = run_eval(fleet(FLEET_INSTANCE, FLEET_FACTS))
     facts = json.loads(out.stdout) if out.returncode == 0 else {}
     check(facts.get("assertions") == [], f"msi-ms7758 with a claude instance fails no assertion ({facts.get('assertions', out.stderr.strip()[-600:])})")

@@ -51,7 +51,13 @@
     instances.herman = { };
     # A task slot: reset with dev-env-reset@a1 between tasks, no deploy.
     instances.a1 = { };
+    # the pool's first slot, run by the queue's runner (modules/homelab/exec-pool-runner.nix)
+    executionPool = {
+      enable = true;
+      slots = 1;
+    };
   };
+  homelab.execPool.runner.enable = true;
   # the #494 usage spike: herman's cgroup counters every minute (scripts/guest-records.py --usage)
   services.devEnvironments.records.usage = "1min";
   sam.herdr.trustedDirs = map (d: "/home/${config.sam.profile.username}/${d}") [
