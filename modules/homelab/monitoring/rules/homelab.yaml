@@ -231,6 +231,23 @@ groups:
           query: '{__name__=~"homelab_journal_metrics_collection_.+",job="node-exporter",node="{{ $labels.node }}"}'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#journalmetricsstale"
 
+      # dev-env-records (modules/workers/core.nix) runs every 5 minutes, at most 500 lines per worker: a run that gets
+      # through refreshes the timestamp even with lines left, so 30 minutes is six runs that all failed
+      - alert: GuestRecordsNotShipping
+        expr: |
+          max by (node, worker) (homelab_guest_records_waiting_lines{job="node-exporter"} > 0)
+          and on (node, worker)
+          max by (node, worker) (time() - homelab_guest_records_shipped_timestamp_seconds{job="node-exporter"} > 1800)
+        for: 10m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "Platform records of worker {{ $labels.worker }} on {{ $labels.node }} are not shipping"
+          description: "{{ $value }} platform record lines of worker {{ $labels.worker }} on {{ $labels.node }} are waiting and dev-env-records has not shipped any for over 30 minutes, so its gate and coverage records are missing from Loki. Run journalctl -u dev-env-records -n 20 on {{ $labels.node }}."
+          query: '{__name__=~"homelab_guest_records_.+",job="node-exporter",node="{{ $labels.node }}",worker="{{ $labels.worker }}"}'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#guestrecordsnotshipping"
+
       # 36 h: every job runs daily (OnCalendar, Persistent), so this is one missed run, read the afternoon after it.
       # The timestamp exists only after a recorded success, and backup.prom is on tmpfs: the two alerts below cover a
       # backup with no recorded success and a collector that is stale or, after a reboot, never wrote.

@@ -38,9 +38,9 @@ METRICS = {
     "shipping_review_prs_counted": "Reviewed merged PRs behind the review ratio and rounds.",
     "shipping_review_unreviewed_prs": "Merged PRs in the review sample with no verdict comment.",
     "shipping_escapes": "Reverts on default branches and issues labelled escape, in the window.",
-    "shipping_gate_fail_ratio": "Share of the last push-mode nixos-qa gate runs that failed, by the host that ran them.",
-    "shipping_gate_runs_counted": "Push-mode gate runs behind the fail ratio, by host.",
-    "shipping_gate_seconds": "Duration of the last push-mode gate runs, by host and quantile.",
+    "shipping_gate_fail_ratio": "Share of the last full nixos-qa gate runs (push or scheduled mode) that failed, by the host that ran them.",
+    "shipping_gate_runs_counted": "Full gate runs (push or scheduled mode) behind the fail ratio, by host.",
+    "shipping_gate_seconds": "Duration of the last full gate runs (push or scheduled mode), by host and quantile.",
     "shipping_gate_step_failures": "Distinct heads a push-gate step (or the flake check's inner check) failed on in the last 7 d, by step and check.",
     "shipping_gate_step_last_failure_timestamp_seconds": "Unix time of the newest of those failures, by step and check.",
     "shipping_deploys": "Recorded deploys in the last 7 d, by result.",
@@ -65,7 +65,8 @@ PHASES = ("idle", "gate", "gate_to_merge", "merge_to_deploy")
 # the first deploy record in Loki (Justfile's deploy, #475): a merge before it has no deploy to find, and the first
 # record after it would read as days of merge_to_deploy. Inert once the 7 d window holds no older merge (23 Nov on)
 DEPLOY_RECORDS_SINCE = datetime(2026, 11, 16, 12, 53, tzinfo=timezone.utc).timestamp()
-GATE_QUERY = '{job="platform",kind="gate"} |= "mode=push"'
+# the full gate's runs: by the pre-push hook until it ran the fast set only, then on main by the schedule (scheduled-gate.py)
+GATE_QUERY = '{job="platform",kind="gate"} |~ "mode=(push|scheduled)"'
 DEPLOY_QUERY = '{job="platform",kind="deploy"}'
 # a run's Loki days by (query, days back): phases re-reads the days gates and deploys fetched; main() empties it
 LOKI_READ = {}
@@ -317,7 +318,7 @@ def loki_records(loki, query, days, enough=None):
 
 
 def gates(loki, out, want):
-    """The last `want` push gates, by the host that ran them: a host is compared with its own past (RetroDueGateSlower),
+    """The last `want` full gates, by the host that ran them: a host is compared with its own past (RetroDueGateSlower),
     and a new one, a guest included, does not move another's median."""
     runs = loki_records(loki, GATE_QUERY, 14, lambda r: len(r) >= want)[:want]
     for host in sorted({r["@host"] for _, r in runs}):

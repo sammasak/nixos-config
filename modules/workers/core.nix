@@ -19,6 +19,9 @@ let
   creds = "/var/lib/host-credentials";
   clientKey = "${home}/.ssh/id_ed25519";
   slice = "environments";
+  # the dynamic shipper's textfile: node-exporter cannot traverse /run/private, so a fixed group writes here. A
+  # shipper subverted by a guest's bytes could add .prom files the host's scrape then reads; it could not before
+  recordsMetrics = "/run/dev-env-records-metrics";
   workLocks = "/run/work-locks";
 
   multipliers = {
@@ -120,7 +123,7 @@ let
     '';
   };
   # A dynamic user with CAP_DAC_READ_SEARCH alone: it reads every home whoever owns it, writes only its
-  # StateDirectory and reaches only Loki. The timer's unit and the per-instance one share the user, so the state.
+  # StateDirectory (and the timer's unit recordsMetrics) and reaches only Loki. The timer's unit and the per-instance one share the user, so the state.
   recordsUnit = names: timeout: {
     Type = "oneshot";
     ExecStart = lib.escapeShellArgs (
@@ -986,8 +989,29 @@ in
     (lib.mkIf (cfg.instances != { } && cfg.records != null) {
       systemd.services.dev-env-records = {
         description = "Ship the developer environments' platform records to Loki";
-        serviceConfig = recordsUnit (map (w: w.name) instances) "2min";
+        serviceConfig =
+          let
+            u = recordsUnit (map (w: w.name) instances) "2min";
+          in
+          u
+          // {
+            ExecStart =
+              u.ExecStart
+              + " "
+              + lib.escapeShellArgs [
+                "--metrics"
+                "${recordsMetrics}/guest-records.prom"
+              ];
+            SupplementaryGroups = [ "dev-env-records-metrics" ];
+            ReadWritePaths = [ recordsMetrics ];
+          };
       };
+      users.groups.dev-env-records-metrics = { };
+      services.prometheus.exporters.node.extraFlags = [
+        "--collector.textfile.directory=${recordsMetrics}"
+      ];
+      # before the first run: node-exporter counts a missing directory as a textfile scrape error
+      systemd.tmpfiles.rules = [ "d ${recordsMetrics} 0775 root dev-env-records-metrics -" ];
       systemd.timers.dev-env-records = {
         wantedBy = [ "timers.target" ];
         timerConfig = {

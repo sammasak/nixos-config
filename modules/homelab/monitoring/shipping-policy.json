@@ -62,6 +62,22 @@
         "tunedBy": "count_over_time(ALERTS{alertname=\"GateFailRateHigh\"}[1d])"
       }
     },
+    "ScheduledGateRed": {
+      "forMinutes": {
+        "value": 5,
+        "tunedBy": "count_over_time(ALERTS{alertname=\"ScheduledGateRed\"}[1d])"
+      }
+    },
+    "ScheduledGateOverdue": {
+      "hours": {
+        "value": 14,
+        "tunedBy": "(time() - max(homelab_scheduled_gate_finished_timestamp_seconds)) / 3600"
+      },
+      "forMinutes": {
+        "value": 30,
+        "tunedBy": "count_over_time(ALERTS{alertname=\"ScheduledGateOverdue\"}[1d])"
+      }
+    },
     "HostBehindMain": {
       "maxHours": {
         "value": 24,

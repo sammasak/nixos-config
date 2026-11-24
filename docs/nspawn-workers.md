@@ -57,6 +57,26 @@ fails before the host's services do. msi powers off at 21:00
 (Mon-Fri window); its environments come back at its next boot.
 Inside, the cgroup files read `max`: `/etc/dev-environment` holds these limits as shell `key=value` (bytes: `memory_reserved`, `pool_memory`, `pool_swap`; `cpu_weight`, `nix_max_jobs`, `nix_cores`).
 
+## Execution pool
+
+`sam.workers.executionPool` (`modules/workers/execution-pool.nix`, off on every host) declares reusable slots for the
+pool's tasks (`docs/records/execution-pool-contract.md`): `pool1` .. `pool<slots>`, each an instance with
+`agent = "none"` and no prompt, so a slot has the named instances' pool ceiling, reserves, `rootInGuest`, reset and
+retire. Changing `slots` is a reviewed deploy; a task is released with `dev-env-reset@<slot>`, which switches nothing.
+
+| Option | Default | Effect |
+|--------|---------|--------|
+| `enable` | `false` | off, nothing moves (pinned by `scripts/test-workers-eval.py`) |
+| `slots` | `0` | how many slots (unsigned) |
+| `memory.reserved`, `cpu.reserved` | `"2G"`, `2` | each slot's, as an instance's |
+| `credentials` | `[ ]` | which host credentials a slot may hold (as msi's `t1`) |
+| `rootInGuest` | `false` | each slot's |
+
+Evaluation fails when a slot's name is also declared in `sam.workers.instances` or `retired`, or when the slots and
+the named instances reserve more than `pool.memory`. `worker-pool-inventory` prints one JSON line per slot from its
+units: `slot`, `state`, `sub`, `closure`, `memory.min`/`.low`, `cpu.weight`, `slice`. `nix build .#execution-pool-vm`
+(msi) boots two slots beside a named instance, reuses one across a reset and restarts it alone.
+
 ## Sizing
 
 Reserved per environment, spiking allowed. Measured on both hosts (8 cores,
@@ -376,7 +396,10 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
   per instance and run. Progress is the last handled line's hash and time
   in the unit's StateDirectory, out of every guest's reach. It runs as a
   dynamic user with `CAP_DAC_READ_SEARCH` alone (read any home, write
-  nothing but its state), `IPAddressAllow` Loki's address only.
+  nothing but its state and, for the timer's run, the textfile below), `IPAddressAllow` Loki's address only. The timer's run also writes
+  `/run/dev-env-records-metrics/guest-records.prom` (through the group `dev-env-records-metrics`) for node-exporter:
+  per `worker`, the lines still waiting and when it last got through; GuestRecordsNotShipping
+  (`docs/alert-runbooks.md`) fires when lines wait and nothing shipped for 30 minutes.
   With `records.usage` set (acer: `1min`, the #494 spike) `dev-env-usage` pushes, in the same sandbox, one
   host-made `kind=usage` line per running instance: its container cgroup's `cpu_usec`, `user_usec`,
   `mem_current`, `mem_anon` (`memory.stat` anon, no page cache), `mem_peak` (lifetime, never reset) and

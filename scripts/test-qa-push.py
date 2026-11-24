@@ -1,9 +1,10 @@
 """The pre-push gate (qaPush in devenv.nix) on a throwaway repository, without Nix: the script body is taken from
-devenv.nix as written, with the full gate, the lints and the system generation stubbed. A green full gate is recorded
-under its tree, gate executable and generation; that tree, or it plus documentation, gets the lints; anything else,
-a damaged, missing or unwritable record included, runs the full gate. Through a real git push, a linked worktree is
-judged on the pushed commit, not on its own HEAD. At night (host local time, the clock stubbed) the full gate is
-owed: the night lints and the night eval run, the eval's gate-step and a result=owed mode=night gate record is written and no green tree is recorded."""
+devenv.nix as written, with the full gate, the lints, the push's eval and the system generation stubbed. A push never
+runs the full gate and reads no clock: a tree a full gate passed (recorded under its tree, gate executable and
+generation, as scripts/qa-green.sh writes it), or it plus documentation, gets the lints; anything else, a damaged,
+missing or unreadable record included, gets the fast set (the push lints, the push eval and its gate-step) and a
+result=owed mode=fast gate record, and records no green tree. Through a real git push, a linked worktree is judged on
+the pushed commit, not on its own HEAD."""
 import os
 import pathlib
 import re
@@ -30,23 +31,20 @@ if not m:
 BODY = textwrap.dedent(m.group(1)).replace("'''", "\0q").replace("''${", "\0d")
 
 
-CLOCK = "env -u TZ date +%H%M"
-
-
-def render(qa, lints, gen, docs, fresh, night, ev, record):
-    """The hook as writeShellApplication would build it, with qa, the lints, the night lints and eval, the record helper, the doc
-    readers' tests, the devenv-fresh guard, the clock (read from $NOW) and /run/current-system replaced."""
-    if BODY.count(CLOCK) != 1:
-        sys.exit(f"FAIL (scripts/test-qa-push.py): expected the clock `{CLOCK}` once in qaPush")
+def render(qa, lints, gen, docs, fresh, push_lints, ev, record):
+    """The hook as writeShellApplication would build it, with qa (its store path keys a green), the lints, the push's
+    lints and eval, the record helper, the doc readers' tests, the devenv-fresh guard and /run/current-system replaced."""
+    if re.search(r"\bdate\b", BODY):
+        sys.exit("FAIL (scripts/test-qa-push.py): qaPush reads the clock: every push gets the fast set at any hour")
     text = (BODY.replace("${lib.getExe qa}", str(qa)).replace("${run lints}", str(lints)).replace("${lib.getExe docTests}", str(docs))
-            .replace("${lib.getExe devenvFresh}", str(fresh)).replace("${run nightLints}", str(night))
-            .replace("${lib.getExe nightEval}", str(ev)).replace("${nightEval.name}", "nixos-night-eval")
-            .replace("${lib.getExe record}", str(record)).replace(CLOCK, 'echo "$NOW"'))
+            .replace("${lib.getExe devenvFresh}", str(fresh)).replace("${run pushLints}", str(push_lints))
+            .replace("${lib.getExe pushEval}", str(ev)).replace("${pushEval.name}", "nixos-push-eval")
+            .replace("${lib.getExe record}", str(record)))
     left = re.findall(r"\$\{[^}]*\}", text)
     if left:
         sys.exit(f"FAIL (scripts/test-qa-push.py): Nix interpolations the test does not stub: {left}")
-    if text.count("/run/current-system") != 2:
-        sys.exit("FAIL (scripts/test-qa-push.py): expected /run/current-system twice in qaPush (key and re-check)")
+    if text.count("/run/current-system") != 1:
+        sys.exit("FAIL (scripts/test-qa-push.py): expected /run/current-system once in qaPush (the green's key)")
     text = text.replace("/run/current-system", str(gen)).replace("\0q", "''").replace("\0d", "${")
     return "#!/usr/bin/env bash\nset -o errexit\nset -o nounset\nset -o pipefail\n" + text + "\n"
 
@@ -61,9 +59,9 @@ with tempfile.TemporaryDirectory() as t:
     docs = t / "doc-tests"
     docs.write_text(f'#!/usr/bin/env bash\necho "DOCTESTS $*" >> "{log}"\nexit "${{DOC_RC:-0}}"\n')
     # the devenv-fresh guard (devenvFresh, tested on its own below): refuses when DEVENV_STALE is set
-    night = t / "night-lints"
-    night.write_text(f'#!/usr/bin/env bash\necho NIGHT >> "{log}"\nexit "${{NIGHT_RC:-0}}"\n')
-    ev = t / "night-eval"
+    push_lints = t / "push-lints"
+    push_lints.write_text(f'#!/usr/bin/env bash\necho PUSHLINTS >> "{log}"\nexit "${{PUSHLINT_RC:-0}}"\n')
+    ev = t / "push-eval"
     ev.write_text(f'#!/usr/bin/env bash\necho EVAL >> "{log}"\nexit "${{EVAL_RC:-0}}"\n')
     records = t / "records"
     record = t / "record"
@@ -73,17 +71,16 @@ with tempfile.TemporaryDirectory() as t:
     gates = {}
     for name in ("qa", "qa-other"):
         qa = t / name
-        qa.write_text(f'#!/usr/bin/env bash\necho FULL >> "{log}"\necho "nixos-qa: stub took 0 s" >> "${{NIXOS_QA_TIMES:-/dev/null}}"\n'
-                      f'[ -z "${{QA_SWITCH:-}}" ] || ln -sfn "$QA_SWITCH" "{gen}"\nexit "${{QA_RC:-0}}"\n')
+        # the hook never runs the full gate: FULL in the log is a failure of every case
+        qa.write_text(f'#!/usr/bin/env bash\necho FULL >> "{log}"\n')
         gates[name] = t / f"gate-{name}.sh"
-        gates[name].write_text(render(qa, lints, gen, docs, fresh, night, ev, record))
-    for f in (lints, docs, fresh, night, ev, record, t / "qa", t / "qa-other", *gates.values()):
+        gates[name].write_text(render(qa, lints, gen, docs, fresh, push_lints, ev, record))
+    for f in (lints, docs, fresh, push_lints, ev, record, t / "qa", t / "qa-other", *gates.values()):
         f.chmod(0o755)
 
     env = {k: v for k, v in os.environ.items()
            if not k.startswith(("GIT_", "PRE_COMMIT_")) and k not in ("NIXOS_QA_TIMES", "GATE_PROBE")}
-    # the hook's clock (render): midday unless a case sets NOW
-    env.update(NOW="1200", HOME=str(t), GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null", GIT_AUTHOR_NAME="t",
+    env.update(HOME=str(t), GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null", GIT_AUTHOR_NAME="t",
                GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
     repo, bare = t / "repo", t / "bare.git"
 
@@ -98,14 +95,16 @@ with tempfile.TemporaryDirectory() as t:
         git("commit", "-qm", msg, cwd=cwd)
         return git("rev-parse", "HEAD", cwd=cwd)
 
+    def verdict(seen):
+        return ("FULL" if "FULL" in seen else "LINTS" if seen == ["LINTS"] else "FAST" if seen == ["PUSHLINTS", "EVAL"]
+                else "PUSHLINTS" if seen == ["PUSHLINTS"] else "LINTS+" + " ".join(seen[2:]) if seen[:2] == ["LINTS", "DOCTESTS"] else f"?{seen}")
+
     def gate(rev, which="qa", **extra):
         log.write_text("")
         r = subprocess.run([str(gates[which])], cwd=repo, env={**env, "PRE_COMMIT_TO_REF": rev, **extra},
                            stdin=subprocess.DEVNULL, capture_output=True, text=True)
-        seen = log.read_text().split()
-        verdict = ("FULL" if "FULL" in seen else "LINTS" if seen == ["LINTS"] else "NIGHT" if seen == ["NIGHT", "EVAL"]
-                   else "NIGHTLINTS" if seen == ["NIGHT"] else "LINTS+" + " ".join(seen[2:]) if seen[:2] == ["LINTS", "DOCTESTS"] else f"?{seen}")
-        return verdict if r.returncode == 0 else f"{verdict}(rc={r.returncode})", r.stderr
+        v = verdict(log.read_text().split())
+        return v if r.returncode == 0 else f"{v}(rc={r.returncode})", r.stderr
 
     def case(what, rev, want, **kw):
         got, err = gate(rev, **kw)
@@ -121,36 +120,53 @@ with tempfile.TemporaryDirectory() as t:
     git("fetch", "-q", "origin")
     git("switch", "-qc", "work")
     green = repo / ".git" / "nixos-qa-green"
+    times = repo / ".git" / "nixos-qa-times"
+
+    def greened(rev, exe="qa"):
+        """A full gate's green for rev's tree, as a clean manual nixos:qa records it (scripts/qa-green.sh, tested below)."""
+        with open(green, "a") as f:
+            f.write(f"{git('rev-parse', rev + '^{tree}')} {t / exe} {os.path.realpath(gen)}\n")
 
     a = commit({"flake.nix": "2\n"}, "code")
-    case("A first push of a code change", a, "FULL")
+    records.write_text("")
+    case("A first push of a code change: the fast set", a, "FAST")
+    step, _, rec = records.read_text().partition("\n")
+    check(re.fullmatch(rf" gate-step gate=nixos-qa-push step=nixos-push-eval seconds=\d+ result=pass sha={a[:7]}", step),
+          f"A the push eval's gate-step record ({step!r})")
+    check(re.fullmatch(rf"1 gate gate=nixos-qa-push seconds=\d+ result=owed sha={a[:7]} mode=fast head={a} checkout=clean\n", rec)
+          and f"full QA not run for {a}, owed to the scheduled gate on main" in times.read_text(),
+          f"A one strict owed gate record and the owed line in nixos-qa-times ({rec.strip()!r})")
+    check(not green.exists(), "A a push records no green tree")
+    case("B the same commit again: still owed", a, "FAST")
     tree_a = git("rev-parse", "HEAD^{tree}")
-    check(green.read_text().split()[0] == tree_a, "A recorded the pushed commit's tree in the common git dir")
-    case("B the same commit again", a, "LINTS")
+    greened(a)
+    records.write_text("")
+    case("B2 that commit once a full gate passed on its tree", a, "LINTS")
+    check(records.read_text() == "", "B2 a green tree owes nothing")
     git("commit", "-q", "--amend", "-m", "code, reworded")
     case("C message amended, same tree", git("rev-parse", "HEAD"), "LINTS")
     case("D a docs-only commit on top of the green tree", commit({"docs/a.md": "a2\n"}, "docs"), "LINTS")
     e = commit({"docs/keys.md": "k2\n"}, "a doc a test reads")
-    case("E a doc that scripts/test-keys.py names", e, "FULL")
-    case("E2 that commit again", e, "LINTS")
-    case("F another code change", commit({"flake.nix": "3\n"}, "code 2"), "FULL")
+    case("E a doc that scripts/test-keys.py names, on top of a green tree", e, "FAST")
+    greened(e)
+    case("E2 that commit once green", e, "LINTS")
+    case("F another code change", commit({"flake.nix": "3\n"}, "code 2"), "FAST")
     g = commit({"modules/x/notes.md": "n2\n"}, "nested md")
-    case("G a nested *.md on top of a green tree", g, "FULL")
+    case("G a nested *.md on top of a green tree", g, "FAST")
     h = commit({"flake.nix": "4\n"}, "code 3")
-    case("H the gate fails", h, "FULL(rc=1)", QA_RC="1")
-    case("H2 the same commit after the red run", h, "FULL")
-    case("H3 and again after that green run", h, "LINTS")
-    case("I same tree, another gate executable", h, "FULL", which="qa-other")
+    greened(h)
+    case("H a green tree", h, "LINTS")
+    case("I same tree, another gate executable", h, "FAST", which="qa-other")
     gen.unlink(), gen.symlink_to(t / "gen2")
-    case("J same tree, host generation switched", h, "FULL")
+    case("J same tree, host generation switched", h, "FAST")
     gen.unlink(), gen.symlink_to(t / "gen1")
     case("J2 same tree, generation back", h, "LINTS")
     case("LF a failing lint on the lints-only path of a recorded tree fails the push", h, "LINTS(rc=1)", LINT_RC="1")
     tree_h = git("rev-parse", "HEAD^{tree}")
     green.write_text(f"{tree_h} {t / 'qa'} {t / 'gen1'}")
-    case("NL a record whose last line has no newline is not read", h, "FULL")
-    case("NL2 the record appended to it is fused with that line", h, "FULL")
-    case("NL3 the next record stands on its own line", h, "LINTS")
+    case("NL a record whose last line has no newline is not read", h, "FAST")
+    green.write_text(green.read_text() + "\n")
+    case("NL2 the same record with its newline", h, "LINTS")
     green.write_text(green.read_text() + f"{'1' * 40} {t / 'qa'} {t / 'gen1'}\n")
     (t / "lint-stdin").write_text("")
     case("IN a match above other records", h, "LINTS")
@@ -164,52 +180,43 @@ with tempfile.TemporaryDirectory() as t:
 
     change("MD a mode-only change under docs/ on top of a recorded tree", lambda: (repo / "docs/a.md").chmod(0o755), "LINTS")
     change("SD a symlink under docs/ to code, on top of a recorded tree", lambda: (repo / "docs/code").symlink_to("../flake.nix"), "LINTS")
-    change("MC a mode-only change to code", lambda: (repo / "flake.nix").chmod(0o755), "FULL")
-    p = commit({"flake.nix": "5\n"}, "code 4")
-    case("P a green run during which the generation switched", p, "FULL", QA_SWITCH=str(t / "gen2"))
-    gen.unlink(), gen.symlink_to(t / "gen1")
-    case("P2 the same commit, generation back: nothing was recorded", p, "FULL")
+    change("MC a mode-only change to code", lambda: (repo / "flake.nix").chmod(0o755), "FAST")
 
     gate_line = f"{t / 'qa'} {t / 'gen1'}"
     q = commit({"flake.nix": "6\n"}, "code 5")
     tree_q = git("rev-parse", "HEAD^{tree}")
     green.write_text(f"{'0' * 40} {gate_line}\n")
-    case("K the only record names a tree this clone lacks", q, "FULL")
+    case("K the only record names a tree this clone lacks", q, "FAST")
     green.unlink()
-    case("R1 no record file: a recorded-before tree runs the full gate", a, "FULL")
+    case("R1 no record file: a recorded-before tree gets the fast set", a, "FAST")
     pwned = t / "pwned"
     green.write_text(f"{tree_a[:20]} {gate_line}\n--output={pwned} {gate_line}\nHEAD {gate_line}\n"
                      f"{tree_a} {gate_line[:-3]}\n\x00\xff garbage\n {gate_line}\n{tree_a}\n")
-    case("R2 a damaged record file", a, "FULL")
+    case("R2 a damaged record file", a, "FAST")
     check(not pwned.exists(), "R2 a damaged line never reaches git diff as an option")
     green.unlink(), green.mkdir()
-    err = case("R3 the record path is a directory: the green push still passes", q, "FULL")
-    check("green tree not recorded" in err, "R3 says the green tree was not recorded")
-    case("R3b and the next push of that tree runs the full gate again", q, "FULL")
+    case("R3 the record path is a directory: the push still passes", q, "FAST")
     green.rmdir()
-    green.write_text("".join(f"{i:040x} {gate_line}\n" for i in range(60)))
-    times = repo / ".git" / "nixos-qa-times"
+    green.write_text(f"{tree_q} {gate_line}\n" + "".join(f"{i:040x} {gate_line}\n" for i in range(60)))
     times.write_text("".join(f"old {i}\n" for i in range(2500)))
-    case("T a green run with 60 records and 2500 step times on file", q, "FULL")
-    lines = green.read_text().splitlines()
-    check(len(lines) == 50 and lines[-1] == f"{tree_q} {gate_line}", f"T the record file keeps the newest 50 ({len(lines)})")
+    case("T a match older than the newest 50 records is not read", q, "FAST")
     tl = times.read_text().splitlines()
-    check(len(tl) == 2002 and "nixos-qa on pushed commit" in tl[-2], f"T step times keep the newest 2000 before a run ({len(tl)})")
+    check(len(tl) == 2002 and "owed" in tl[-1], f"T step times keep the newest 2000 before a push adds its own ({len(tl)})")
 
     git("switch", "-q", "main")
     l_rev = git("rev-parse", "origin/main")
     green.unlink()
-    case("L a branch equal to origin/main, nothing recorded", l_rev, "FULL")
+    case("L a branch equal to origin/main, nothing recorded", l_rev, "FAST")
     git("switch", "-qc", "docs-main", base)
     change("MDm a mode-only change under docs/ since origin/main", lambda: (repo / "docs/a.md").chmod(0o755), "LINTS")
     change("SDm a symlink under docs/ to code since origin/main", lambda: (repo / "docs/code").symlink_to("../flake.nix"), "LINTS")
     case("LFm a failing lint on the origin/main docs-only path fails the push", git("rev-parse", "HEAD"), "LINTS(rc=1)", LINT_RC="1")
     git("switch", "-qc", "docs-read", base)
     k = commit({"docs/keys.md": "k3\n", "docs/a.md": "a4\n"}, "a doc a test reads, since origin/main")
-    case("DR documentation since origin/main that a test reads runs the lints and that test, not the full gate", k,
+    case("DR documentation since origin/main that a test reads runs the lints and that test, not the fast set", k,
          "LINTS+scripts/test-keys.py")
     case("DRf the doc's test failing fails the push", k, "LINTS+scripts/test-keys.py(rc=1)", DOC_RC="1")
-    case("DRc the same plus a code change is the full gate", commit({"flake.nix": "dr\n"}, "and code"), "FULL")
+    case("DRc the same plus a code change is the fast set", commit({"flake.nix": "dr\n"}, "and code"), "FAST")
     git("switch", "-q", "main")
 
     hooks = t / "hooks"
@@ -234,27 +241,28 @@ with tempfile.TemporaryDirectory() as t:
         log.write_text("")
         r = subprocess.run(["git", "push", "-q", "origin", f"{ref}:refs/heads/p{pushes}"], cwd=cwd, env=env,
                            capture_output=True, text=True)
-        seen = log.read_text().split()
-        got = ("FULL" if "FULL" in seen else "LINTS" if seen == ["LINTS"] else f"?{seen}") + ("" if r.returncode == 0 else f"(rc={r.returncode})")
+        got = verdict(log.read_text().split()) + ("" if r.returncode == 0 else f"(rc={r.returncode})")
         had = (t / "gitdir").read_text().strip() == "set"
         check(got == want and had == gitdir,
               f"{what}: {want}, GIT_DIR {'set' if gitdir else 'unset'} in the hook (got {got}, GIT_DIR {'set' if had else 'unset'})")
 
-    push("N1 a linked worktree at c3 pushes c2", wt, c2, "FULL", True)
-    push("N2 then c3, never gated", wt, c3, "FULL", True)
-    push("N3 c3 again, gated now", wt, c3, "LINTS", True)
-    check(green.exists() and not (repo / ".git" / "worktrees" / "wt" / "nixos-qa-green").exists(),
-          "N3 a push from a linked worktree records in the common git dir")
+    times.write_text("")
+    push("N1 a linked worktree at c3 pushes c2", wt, c2, "FAST", True)
+    check(f"not run for {c2}," in times.read_text() and not (repo / ".git" / "worktrees" / "wt" / "nixos-qa-times").exists(),
+          "N1 a push from a linked worktree judges the pushed commit and writes the common git dir")
+    push("N2 then c3", wt, c3, "FAST", True)
+    greened(c3)
+    push("N3 c3 again, green now", wt, c3, "LINTS", True)
     git("switch", "-qc", "code", base)
     commit({"flake.nix": "n4\n"}, "n4")
     git("switch", "-q", "main")
     git("switch", "-qc", "docsonly", base, cwd=wt)
     commit({"docs/a.md": "d\n"}, "docs", cwd=wt)
-    push("N4 a linked worktree on a docs-only branch pushes branch code", wt, "code", "FULL", True)
+    push("N4 a linked worktree on a docs-only branch pushes branch code", wt, "code", "FAST", True)
     green.unlink()
     git("switch", "-q", "n")
-    push("N5 the main checkout at c3 pushes c2", repo, c2, "FULL", False)
-    push("N6 then c3", repo, c3, "FULL", False)
+    push("N5 the main checkout at c3 pushes c2", repo, c2, "FAST", False)
+    push("N6 then c3", repo, c3, "FAST", False)
 
     listed = git("worktree", "list", "--porcelain").count("worktree ")
     check(listed == 2, f"no gate worktree left behind ({listed} registered, the repository and wt expected)")
@@ -283,7 +291,7 @@ with tempfile.TemporaryDirectory() as t:
     rc, out = manual()
     want = f"{git('rev-parse', 'HEAD^{tree}')} {t / 'qa'} {t / 'gen1'}"
     check(rc == 0 and "recorded green" in out and green.read_text().split("\n")[-2] == want,
-          f"M1 a clean manual green is recorded as the hook records its own ({out.strip()})")
+          f"M1 a clean manual green is recorded under the key the hook looks up ({out.strip()})")
     case("M1 then the push of that tree runs the lints only", m1, "LINTS")
     for what, files, during, gate_exe, extra in (
         ("M2 an untracked file at the start", {"flake.nix": "m2\n"}, None, None, {}),
@@ -292,7 +300,7 @@ with tempfile.TemporaryDirectory() as t:
         ("M5 the generation switched during the run", {"flake.nix": "m5\n"}, lambda: switch_gen("gen2"), None, {}),
         ("M6 the gate not run as its store path", {"flake.nix": "m6\n"}, None, "nixos-qa", {}),
         ("M7 a failed gate", {"flake.nix": "m7\n"}, None, None, {"result": "fail"}),
-        ("M8 the hook's own run (push mode)", {"flake.nix": "m8\n"}, None, None, {"mode": "push"}),
+        ("M8 a scheduled run (its own clone keeps its state)", {"flake.nix": "m8\n"}, None, None, {"mode": "scheduled"}),
         ("M9 a file marked skip-worktree", {"flake.nix": "m9\n"}, None, None, {}),
     ):
         rev = commit(files, what[:2])
@@ -310,48 +318,25 @@ with tempfile.TemporaryDirectory() as t:
         git("checkout", "-q", "--", "flake.nix")
         switch_gen("gen1")
         check(rc == 0 and "green not recorded" in out, f"seeded: {what}: nothing is recorded ({out.strip()})")
-        case(f"{what}: the push of that tree runs the full gate", rev, "FULL")
+        case(f"{what}: the push of that tree gets the fast set", rev, "FAST")
 
-
-    # night mode: from 21:00 up to 08:30 a commit without a green tree gets the night lints and an owed record
-    for now, want in (("2059", "FULL"), ("2100", "NIGHT"), ("0000", "NIGHT"), ("0829", "NIGHT"), ("0830", "FULL")):
-        n = commit({"flake.nix": f"night {now}\n"}, f"night {now}")
-        records.write_text("")
-        case(f"W{now} a new code commit pushed at {now}", n, want, NOW=now)
-        rec = records.read_text()
-        if want == "NIGHT":
-            step, rec = rec.split("\n", 1) if "\n" in rec else ("", rec)
-            check(re.fullmatch(rf" gate-step gate=nixos-qa-push step=nixos-night-eval seconds=\d+ result=pass sha={n[:7]}", step),
-                  f"W{now} the night eval's gate-step record ({step!r})")
-            check(rec == f"1 gate gate=nixos-qa-push seconds={rec.split('seconds=')[-1].split()[0]} result=owed sha={n[:7]} mode=night "
-                  f"head={n} checkout=clean\n" and f"night mode: full QA not run for {n}, owed" in (repo / ".git/nixos-qa-times").read_text(),
-                  f"W{now} one strict owed gate record and the night line in nixos-qa-times ({rec.strip()!r})")
-            tree = git("rev-parse", "HEAD^{tree}")
-            check(all(l.split()[:1] != [tree] for l in (green.read_text() if green.exists() else "").splitlines()), f"W{now} no green tree recorded")
-            case(f"W{now} the same commit by day runs the full gate", n, "FULL")
-        else:
-            check(rec == "", f"W{now} by day no owed record ({rec.strip()!r})")
-    n = commit({"flake.nix": "night lint\n"}, "night lint")
+    n = commit({"flake.nix": "fast lint\n"}, "fast lint")
     records.write_text("")
-    case("WF a failing night lint fails the push before the eval", n, "NIGHTLINTS(rc=1)", NOW="2300", NIGHT_RC="1")
-    check(records.read_text() == "", "WF a failed night push writes no owed record")
-    case("WE a failing night eval fails the push", n, "NIGHT(rc=1)", NOW="2300", EVAL_RC="1")
+    case("WF a failing push lint fails the push before the eval", n, "PUSHLINTS(rc=1)", PUSHLINT_RC="1")
+    check(records.read_text() == "", "WF a failed push writes no owed record")
+    case("WE a failing push eval fails the push", n, "FAST(rc=1)", EVAL_RC="1")
     rec = records.read_text()
-    check(re.fullmatch(rf" gate-step gate=nixos-qa-push step=nixos-night-eval seconds=\d+ result=fail sha={n[:7]}\n", rec),
-          f"WE a failed night eval records its failed step and no owed gate ({rec!r})")
-    records.write_text("")
-    case("WF2 that commit by day runs the full gate", n, "FULL")
-    case("WG that green tree at night gets the lints only, no owed record", n, "LINTS", NOW="2300")
-    check(records.read_text() == "", "WG a green tree pushed at night owes nothing")
+    check(re.fullmatch(rf" gate-step gate=nixos-qa-push step=nixos-push-eval seconds=\d+ result=fail sha={n[:7]}\n", rec),
+          f"WE a failed push eval records its failed step and no owed gate ({rec!r})")
 
     # a hook built before the pushed tree's devenv files changed (a shell entered before a merge) is refused before
     # any gate, lints-only and green paths included; it records nothing
     stale = commit({"devenv.nix": "changed after entry\n"}, "stale")
-    before = green.read_text() if green.exists() else ""
+    records.write_text("")
     err = case("seeded: a gate built from other devenv files than the pushed tree's is refused, nothing run", stale, "?[](rc=1)",
                DEVENV_STALE="1")
-    check("refused" in err and (green.read_text() if green.exists() else "") == before, f"seeded: the stale gate records no green ({err.strip()})")
-    case("the same tree from a freshly entered devenv runs the full gate", stale, "FULL")
+    check("refused" in err and records.read_text() == "", f"seeded: the stale gate records nothing ({err.strip()})")
+    case("the same tree from a freshly entered devenv gets the fast set", stale, "FAST")
 
 # devenvFresh on its own, with the hashes Nix would bake in (builtFrom) and sha256sum on a throwaway tree
 fm = re.search(r"\n  devenvFresh = gate \"nixos-devenv-fresh\" \[ pkgs.coreutils \] ''\n(.*?)\n *'';\n", src, re.S)
