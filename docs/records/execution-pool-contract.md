@@ -237,7 +237,7 @@ wrapper above (`start`, `send`, `submit`, `wait`, `status`, `result`).
 - `needs_review` is the one state that wants a look: read `pool:result`, then `pool:send` the next step (that resumes
   it) or ask the owner on the issue.
 - A review of an unreviewed PR head is a one-shot `pool:submit` at that head. A pool task cannot merge; a head graded
-  9 or more waits for the owner.
+  9 or more is reported as ready to merge, and the interactive coordinator session merges it.
 
 ## Phase gates (detail in #646)
 

@@ -40,7 +40,7 @@ pinned word for word by `scripts/test-coordinator-wiring.py`:
 
 The unattended session acts under ROLE.md's Autonomy rule: no confirmation per dispatch (owner decision,
 sammasak/skills#28). A pool task cannot merge (the slots' GitHub proxy has no merge route), so a head graded 9 or
-more goes in the report for the owner.
+more is reported as ready to merge, and the interactive coordinator session merges it.
 
 ## Owner skills config
 

@@ -218,8 +218,8 @@ def main():
     check("An open PR head that is unreviewed, no signed grade on that head and no review task for it, gets one review: pool:submit" in script
           and "review OWNER/REPO#N@<head sha>, post a comment Grade: N/10 (head <sha>) on that head, signed -- <host> <agent>), never the implementing session" in script
           and "A head already graded below 9 gets no second review: pool:send its findings to the implementing session" in script
-          and "a merged or closed PR is never reviewed" in script and "goes in the report for the owner to merge" in script,
-          "the prompt reviews an unreviewed head once as a one-shot pool task in the form coord:brief parses, sends findings to the implementing session, never reviews a merged PR, and leaves the merge to the owner (pool slots have no merge route)")
+          and "a merged or closed PR is never reviewed" in script and "is reported as ready to merge, and the interactive coordinator session merges it." in script,
+          "the prompt reviews an unreviewed head once as a one-shot pool task in the form coord:brief parses, sends findings to the implementing session, never reviews a merged PR, and reports a 9+ head ready to merge for the interactive coordinator (pool slots have no merge route)")
     check("herdr:message" not in script.split("Work is dispatched", 1)[1].split("' \"$ts\"", 1)[0].replace("coord:handoff, herdr:message and coord:capacity are not yours", ""),
           "the prompt sends nothing over Herdr")
     check(': > "$pending"; rm -f "$attempts"' in script and 'if [ "$rc" -eq 0 ]; then' in script
