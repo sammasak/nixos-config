@@ -128,15 +128,15 @@ in
               && !msi.services.postgresql.enable
             )
             "exec-pool-db-check: msi's runner does not reach acer's queue as exec_pool_runner with the sops password";
-          # a lease taken after 20:10 would outlive the 21:00 poweroff
+          # a claim after 20:10 could outlive the 21:00 poweroff
           assert lib.assertMsg (
             msiRunner.environment.EXEC_POOL_OFF_TIMER == "msi-scheduled-shutdown.timer"
             && msi.systemd.timers.msi-scheduled-shutdown.timerConfig.OnCalendar == "Mon-Fri 21:00"
-            && msiRunner.environment.EXEC_POOL_LEASE_SECS == toString (50 * 60)
+            && msiRunner.environment.EXEC_POOL_CLAIM_SECS == toString (50 * 60)
           ) "exec-pool-db-check: msi's runner does not stop claiming 50 minutes before its 21:00 poweroff";
           assert lib.assertMsg (
             acerRunner.environment.EXEC_POOL_DB == "host=/run/postgresql dbname=exec_pool user=exec_pool"
-            && !(acerRunner.environment ? EXEC_POOL_OFF_TIMER)
+            && !(acerRunner.environment ? EXEC_POOL_OFF_TIMER || acerRunner.environment ? EXEC_POOL_CLAIM_SECS)
             && !(acerRunner.serviceConfig ? LoadCredential)
             && acerRunner.serviceConfig.PrivateNetwork
           ) "exec-pool-db-check: acer's own runner is not the queue's peer role with no network";

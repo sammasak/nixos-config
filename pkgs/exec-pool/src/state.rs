@@ -8,6 +8,8 @@ pub enum Settle {
     Succeeded,
     Failed,
     NeedsReview,
+    /// The runner stopped the run for a cancel its submitter asked for; it carries no receipt.
+    Cancelled,
 }
 
 /// How an operator closes a `needs_review` attempt once they know what its effects were. Only an explicit
@@ -105,6 +107,7 @@ pub fn transition(attempt: &Attempt, retry: &RetryPolicy, event: &Event) -> Resu
                 Settle::Succeeded => Status::Succeeded,
                 Settle::Failed => Status::Failed,
                 Settle::NeedsReview => Status::NeedsReview,
+                Settle::Cancelled => Status::Cancelled,
             };
         }
         (Status::Waiting, Kind::Wake) => next.status = Status::Queued,

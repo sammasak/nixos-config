@@ -1,7 +1,7 @@
 # The pool runner (#652, pkgs/exec-pool/src/runner_main.rs): one exec-pool-runner-<slot> per sam.workers.executionPool
 # slot, claiming tasks for no agent or one of the slot's sam.workers.executionPool agents. It runs as the queue's peer
 # role, or with `queue` as exec_pool_runner on another host's, and holds no host privilege; on a host with a power
-# window it claims only a lease that ends before the poweroff. The polkit rule below lets it start only its
+# window it claims only what can finish before the poweroff. The polkit rule below lets it start only its
 # slot's exec-pool-exec@ (root, which runs the task in the guest as its user and holds no queue access) and
 # dev-env-reset@, which releases the slot with every one of its refusals intact.
 {
@@ -29,8 +29,11 @@ let
   execDir = "/var/lib/exec-pool-exec";
   # the helper stops the task at timeoutSecs; above it, the two prepare steps and the stop's own wait
   execTimeout = cfg.timeoutSecs + 900;
-  # a lease that outlives the helper: one that expires mid-run would send a running attempt to review
-  leaseSecs = execTimeout + 300;
+  # the runner renews it every 10 s while the helper runs, so a run may outlast it; a runner that dies sends its
+  # running attempt to review this long after its last renewal
+  leaseSecs = 300;
+  # the longest a claim holds the slot: the helper's bound, then the settle and the reset; none may outlast a poweroff
+  claimSecs = execTimeout + 300;
   slot =
     n:
     builtins.toJSON {
@@ -138,7 +141,10 @@ in
             EXEC_POOL_EXEC_DIR = execDir;
             EXEC_POOL_STATE = "/var/lib/exec-pool-runner";
           }
-          // lib.optionalAttrs powersOff { EXEC_POOL_OFF_TIMER = offTimer; };
+          // lib.optionalAttrs powersOff {
+            EXEC_POOL_OFF_TIMER = offTimer;
+            EXEC_POOL_CLAIM_SECS = toString claimSecs;
+          };
           serviceConfig = {
             ExecStart = "${exe} run";
             User = "exec_pool";
