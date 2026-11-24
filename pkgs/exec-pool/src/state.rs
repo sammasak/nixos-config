@@ -23,6 +23,7 @@ pub enum Resolution {
     /// The effects did not happen: run it again, if an attempt is left.
     Queued,
     /// A session's owner sent it a message: its next turn runs with the try given back, whatever its effects were.
+    /// `send_message` (migration 0009) is what does this, for sessions only; this is its model.
     Resume,
 }
 

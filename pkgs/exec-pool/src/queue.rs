@@ -747,7 +747,7 @@ impl Store {
     }
 
     /// Applies one event from the holder (start, checkpoint, settle) or the operator (wake, resolve); a lease is
-    /// [`Store::claim`]'s and an expiry [`Store::reconcile`]'s. A holder's event after its lease deadline is refused:
+    /// [`Store::claim`]'s, an expiry [`Store::reconcile`]'s and a park [`Store::park`]'s. A holder's event after its lease deadline is refused:
     /// the lease is the reconciler's to expire.
     ///
     /// # Errors
@@ -761,10 +761,10 @@ impl Store {
     ) -> Result<(Attempt, Change), QueueError> {
         self.tx(|tx| {
             let row = lock(tx, attempt)?;
-            if matches!(event.kind, Kind::Lease(_) | Kind::Expire) {
+            if matches!(event.kind, Kind::Lease(_) | Kind::Expire | Kind::Park(_)) {
                 return Err(Error::IllegalTransition {
                     from: row.attempt.status,
-                    event: "lease or expire outside claim and reconcile",
+                    event: "lease, expire or park outside claim, reconcile and park",
                 }
                 .into());
             }
@@ -821,8 +821,11 @@ impl Store {
             let epoch = i64_of("epoch", epoch)?;
             insert_result(tx, attempt, epoch, &park.result)?;
             tx.execute(
-                "UPDATE inbox SET consumed_epoch = $3 WHERE task_id = $1 AND id <= $2 AND consumed_epoch IS NULL",
-                &[&task, &park.upto, &epoch],
+                // what the claim handed over: up to upto, and due when it leased (its event's `at` is the claim's now())
+                "UPDATE inbox SET consumed_epoch = $3 WHERE task_id = $1 AND id <= $2 AND consumed_epoch IS NULL \
+                 AND (due_at IS NULL OR due_at <= (SELECT max(e.at) FROM events e \
+                 WHERE e.attempt_id = $4 AND e.lease_epoch = $3 AND e.to_status = 'leased'))",
+                &[&task, &park.upto, &epoch, &attempt],
             )?;
             if matches!(
                 park.reason,

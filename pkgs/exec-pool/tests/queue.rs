@@ -1821,3 +1821,112 @@ fn the_submitter_cli_starts_a_session_messages_it_and_waits_for_its_park() {
     assert!(out.contains(r#""status":"queued""#), "{out}");
     assert_eq!(started(&mut owner).2.input, "next");
 }
+
+#[test]
+fn the_runner_runs_a_turn_and_neither_role_writes_or_reads_what_it_may_not() {
+    let pg = Pg::new();
+    let _owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let conninfo = pg
+        .conninfo()
+        .replace("user=exec_pool ", "user=exec_pool_runner ");
+    let mut runner = Store::open(&conninfo).unwrap();
+    let (a, epoch, _) = started(&mut runner);
+    let (_, changes) = runner
+        .park(&a, epoch, &park(ParkReason::HostDraining, 0))
+        .unwrap();
+    assert_eq!(changes.len(), 2, "its continue row wakes it");
+    let (_, epoch, turn) = started(&mut runner);
+    assert!(turn.upto > 0);
+    runner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, turn.upto))
+        .unwrap();
+    assert_eq!(status(&pg, &a).0, "waiting");
+    s.send(&id, "next").unwrap();
+
+    let refused = |conninfo: &str, sqls: &[String]| {
+        let mut c = Client::connect(conninfo, NoTls).unwrap();
+        for sql in sqls {
+            let e = c.batch_execute(sql).unwrap_err();
+            assert_eq!(
+                e.code().map(postgres::error::SqlState::code),
+                Some("42501"),
+                "{sql}: {e}"
+            );
+        }
+    };
+    refused(
+        &conninfo,
+        &[
+            format!("SELECT send_message('{id}', 'x')"),
+            format!("SELECT start_session('{}')", agent_task()),
+            "DELETE FROM inbox".to_owned(),
+            "UPDATE inbox SET body = 'x'".to_owned(),
+            format!("INSERT INTO inbox (task_id, kind, body) VALUES ('{id}', 'message', 'x')"),
+        ],
+    );
+    refused(
+        &pg.conninfo()
+            .replace("user=exec_pool ", "user=exec_pool_submit "),
+        &[
+            "SELECT body FROM inbox".to_owned(),
+            "SELECT * FROM inbox".to_owned(),
+            format!("INSERT INTO inbox (task_id, kind) VALUES ('{id}', 'continue')"),
+            "UPDATE tasks SET session = true".to_owned(),
+        ],
+    );
+}
+
+#[test]
+fn a_park_goes_only_through_park_and_a_cancelled_review_stays_cancelled() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let (a, epoch, _) = started(&mut owner);
+    assert!(matches!(
+        owner.apply(&a, &ev(epoch, Kind::Park(ParkReason::TurnEnd)), None),
+        Err(QueueError::Contract(Error::IllegalTransition { .. }))
+    ));
+    assert_eq!(s.cancel(&id).unwrap(), (a.clone(), Status::Running));
+    overdue(&pg, &a);
+    owner.reconcile().unwrap();
+    assert_eq!(status(&pg, &a).0, "needs_review");
+    assert_eq!(
+        s.send(&id, "go on").unwrap(),
+        (a.clone(), Status::Cancelled)
+    );
+    assert!(owner.claim(&claude_slot(), 60).unwrap().is_none());
+}
+
+#[test]
+fn a_park_marks_read_only_what_was_due_at_its_claim() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let (a, epoch, _) = started(&mut owner);
+    owner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, 0))
+        .unwrap();
+    pg.sql()
+        .execute(
+            "INSERT INTO inbox (task_id, kind, body, due_at) VALUES ($1, 'timer', 'later', now() + interval '1 hour')",
+            &[&id],
+        )
+        .unwrap();
+    s.send(&id, "now").unwrap();
+    let (_, epoch, turn) = started(&mut owner);
+    assert_eq!(turn.input, "now");
+    owner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, turn.upto))
+        .unwrap();
+    assert_eq!(status(&pg, &a).0, "waiting", "the timer is not due");
+    let unread: i64 = pg
+        .sql()
+        .query_one(
+            "SELECT count(*) FROM inbox WHERE consumed_epoch IS NULL AND kind = 'timer'",
+            &[],
+        )
+        .unwrap()
+        .get(0);
+    assert_eq!(unread, 1, "the row not handed over stays unread");
+}
