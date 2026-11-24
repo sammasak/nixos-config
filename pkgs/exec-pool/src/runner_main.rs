@@ -1055,9 +1055,7 @@ impl Guest {
             let started = Instant::now();
             let log = self.log.as_ref().filter(|_| stage == Stage::Run);
             let end = match stage {
-                Stage::Run => {
-                    self.step_watched((unit, true), &argv, (limit, out, err), log, watch)
-                }
+                Stage::Run => self.step_watched((unit, true), &argv, (limit, out, err), log, watch),
                 Stage::Prepare => self.step((unit, true), &argv, limit, (out, err), log),
             }
             .map_err(|e| format!("{unit}: {e}"));
