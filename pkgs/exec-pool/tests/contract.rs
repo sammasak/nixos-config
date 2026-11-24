@@ -50,6 +50,7 @@ fn slot() -> Slot {
             nix_closure_digest: Some("sha256-closure-a".to_owned()),
             ..Pins::default()
         },
+        store: false,
     }
 }
 

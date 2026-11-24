@@ -1,6 +1,7 @@
 # The parked sessions' store on this host: msi logs in with its own host key as exec-pool-sync, whose only command is
-# rrsync confined to the store, so it reads and writes session trees there and reaches nothing else. No runner moves a
-# tree yet.
+# rrsync confined to the store, so it reads and writes session trees there and reaches nothing else. The runners'
+# helpers push a parked tree here and pull it back (pkgs/exec-pool/src/sync.rs); a pull refuses devices and set-id
+# files, as msi writes what this host's root then takes.
 {
   config,
   lib,

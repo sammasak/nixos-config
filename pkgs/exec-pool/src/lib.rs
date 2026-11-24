@@ -7,6 +7,7 @@ pub mod agent;
 pub mod queue;
 pub mod runner;
 mod state;
+pub mod sync;
 pub mod task_result;
 pub mod workspace;
 
@@ -286,6 +287,9 @@ pub struct Slot {
     pub agents: BTreeSet<Agent>,
     #[serde(default)]
     pub pins: Pins,
+    /// The host can pull a parked session's tree from the store ([`STORE`]), and pushes its own there.
+    #[serde(default)]
+    pub store: bool,
 }
 
 /// An opaque, versioned pointer to a checkpoint manifest; its contents are not part of this contract yet.

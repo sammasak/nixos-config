@@ -752,7 +752,7 @@ impl Store {
                 // a session that ran but never parked has its tree, if any, where it ran
                 let placed = match (&checkpoint, ran_on) {
                     (None, Some(h)) => h == slot.host,
-                    (c, _) => reachable(c.as_ref(), &slot.host, false),
+                    (c, _) => reachable(c.as_ref(), &slot.host, slot.store),
                 };
                 if task.fits(slot).is_err() || !placed {
                     continue;

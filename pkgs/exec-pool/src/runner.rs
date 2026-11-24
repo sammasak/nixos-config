@@ -17,8 +17,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::workspace::{self, SESSION_HOME, SESSION_WORK, Workspace};
 use crate::{
-    Agent, CheckpointRef, Error, Outcome, ParkReason, Receipt, SchemaVersion, Settle, TaskSpec,
-    agent, parse_versioned,
+    Agent, CheckpointRef, Error, Outcome, ParkReason, Receipt, STORE, SchemaVersion, Settle,
+    TaskSpec, agent, parse_versioned,
 };
 
 /// How much of each output stream the result carries; the host keeps up to [`CAPTURE_BYTES`] of it.
@@ -291,16 +291,22 @@ pub fn relink(cp: &str, guest_home: &str) -> Vec<String> {
     .to_vec()
 }
 
-/// The checkpoint a parked turn leaves: the session's tree on `host`, as its turn at `epoch` left it. A live tree has
-/// no content hash, so the generation and the host say which it is.
+/// The checkpoint a parked turn leaves: the session's tree as its turn at `epoch` left it.
+///
+/// It is on `host`, and in the store when it was `stored` there. A live tree has no content hash, so the generation
+/// and the hosts say which it is.
 #[must_use]
-pub fn session_checkpoint(task_id: &str, host: &str, epoch: u64) -> CheckpointRef {
+pub fn session_checkpoint(task_id: &str, host: &str, epoch: u64, stored: bool) -> CheckpointRef {
+    let mut hosts = vec![host.to_owned()];
+    if stored {
+        hosts.push(STORE.to_owned());
+    }
     CheckpointRef {
         schema_version: SchemaVersion::CURRENT,
         uri: format!("session-tree://{host}/{task_id}"),
         digest: "unhashed".to_owned(),
         generation: epoch,
-        hosts: vec![host.to_owned()],
+        hosts,
     }
 }
 
@@ -421,6 +427,10 @@ pub enum Stage {
 /// What the helper reports for one attempt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "a record on the wire: each flag is one fact the helper reports, read on its own"
+)]
 pub struct ExecResult {
     pub schema_version: SchemaVersion,
     pub attempt_id: String,
@@ -441,6 +451,9 @@ pub struct ExecResult {
     /// this slot may not take): its session is not lost to a retry, it goes to review.
     #[serde(default)]
     pub tree_lost: Option<String>,
+    /// The turn's tree reached the store after its detach, at this turn's generation.
+    #[serde(default)]
+    pub stored: bool,
     /// `container@<slot>` was active when the command ended; a guest that went away leaves the outcome unknown.
     pub container_active: bool,
     pub stdout_tail: String,
@@ -463,6 +476,7 @@ impl ExecResult {
             cancelled: false,
             branch: None,
             tree_lost: None,
+            stored: false,
             container_active: true,
             stdout_tail: String::new(),
             stderr_tail: String::new(),
@@ -657,6 +671,7 @@ mod tests {
             cancelled: false,
             branch: None,
             tree_lost: None,
+            stored: false,
             container_active: true,
             stdout_tail: String::new(),
             stderr_tail: String::new(),
@@ -828,7 +843,7 @@ mod tests {
 
     #[test]
     fn a_parked_turn_names_its_tree_on_this_host() {
-        let c = session_checkpoint("t1", "msi-ms7758", 4);
+        let c = session_checkpoint("t1", "msi-ms7758", 4, false);
         assert_eq!(c.validate(), Ok(()), "what Store::park validates");
         assert_eq!(
             (c.uri.as_str(), c.generation, c.hosts.as_slice()),
@@ -838,6 +853,8 @@ mod tests {
                 &["msi-ms7758".to_owned()][..]
             )
         );
+        let stored = session_checkpoint("t1", "msi-ms7758", 4, true);
+        assert_eq!(stored.hosts, ["msi-ms7758", STORE]);
     }
 
     #[test]
