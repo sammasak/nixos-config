@@ -509,6 +509,7 @@ fn session_of(claim: &Claim) -> Option<Session> {
         uuid: t.session_uuid.clone(),
         input: t.input.clone(),
         upto: t.upto,
+        checkpoint: t.checkpoint.clone(),
     })
 }
 
@@ -856,8 +857,8 @@ impl Dock<'_> {
     /// Attaches the task's tree, creating it until a first turn prepared it, owned as the slot home is; whether it
     /// was created. The dock is marked busy before the rename and stays marked until a detach, so the runner
     /// quarantines the slot whatever stops this helper in between; a dock a dead helper left a tree in is marked too.
-    /// The error's flag: the task's tree is lost to this slot (a prepared one missing, or one with other ids), not the
-    /// slot's to retry.
+    /// The error's flag: the task's tree is lost to this slot (a prepared one missing, none on this host for a session
+    /// that parked, or one with other ids), not the slot's to retry.
     fn attach(&self, m: &Manifest, slot_home: &Path) -> Result<bool, (bool, String)> {
         use std::os::unix::fs::MetadataExt as _;
         let mark = |why: &str| fs::write(&self.busy, format!("{why}\n"));
@@ -879,6 +880,18 @@ impl Dock<'_> {
             .prepared(&m.task.id)
             .symlink_metadata()
             .is_err();
+        if let (true, Some(c)) = (
+            created,
+            m.session.as_ref().and_then(|s| s.checkpoint.as_ref()),
+        ) {
+            return Err((
+                true,
+                format!(
+                    "task {} parked at generation {} on {:?}, but this host has no prepared tree for it",
+                    m.task.id, c.generation, c.hosts
+                ),
+            ));
+        }
         if created {
             self.sessions
                 .create(&m.task.id, (home.uid(), home.gid()))

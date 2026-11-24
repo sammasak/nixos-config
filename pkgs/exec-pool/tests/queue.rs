@@ -235,12 +235,12 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
         .query_one("SELECT max(version) FROM schema_migrations", &[])
         .unwrap()
         .get(0);
-    assert_eq!(version, 10);
+    assert_eq!(version, 11);
     submit(&mut s, &task("t-1", 1));
     // a newer binary's additive migration keeps the floor: this one still serves the database, as after a rollback
     pg.sql()
         .execute(
-            "INSERT INTO schema_migrations (version, floor) VALUES (11, 10)",
+            "INSERT INTO schema_migrations (version, floor) VALUES (12, 11)",
             &[],
         )
         .unwrap();
@@ -248,17 +248,17 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
     assert!(s.claim(&slot("s0"), 60).unwrap().is_some());
     // one this binary would misread, or one that names no floor, is refused
     pg.sql()
-        .execute("INSERT INTO schema_migrations (version) VALUES (12)", &[])
+        .execute("INSERT INTO schema_migrations (version) VALUES (13)", &[])
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(12))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(13))));
     pg.sql()
         .execute(
-            "UPDATE schema_migrations SET floor = 12 WHERE version = 12",
+            "UPDATE schema_migrations SET floor = 13 WHERE version = 13",
             &[],
         )
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(12))));
-    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(12))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(13))));
+    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(13))));
 }
 
 #[test]
@@ -1796,6 +1796,79 @@ fn a_send_queues_a_waiting_session_and_two_sends_arrive_once_in_order() {
 }
 
 #[test]
+fn a_parked_session_is_claimed_only_on_a_host_that_holds_its_tree() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let mut acer = claude_slot();
+    acer.host = "acer-swift".to_owned();
+    let (a, epoch, first) = started(&mut owner);
+    assert_eq!(first.checkpoint, None);
+    owner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, 0))
+        .unwrap();
+    s.send(&id, "one").unwrap();
+    assert!(
+        owner.claim(&acer, 60).unwrap().is_none(),
+        "the tree is on msi alone"
+    );
+    let (_, _, turn) = started(&mut owner);
+    let checkpoint = turn
+        .checkpoint
+        .expect("a later turn carries its checkpoint");
+    assert_eq!(
+        (checkpoint.generation, checkpoint.hosts),
+        (epoch, vec!["msi-ms7758".to_owned()])
+    );
+}
+
+#[test]
+fn a_first_turn_that_never_parked_is_claimed_only_where_it_ran() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let mut acer = claude_slot();
+    acer.host = "acer-swift".to_owned();
+    let (a, _, _) = started(&mut owner);
+    overdue(&pg, &a);
+    assert_eq!(owner.reconcile().unwrap().len(), 1);
+    s.send(&id, "go on").unwrap();
+    assert!(
+        owner.claim(&acer, 60).unwrap().is_none(),
+        "its tree and transcript, if any, are on msi"
+    );
+    let (_, _, turn) = started(&mut owner);
+    assert_eq!((turn.first, turn.checkpoint), (false, None));
+}
+
+#[test]
+fn a_checkpoint_the_runner_cannot_read_is_skipped_not_fatal() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let first = submit(&mut owner, &task("t-1", 1));
+    let second = submit(&mut owner, &task("t-2", 1));
+    pg.sql()
+        .execute(
+            "UPDATE attempts SET checkpoint = '{\"schema_version\": 2}', fence = lease_epoch WHERE id = $1",
+            &[&first],
+        )
+        .unwrap();
+    let claim = owner.claim(&slot("s0"), 60).unwrap().unwrap();
+    assert_eq!(claim.attempt.id, second);
+}
+
+#[test]
+fn a_first_turn_is_claimed_on_any_host() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (_s, _id) = session(&pg);
+    let mut acer = claude_slot();
+    acer.host = "acer-swift".to_owned();
+    let claim = owner.claim(&acer, 60).unwrap().unwrap();
+    assert!(claim.turn.unwrap().first);
+}
+
+#[test]
 fn a_turn_that_never_parks_is_handed_its_messages_again() {
     let pg = Pg::new();
     let mut owner = pg.migrated();
@@ -2139,6 +2212,10 @@ fn session_metrics_count_turns_wakes_and_tokens() {
         cache_creation_tokens: 400,
         cost_usd: Some(0.5),
     });
+    // a tree asus holds too, so the next turn may run there
+    if let Some(c) = &mut reported.checkpoint {
+        c.hosts.push("asus-b460m".to_owned());
+    }
     owner.park(&a, epoch, &reported).unwrap();
     s.send(&id, "next").unwrap();
     // the next turn on another host
