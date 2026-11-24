@@ -11,7 +11,7 @@ and the owners; it adds no daemon, database, socket, port, Nix option or host ch
 | Task and attempt state (queued to terminal, leases, epochs, idempotency keys) | the queue (#651, PostgreSQL) | `pkgs/exec-pool/src/queue.rs`, CLI `exec-pool-queue`; on acer (`modules/homelab/exec-pool.nix`) |
 | Slot assignment on a host (claim, start, stop, sanitise, resource accounting) | a host-local runner (#652) | `pkgs/exec-pool/src/runner.rs`, `exec-pool-runner`; `modules/homelab/exec-pool-runner.nix`, on acer and msi, one per slot |
 | The inner tool loop | the native Claude, Codex and Pi CLIs, unchanged | `docs/herdr.md` |
-| Viewing sessions | Herdr, observe only: never the source of queue truth | `docs/herdr.md` |
+| Viewing sessions | Herdr: a session turn's agent is in its slot's pane, never the source of queue truth | `docs/herdr.md` |
 | Power windows and placement facts | `sam.fleet.hosts.*` | `modules/core/fleet.nix` |
 
 A task is not a container, a deploy, a Herdr pane or a CLI session. Workers hold no queue credential and no host
@@ -149,15 +149,27 @@ the same path in every slot on every host: HOME `/session/cur/home`, cwd
 tree refuses the attach. The first turn creates the tree (owned as the slot home is) and clones and checks out into it;
 until that finished, a later turn makes it afresh. Every turn links the guest user's current Home Manager files into
 the session's HOME (they dangle after a deploy), probes for Claude's transcript `$HOME/.claude/projects/*/<uuid>.jsonl`
-and runs `claude -p --output-format json` with `--resume <uuid>` when it exists and `--session-id <uuid>` (and the
-hand-back rules) when it does not, the turn's input as the prompt; a probe that does not finish fails the turn's
-preparing. The helper marks the dock busy (`/var/lib/exec-pool-exec/<slot>/dock-busy`) before the attach and clears
+and runs interactive Claude as a named worker ran it (`fish -c 'claude $argv'`, Herdr's launcher with the worker
+settings, `--dangerously-skip-permissions`, no `-p`) with `--resume <uuid>` when it exists and `--session-id <uuid>`
+when it does not; a probe that does not finish fails the turn's preparing. The agent runs as the step unit
+`exec-pool-task` inside `dtach -N /session/cur/home/.exec-pool-agent.sock`, and the helper opens a workspace in the
+host user's Herdr (`pane::label`: the slot and the task's key) whose pane runs the slot's entry point `<prefix>-<slot>
+turn`, which attaches to that terminal over the slot's ssh as `claude`, so Herdr sees and names the agent
+(`pane::agent_name`: the task id) as it did a named worker, and the owner watches and types into it there. Once
+Claude draws its prompt the helper prompts the turn's input with `herdr agent prompt` (the hand-back rules before it
+on a session's first turn; over 3000 bytes it is written to `/session/cur/home/.exec-pool-input.md` and the prompt
+names the file). The turn ends when Herdr reports the agent idle or done at a state after the prompt for 5 s
+(`pane::TurnWatch`), a message typed in the pane just making the turn longer; the helper then closes Claude with
+ctrl+c twice and its verdict is its transcript's last assistant message (`pane::verdict`, as the Claude result line
+the settle reads; an error unless the agent settled with one). A prompt that never reached the agent (no new
+transcript line), or no Herdr, leaves the turn in preparing. Before the agent starts the helper writes the startup
+dialogs a named worker's home has accepted into the session's `~/.claude.json`. The helper marks the dock busy (`/var/lib/exec-pool-exec/<slot>/dock-busy`) before the attach and clears
 the mark only after the detach, so whatever stops it in between (an error, its timeout, a kill) leaves the runner to
 quarantine the slot rather than reset and reuse it. Once the turn's units are gone from the guest (or the guest is
 down) it detaches the tree; one it could not detach stays in the dock, marked. A prepared tree missing, or one with
 other ids than the slot's, sends the turn to `needs_review` rather than spending its attempts. Known limits: a guest
-process outside the step units (none is started: slots run no agent session and no cron) would keep the tree's inode
-after the detach; nothing yet removes the trees of sessions that ended. Codex and Pi run no sessions yet.
+process outside the step units (none is started but the pane's `dtach -a`, which ends with the agent's terminal) would
+keep the tree's inode after the detach; nothing yet removes the trees of sessions that ended. Codex and Pi run no sessions yet.
 
 Settling a one-shot run (`runner::decide`): a cancel is `cancelled`; a clone or checkout that fails never started the
 task's argv, so the attempt goes back to `queued`. A timeout, a guest that went away, or a missing result (or one for

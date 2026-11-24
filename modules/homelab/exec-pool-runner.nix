@@ -150,6 +150,22 @@ in
           EXEC_POOL_MKDIR = "${pkgs.coreutils}/bin/mkdir";
           EXEC_POOL_CP = "${pkgs.coreutils}/bin/cp";
           EXEC_POOL_FIND = "${pkgs.findutils}/bin/find";
+          # a session turn's agent runs in this terminal in the guest, and its pane is in the host user's Herdr,
+          # attached to it by the slot's entry point (modules/workers/core.nix, `turn`)
+          EXEC_POOL_DTACH = "${pkgs.dtach}/bin/dtach";
+          EXEC_POOL_HERDR = builtins.toJSON [
+            "${pkgs.util-linux}/bin/setpriv"
+            "--reuid=${dev.user}"
+            "--regid=${config.users.users.${dev.user}.group}"
+            "--init-groups"
+            "--"
+            "${pkgs.coreutils}/bin/env"
+            "-i"
+            "HOME=${guestHome}"
+            "XDG_RUNTIME_DIR=/run/user/${toString dev.uid}"
+            (lib.getExe pkgs.herdr)
+          ];
+          EXEC_POOL_ATTACH = "/run/current-system/sw/bin/${dev.unitPrefix}-%i turn";
           # a session task's trees and each slot's dock, which the guest sees at /session (pkgs/exec-pool/src/workspace.rs)
           EXEC_POOL_SESSIONS = "${dev.stateDir}/.sessions";
           EXEC_POOL_GUEST_HOME = guestHome;
