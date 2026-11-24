@@ -45,7 +45,7 @@ Waiting, in pick-up order:
 
 | P | Issue | Scope | State |
 |---|-------|-------|-------|
-| P0 | [#600](https://github.com/sammasak/nixos-config/issues/600) | Self-improvement milestone | all hosts on main of 23 Nov; live receipts to collect |
+| P0 | [#600](https://github.com/sammasak/nixos-config/issues/600) | Self-improvement milestone | all hosts on main of 23 Nov; first live receipts on #624 and #625 (24 Nov) |
 | P0 | [#624](https://github.com/sammasak/nixos-config/issues/624) | Actionable alerts | split below |
 | P0 | [#625](https://github.com/sammasak/nixos-config/issues/625) | Shunt metrics, Grafana, alerts | split below |
 | P1 | [skills#138](https://github.com/sammasak/skills/issues/138) | Thin global context, role context | merged, skills#141 |
@@ -72,8 +72,8 @@ Waiting, in pick-up order:
 | 624-d | Journal-delivery stale alert | merged, live on black-pi | #640 |
 | 624-e | Backup stale, never recorded, collector stale | merged, live on black-pi; first recorded runs due 24 Nov 03:00 | #640 |
 | 624-f | Synthetic fire and resolve test through Alertmanager and alert-bridge | merged | #666 |
-| 624-g | Live delivery receipts | queued: black-pi and lenovo are on main | |
-| 624-h | alert-bridge renders query and runbook in the ntfy page (alert-bridge repo, then an app bump) | `m1`: bridge change and test update done, push gate running | |
+| 624-g | Live delivery receipts | read 24 Nov (comment on #624): NodeOOMKill and the synthetic alert reached ntfy and resolved; no blindness alert has fired yet | |
+| 624-h | Query and runbook in the ntfy page | merged, live: Alertmanager posts straight to ntfy, alert-bridge removed | #672, #680 |
 
 ### #625 Shunt metrics
 
@@ -82,7 +82,7 @@ Waiting, in pick-up order:
 | 625-a | Read-only check of the hook JSONL on lenovo, schema decision | done: comment on #625 | |
 | 625-1 | Collector, fixture tests, NixOS wiring (nav-metrics pattern) | merged, enabled on no host yet | #638 |
 | 625-2 | Shunt section in the agent-harness dashboard, stale and failing alerts, collector on lenovo | merged, live: collector on lenovo, rules on black-pi | #644 |
-| 625-pilot | Lenovo pilot, on/off benchmark | owner gate: token spend | |
+| 625-pilot | On/off on the running system (no benchmark, owner 23 Nov) | merged, live: on for lenovo and `a1`, off for herman; read a day on 25 Nov | #678, #679 |
 
 ### #646 execution pool (v0.1)
 
@@ -92,10 +92,10 @@ are. v0.2 and v0.3 stay locked until the v0.1 offline gate has evidence. Deferre
 | Item | What | Needs | State | PR |
 |------|------|-------|-------|----|
 | [#649](https://github.com/sammasak/nixos-config/issues/649) | Contract: ADR, `pkgs/exec-pool` types and state machine, compatibility fixture | | merged; acer gate 23 min, one review round plus a fix round, about 4 h from dispatch to merge | #667 |
-| [#650](https://github.com/sammasak/nixos-config/issues/650) | `sam.workers.executionPool` slot count | #649 | merged; `pool1` declared on acer | #704, #716 |
+| [#650](https://github.com/sammasak/nixos-config/issues/650) | `sam.workers.executionPool` slot count | #649 | closed; `pool1` declared on acer | #704, #716 |
 | [#651](https://github.com/sammasak/nixos-config/issues/651) | PostgreSQL queue, leases, fencing | #649 | closed; live on acer | #673, #693 |
-| [#658](https://github.com/sammasak/nixos-config/issues/658) | Events to the journal, textfile metrics, dashboard row, two alerts | starts with #651 | `a1` | |
-| [#652](https://github.com/sammasak/nixos-config/issues/652) | Runner: dispatcher, slot control, guest executor | #650, #651 | `m2`; agent adapter merged | #711, #713 |
+| [#658](https://github.com/sammasak/nixos-config/issues/658) | Events to the journal, textfile metrics, dashboard row, two alerts | starts with #651 | first slice merged, live on acer: metrics, dashboard row, two alerts; canary and rollback evidence open | #719, #721 |
+| [#652](https://github.com/sammasak/nixos-config/issues/652) | Runner: dispatcher, slot control, guest executor | #650, #651 | runner, agent adapter and submit/status/list CLI merged; first real task next | #711, #713, #720 |
 | [#653](https://github.com/sammasak/nixos-config/issues/653) | Per-attempt isolation and egress | #652 | workspace merged; runner wiring next | #717 |
 | v0.1 gate | Acceptance script in a VM: PASS, FAIL or UNTESTED per criterion | #653, #658 | | |
 
