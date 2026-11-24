@@ -3,7 +3,8 @@
 //! Apart from the host, so they are tested without one. The runner (`exec_pool`, the queue's peer role) claims an attempt, writes a
 //! [`Manifest`] and starts `exec-pool-exec@<slot>`; that helper (root, no queue access) runs the task in the slot's
 //! guest as its user and writes an [`ExecResult`]; the runner settles the attempt from it with [`decide`] and releases
-//! the slot with `dev-env-reset@<slot>`.
+//! the slot with `dev-env-reset@<slot>`. Each attempt runs in its own [`Workspace`], which that reset removes with the
+//! home.
 
 use std::fmt::Write as _;
 use std::fs::File;
@@ -13,12 +14,11 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::workspace::{self, Workspace};
 use crate::{
     Agent, Error, Outcome, Receipt, SchemaVersion, Settle, TaskSpec, agent, parse_versioned,
 };
 
-/// The task's checkout under the guest user's home; the reset that releases the slot removes it with the home.
-pub const CHECKOUT: &str = "task";
 /// How much of each output stream the result carries; the host keeps up to [`CAPTURE_BYTES`] of it.
 pub const TAIL_BYTES: usize = 2048;
 pub const CAPTURE_BYTES: u64 = 1 << 20;
@@ -65,32 +65,55 @@ impl Manifest {
         s
     }
 
-    /// The guest commands in order: clone, check out, then [`agent::argv`] in the task's workdir. Each is an argv,
-    /// never a shell string; `git` and `env` are store paths the guest shares.
+    /// The attempt's workspace under the guest user's home.
     ///
     /// # Errors
-    /// What [`agent::argv`] rejects.
-    pub fn steps(&self, git: &str, env: &str) -> Result<[(Stage, Vec<String>); 3], agent::Error> {
+    /// What [`Workspace::new`] rejects.
+    pub fn workspace(&self, guest_home: &str) -> Result<Workspace, workspace::Error> {
+        Workspace::new(guest_home, &self.attempt_id, self.lease_epoch)
+    }
+
+    /// The guest commands in order: create the workspace, clone into it, check out, then [`agent::argv`] in the task's
+    /// workdir with the workspace's HOME. Each is an argv, never a shell string; `git`, `env` and `mkdir` are store
+    /// paths the guest shares. Git reads no global or system config: the guest user's rewrites https GitHub URLs to
+    /// ssh, and a slot holds no key, so the clone is anonymous https.
+    ///
+    /// # Errors
+    /// What [`agent::argv`] or [`Workspace::run`] rejects.
+    pub fn steps(
+        &self,
+        ws: &Workspace,
+        git: &str,
+        env: &str,
+        mkdir: &str,
+    ) -> Result<[(Stage, Vec<String>); 5], StepsError> {
         let s = |v: &[&str]| v.iter().map(|&x| x.to_owned()).collect::<Vec<_>>();
+        let git = |args: &[&str]| {
+            let mut v = s(&[
+                env,
+                "GIT_CONFIG_GLOBAL=/dev/null",
+                "GIT_CONFIG_NOSYSTEM=1",
+                git,
+            ]);
+            v.extend(s(args));
+            v
+        };
         let t = &self.task;
-        let mut run = s(&[
-            env,
-            "-C",
-            &format!("{CHECKOUT}/{}", t.command.workdir.as_str()),
-            "--",
-        ]);
-        run.extend(agent::argv(t)?);
+        let checkout = ws.checkout();
+        let run = ws.run(env, &t.command.workdir, &agent::argv(t)?)?;
+        let [root, dirs] = ws.create(mkdir);
         Ok([
+            (Stage::Prepare, root),
+            (Stage::Prepare, dirs),
             (
                 Stage::Prepare,
-                s(&[git, "clone", "--quiet", "--", &t.source.repo, CHECKOUT]),
+                git(&["clone", "--quiet", "--", &t.source.repo, &checkout]),
             ),
             (
                 Stage::Prepare,
-                s(&[
-                    git,
+                git(&[
                     "-C",
-                    CHECKOUT,
+                    &checkout,
                     "checkout",
                     "--quiet",
                     "--detach",
@@ -100,6 +123,14 @@ impl Manifest {
             (Stage::Run, run),
         ])
     }
+}
+
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum StepsError {
+    #[error(transparent)]
+    Agent(#[from] agent::Error),
+    #[error(transparent)]
+    Workspace(#[from] workspace::Error),
 }
 
 /// The exit code `systemd-run --wait --service-type=oneshot` reports for its unit, `None` for none.
@@ -310,26 +341,54 @@ mod tests {
         );
     }
 
+    fn steps(m: &Manifest) -> [(Stage, Vec<String>); 5] {
+        let ws = m.workspace("/home/u").unwrap();
+        m.steps(&ws, "/git", "/env", "/mkdir").unwrap()
+    }
+
     #[test]
-    fn steps_are_argv_with_the_repo_and_argv_after_a_separator() {
+    fn steps_make_the_workspace_then_clone_and_run_in_it() {
         let m = manifest(&task()).unwrap();
-        let [(s1, clone), (s2, checkout), (s3, run)] = m.steps("/git", "/env").unwrap();
-        assert_eq!((s1, s2, s3), (Stage::Prepare, Stage::Prepare, Stage::Run));
+        let [(s1, root), (s2, _), (s3, clone), (s4, checkout), (s5, run)] = steps(&m);
         assert_eq!(
-            clone,
+            [s1, s2, s3, s4, s5],
             [
-                "/git",
+                Stage::Prepare,
+                Stage::Prepare,
+                Stage::Prepare,
+                Stage::Prepare,
+                Stage::Run
+            ]
+        );
+        assert_eq!(root, ["/mkdir", "-m", "0700", "--", "/home/u/attempts"]);
+        let dir = "/home/u/attempts/74312e61-3";
+        let git = [
+            "/env",
+            "GIT_CONFIG_GLOBAL=/dev/null",
+            "GIT_CONFIG_NOSYSTEM=1",
+            "/git",
+        ];
+        assert_eq!(clone[..4], git, "no rewrite to ssh from the guest's config");
+        assert_eq!(checkout[..4], git);
+        assert_eq!(
+            clone[4..],
+            [
                 "clone",
                 "--quiet",
                 "--",
                 "https://example.org/r.git",
-                "task"
+                &format!("{dir}/work")
             ]
         );
         assert_eq!(
-            checkout,
+            checkout[4..],
             [
-                "/git", "-C", "task", "checkout", "--quiet", "--detach", "abc123"
+                "-C",
+                &format!("{dir}/work"),
+                "checkout",
+                "--quiet",
+                "--detach",
+                "abc123"
             ]
         );
         assert_eq!(
@@ -337,8 +396,10 @@ mod tests {
             [
                 "/env",
                 "-C",
-                "task/crates/x",
+                &format!("{dir}/work/crates/x"),
                 "--",
+                &format!("HOME={dir}/home"),
+                &format!("TMPDIR={dir}/tmp"),
                 "cargo",
                 "test",
                 "--offline"
@@ -408,10 +469,10 @@ mod tests {
         );
         let mut t = task();
         t["command"] = json!({ "agent": "claude", "argv": ["fix it"], "workdir": "." });
-        let [_, _, (_, run)] = manifest(&t).unwrap().steps("/git", "/env").unwrap();
-        assert_eq!(run[..4], ["/env", "-C", "task/.", "--"]);
+        let [.., (_, run)] = steps(&manifest(&t).unwrap());
+        assert_eq!(run[2], "/home/u/attempts/74312e61-3/work/.");
         assert_eq!(
-            run[4..],
+            run[6..],
             agent::argv(&manifest(&t).unwrap().task).unwrap()[..]
         );
         t["command"]["argv"] = json!(["a", "b", "c"]);

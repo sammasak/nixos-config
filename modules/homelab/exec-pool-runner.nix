@@ -1,5 +1,6 @@
 # The pool runner (#652, pkgs/exec-pool/src/runner_main.rs): one exec-pool-runner-<slot> per sam.workers.executionPool
-# slot. It runs as the queue's peer role and holds no host privilege. The polkit rule below lets it start only its
+# slot, claiming tasks for no agent or one of the slot's sam.workers.executionPool agents. It runs as the queue's peer
+# role and holds no host privilege. The polkit rule below lets it start only its
 # slot's exec-pool-exec@ (root, which runs the task in the guest as its user and holds no queue access) and
 # dev-env-reset@, which releases the slot with every one of its refusals intact.
 {
@@ -11,6 +12,16 @@
 let
   cfg = config.homelab.execPool.runner;
   pool = config.sam.workers.executionPool;
+  dev = config.services.devEnvironments;
+  guestHome = config.users.users.${dev.user}.home or "/home/${dev.user}";
+  # every slot is declared alike, so the first one's guest stands for all
+  guest = lib.optionalAttrs (pool.slots > 0) config.containers.pool1.config;
+  # what a login shell in the slot would hold: the egress routes' variables, and a PATH with the user's profile, where
+  # the agent is; a step does not run under one
+  routeVars = lib.concatMap (e: lib.attrNames e.guest.env) (lib.attrValues dev.egress);
+  agentEnv = lib.filterAttrs (k: _: lib.elem k routeVars) (guest.environment.variables or { }) // {
+    PATH = "/run/wrappers/bin:/etc/profiles/per-user/${dev.user}/bin:/run/current-system/sw/bin";
+  };
   pkg = pkgs.callPackage ../../pkgs/exec-pool/package.nix { };
   exe = "${pkg}/bin/exec-pool-runner";
   slotNames = map (n: "pool${toString n}") (lib.range 1 pool.slots);
@@ -27,7 +38,7 @@ let
       id = n;
       state = "idle";
       inherit (cfg) capabilities;
-      agents = [ "none" ];
+      agents = [ "none" ] ++ pool.agents;
     };
   units = lib.concatMap (n: [
     "exec-pool-exec@${n}.service"
@@ -63,6 +74,11 @@ in
           EXEC_POOL_GUEST_USER = config.services.devEnvironments.user;
           EXEC_POOL_GIT = lib.getExe pkgs.git;
           EXEC_POOL_ENV = "${pkgs.coreutils}/bin/env";
+          EXEC_POOL_MKDIR = "${pkgs.coreutils}/bin/mkdir";
+          EXEC_POOL_GUEST_HOME = guestHome;
+          # the host side of the guest home, whose identity admits an attempt only after a reset
+          EXEC_POOL_SLOT_HOME = "${dev.stateDir}/%i/home";
+          EXEC_POOL_AGENT_ENV = builtins.toJSON agentEnv;
         };
         serviceConfig = {
           Type = "oneshot";
