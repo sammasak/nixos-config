@@ -112,7 +112,7 @@ FLEET_CASES = [
     ("claude without the token secret", "{ sam.hostSecrets.enable = lib.mkForce false; sam.workers.instances.t = { }; }", "claude instance's calls are signed with the host's sops secret"),
     # asus signs its own GitHub calls; msi forwards them to acer's sidecar (FORWARD)
     ("github without a gh login", '{ sam.workers.instances.t.egress.github.repos = [ "o/r" ]; }', "signed with the token in sam.workers.ghHostsFile", "asus-b460m"),
-    ("github keeping the ssh key", '{ sam.workers = { ghHostsFile = "/home/lukas/hosts.yml"; instances.t = { egress.github.repos = [ "o/r" ]; slot.credentials = [ "id_ed25519" ]; }; }; }',
+    ("github keeping the ssh key", '{ sam.workers = { ghHostsFile = "/home/lukas/hosts.yml"; instances.t = { egress.github.repos = [ "o/r" ]; credentials = [ "id_ed25519" ]; }; }; }',
      "gets neither id_ed25519 nor gh-hosts.yml"),
     ("telemetry without nativeOtel", "{ sam.profile.nativeOtel = lib.mkForce false; sam.workers.instances.t.telemetry = true; }", "runs only with sam.profile.nativeOtel"),
     ("telemetry from a guest module", "{ sam.workers.instances.t.telemetry = false; services.devEnvironments.guestModules = [ { sam.claude.telemetry.enable = true; } ]; }",
