@@ -1,6 +1,6 @@
 # Authentik and its Postgres on this host, from nixpkgs' package (unit layout after nix-community/authentik-nix's
 # module.nix): Caddy (edge.nix) reaches the server and its embedded outpost on loopback; Postgres has no TCP listener
-# and admits only its own superuser and authentik, by peer. The units start only on a restored database: an empty one
+# and admits only its own superuser and each database's own role (authentik's, exec-pool.nix's), by peer. The units start only on a restored database: an empty one
 # would come up as a fresh install with an open akadmin setup flow. Restore: pg_restore of a latest.dump (here or
 # lenovo's authentik-offhost copy) into an empty authentik database, as the authentik role.
 {
@@ -322,13 +322,12 @@ in
         !config.services.postgresql.enableTCPIP
         && config.services.postgresql.settings.listen_addresses == ""
         && lib.elem "local authentik authentik peer" hba
-        # another database on this cluster (exec-pool.nix) admits only its own role, by peer
         && lib.all (
           l:
-          let
-            m = lib.match "local ([a-z_]+) ([a-z_]+) peer" l;
-          in
-          l == "local all postgres peer" || m != null && lib.head m == lib.last m
+          lib.elem l (
+            [ "local all postgres peer" ]
+            ++ map (db: "local ${db} ${db} peer") config.services.postgresql.ensureDatabases
+          )
         ) hba;
       message = "modules/homelab/authentik.nix: Postgres must have no TCP listener and admit only postgres and each database's own role, by peer.";
     }

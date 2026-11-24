@@ -1,5 +1,5 @@
 # The execution pool's queue (pkgs/exec-pool, docs/records/execution-pool-contract.md) on this host: its own database
-# and role in the host's PostgreSQL, reached by peer over the socket alone; the schema is the CLI's `migrate` at start
+# and role in the host's PostgreSQL, reached by peer over the socket alone; the schema is the CLI's `migrate` at start,
 # its metrics a minutely textfile and its backup a nightly dump. No runner and no slot: nothing claims a task yet.
 {
   config,
@@ -80,20 +80,25 @@ in
     serviceConfig = {
       RemainAfterExit = true;
       ExecStart = "${queue} migrate";
+      # a held lock would otherwise stall the activation that starts it
+      TimeoutStartSec = 60;
     };
   };
 
   services.prometheus.exporters.node.extraFlags = [ "--collector.textfile.directory=${dir}" ];
+  # before the first run: node-exporter counts a missing directory as a textfile scrape error
+  systemd.tmpfiles.rules = [ "d ${dir} 0755 exec_pool exec_pool -" ];
   systemd.services.exec-pool-metrics = lib.recursiveUpdate unit {
     description = "Execution pool queue metrics, for node-exporter";
+    # a run before the schema exists would fail; a failed migrate leaves the textfile to go stale
     after = [
       "postgresql.target"
       "exec-pool-migrate.service"
     ];
+    requires = [ "exec-pool-migrate.service" ];
     serviceConfig = {
       ExecStart = lib.getExe metrics;
-      StateDirectory = "exec-pool-metrics";
-      StateDirectoryMode = "0755";
+      ReadWritePaths = [ dir ];
       TimeoutStartSec = 30;
     };
   };
@@ -113,6 +118,7 @@ in
       StateDirectoryMode = "0700";
       UMask = "0077";
       MemoryMax = "64M";
+      TimeoutStartSec = 300;
     };
     script = ''
       set -euo pipefail
@@ -132,7 +138,20 @@ in
     };
   };
 
+  system.checks = [
+    (pkgs.runCommand "exec-pool-backup-script-check" { nativeBuildInputs = [ pkgs.shellcheck ]; } ''
+      shellcheck --severity=warning ${config.systemd.services.exec-pool-backup.serviceConfig.ExecStart}
+      touch $out
+    '')
+  ];
+
   assertions = [
+    {
+      assertion = lib.elem "local exec_pool exec_pool peer" (
+        lib.splitString "\n" config.services.postgresql.authentication
+      );
+      message = "modules/homelab/exec-pool.nix: the exec_pool role must reach its database by peer over the socket.";
+    }
     {
       assertion =
         !config.services.postgresql.enableTCPIP
