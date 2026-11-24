@@ -264,5 +264,69 @@ for i in range(4):
 check(counts == [500, 500, 200, 0], f"at most 500 lines per instance and run ({counts})")
 check("50 older than Loki takes" in first, f"the backlog's too-old lines are skipped and counted ({first.strip()})")
 
+# --usage (#494): host-made kind=usage lines from the container cgroups and confs, never from a guest file
+check("usage" not in kinds, f"usage is not a guest kind: a guest cannot write one ({kinds})")
+uu = re.search(r"\n  usageUnit =\n(.*?)\n  prepareDirs", core, re.S)
+uu = uu.group(1) if uu else ""
+check("recordsUnit names" in uu and '"--usage"' in uu and '"/sys/fs/cgroup/${slice}.slice"' in uu and '"/etc/nixos-containers"' in uu,
+      "the usage unit is the shipper's own sandbox (recordsUnit), with --usage, the slice's cgroup and the containers' confs")
+cg, confs = tmp / "cg", tmp / "confs"
+confs.mkdir()
+SP = "/nix/store/" + "a" * 32 + "-nixos-system-acer-herman-26.11"
+for n, conf in (("herman", f"PRIVATE_NETWORK=1\nSYSTEM_PATH={SP}\n"), ("t2", "SYSTEM_PATH=/home/lukas/x; rm -rf /\n")):
+    d = cg / f"container@{n}.service"
+    d.mkdir(parents=True)
+    (d / "cpu.stat").write_text("usage_usec 120000000\nuser_usec 100000000\nsystem_usec 20000000\n")
+    (d / "memory.current").write_text("2015899648\n")
+    (d / "memory.peak").write_text("7518265344\n")
+    (d / "memory.stat").write_text("anon 1500000000\nfile 400000000\n")
+    (confs / f"{n}.conf").write_text(conf)
+write("herman", [rec(30, "gate", "from=spool")])
+
+
+def usage_run(*names):
+    Loki.pushes.clear()
+    p = subprocess.run([sys.executable, "-I", str(SHIPPER), "--state-dir", str(state), "--progress", str(progress),
+                        "--prefix", PREFIX, "--url", URL, "--kinds", ",".join(kinds), "--usage", "--cgroup", str(cg),
+                        "--containers", str(confs), *names], capture_output=True, text=True, timeout=30)
+    return p.returncode, p.stdout, p.stderr, [(s["stream"], v[0], v[1]) for _, b in Loki.pushes for s in b["streams"] for v in s["values"]]
+
+
+rc, out, err, got = usage_run("herman", "t2")
+by = {e[0]["host"]: e for e in got}
+h = by.get(f"{PREFIX}-herman")
+check(rc == 0 and h is not None and h[0] == {"job": "platform", "kind": "usage", "host": f"{PREFIX}-herman"}
+      and h[2] == f"cpu_usec=120000000 user_usec=100000000 mem_current=2015899648 mem_anon=1500000000 mem_peak=7518265344 toplevel={SP}",
+      f"one kind=usage line per instance, in the host's stream: cpu, user, current, anon, lifetime peak, the system ({got}, {err.strip()})")
+check(by.get(f"{PREFIX}-t2", (None, None, ""))[2].endswith(" toplevel=unknown"),
+      f"seeded: a conf whose SYSTEM_PATH is not a store path gives toplevel=unknown, never its text ({by.get(f'{PREFIX}-t2')})")
+check(len(got) == 2 and not any("from=spool" in e[2] for e in got), f"usage mode ships no spool line ({got})")
+rc, out, err, got = usage_run("herman", "gone")
+check(rc == 0 and [e[0]["host"] for e in got] == [f"{PREFIX}-herman"] and "not running, skipped: gone" in out and err == "",
+      f"an instance without a cgroup (stopped) is skipped and logged, rc 0, and the others still go ({rc}, {out.strip()}, {err.strip()})")
+broken = cg / "container@broken.service"
+broken.mkdir()
+(broken / "cpu.stat").write_text("system_usec 1\n")
+for f, v in (("memory.current", "1\n"), ("memory.peak", "1\n"), ("memory.stat", "anon 1\n")):
+    (broken / f).write_text(v)
+rc, out, err, got = usage_run("herman", "broken")
+check(rc == 1 and [e[0]["host"] for e in got] == [f"{PREFIX}-herman"] and "broken: no usage" in err,
+      f"seeded: a cgroup that is there but cannot be read (cpu.stat without usage_usec) fails the run, rc 1 ({rc}, {err.strip()})")
+(broken / "cpu.stat").write_text("usage_usec 1\nuser_usec 1\n")
+os.chmod(broken / "memory.peak", 0)
+rc, out, err, got = usage_run("broken")
+os.chmod(broken / "memory.peak", 0o644)
+check(rc == 1 and got == [] and "broken: no usage (PermissionError" in err if os.geteuid() != 0 else True,
+      f"seeded: an unreadable counter file in a present cgroup is a read error, rc 1 ({rc}, {err.strip()})")
+real_cg = cg
+cg = tmp / "no-such-slice"
+rc, out, err, got = usage_run("herman")
+check(rc == 1 and got == [] and "is not a directory" in err,
+      f"seeded: a --cgroup slice that is not there fails the run (rc 1), never reads as every instance stopped ({rc}, {err.strip()})")
+cg = real_cg
+write("forge", [rec(30, "usage", "cpu_usec=1")])
+rc, out, err, got = run("forge")
+check(got == [] and "unknown kind" in out, f"seeded: a guest's own kind=usage line is dropped as an unknown kind ({got}, {out.strip()})")
+
 shutil.rmtree(tmp)
 finish()

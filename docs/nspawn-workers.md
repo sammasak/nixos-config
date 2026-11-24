@@ -375,6 +375,10 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
   in the unit's StateDirectory, out of every guest's reach. It runs as a
   dynamic user with `CAP_DAC_READ_SEARCH` alone (read any home, write
   nothing but its state), `IPAddressAllow` Loki's address only.
+  With `records.usage` set (acer: `1min`, the #494 spike) `dev-env-usage` pushes, in the same sandbox, one
+  host-made `kind=usage` line per running instance: its container cgroup's `cpu_usec`, `user_usec`,
+  `mem_current`, `mem_anon` (`memory.stat` anon, no page cache), `mem_peak` (lifetime, never reset) and
+  `toplevel` (the conf's `SYSTEM_PATH`). It reads no guest file, and `usage` is not a guest kind.
 
 ## Working an issue in one
 
