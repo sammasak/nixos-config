@@ -153,8 +153,10 @@ pub fn session_argv(
     Ok(out)
 }
 
-/// A headless session turn's agent call, on a host whose runner has no pane for it: Claude's print mode with
-/// `--session-id` or `--resume` of `session` and [`turn_input`] as its prompt, the task's model kept.
+/// A headless session turn's agent call, on a host whose runner has no pane for it.
+///
+/// Claude's print mode with `--session-id` or `--resume` of `session` and [`turn_input`] as its prompt, the task's
+/// model kept.
 ///
 /// # Errors
 /// What [`session_argv`] and [`turn_input`] reject.
