@@ -177,7 +177,18 @@ fn a_session_turn_starts_its_session_with_the_prefix_then_resumes_it() {
     assert_eq!(tail[..5], ["--model", "opus", "--session-id", UUID, "--"]);
     assert_eq!(
         tail[5],
-        format!("{}fix the lint", PREFIX.replace("{branch}", "pool/t-655"))
+        format!(
+            "{}fix the lint",
+            PREFIX.replace("{branch}", "pool/t-655").replace(
+                "The task:",
+                "To wait for an outside event, run `pool-wait --until HH:MM|RFC3339 [--note TEXT]`: the session is \
+                 woken then, told the note. End your turn right after calling it. The task:"
+            )
+        )
+    );
+    assert!(
+        !argv(&t).unwrap().concat().contains("pool-wait"),
+        "a one-shot run is not told of pool-wait"
     );
     let resume = session_argv(&t, UUID, "and the test", Turn::Resume).unwrap();
     assert!(resume.ends_with(&[

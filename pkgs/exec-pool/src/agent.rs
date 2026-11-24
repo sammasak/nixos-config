@@ -37,6 +37,17 @@ code, commit on {branch} with a message whose body has a `Why:` line and push th
 its pre-push hooks run. Never push main or any other branch, never force-push, never skip a hook (no --no-verify, no \
 SKIP=); if a hook refuses the push, say why in your answer. The task:\n\n";
 
+/// What a session's first turn is also told, before "The task:" of [`PREFIX`]: how to wait for an outside event.
+pub const SESSION_WAIT: &str = "To wait for an outside event, run `pool-wait --until HH:MM|RFC3339 [--note TEXT]`: \
+the session is woken then, told the note. End your turn right after calling it. ";
+
+/// The prefix of a session's first turn: [`PREFIX`] with [`SESSION_WAIT`] before its last sentence.
+fn session_prefix(task: &TaskSpec) -> Result<String, Error> {
+    Ok(PREFIX
+        .replace("{branch}", &branch(task)?)
+        .replace("The task:", &format!("{SESSION_WAIT}The task:")))
+}
+
 /// The branch an attempt of `task` works and pushes on: `pool/<task id>`.
 ///
 /// # Errors
@@ -75,8 +86,8 @@ pub fn argv(task: &TaskSpec) -> Result<Vec<String>, Error> {
 /// How a session turn's agent call takes its session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Turn {
-    /// No transcript of the session yet: start it under its id, [`PREFIX`] before the input, as the agent has not seen
-    /// it (a first turn, or one after a turn that died before its first write).
+    /// No transcript of the session yet: start it under its id, [`PREFIX`] (with [`SESSION_WAIT`]) before the input,
+    /// as the agent has not seen it (a first turn, or one after a turn that died before its first write).
     Start,
     /// A transcript exists: resume it.
     Resume,
@@ -105,10 +116,7 @@ pub fn session_argv(
     }
     let (mut out, _) = call(task)?;
     let (flag, prompt) = match turn {
-        Turn::Start => (
-            "--session-id",
-            format!("{}{input}", PREFIX.replace("{branch}", &branch(task)?)),
-        ),
+        Turn::Start => ("--session-id", format!("{}{input}", session_prefix(task)?)),
         Turn::Resume => ("--resume", input.to_owned()),
     };
     out.extend([flag.to_owned(), session.to_owned(), "--".to_owned(), prompt]);
