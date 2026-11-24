@@ -33,7 +33,7 @@ pinned word for word by `scripts/test-coordinator-wiring.py`:
 
 | Allowed | Form | What it reaches |
 |---|---|---|
-| `coordinator-read` | `coordinator-read <task> ['<input-json>']` | `coord:brief` (prints `brief/latest.md`), `coord:changed` (never consuming), `gh:work`, `gh:repos`, `git:recent`, `harness:session-summary`, `pool:status`, `pool:result`, `pool:wait` |
+| `coordinator-read` | `coordinator-read <task> ['<input-json>']` | `coord:brief` (prints `brief/latest.md`), `coord:changed` (never consuming), `gh:work`, `gh:repos`, `git:recent`, `harness:session-summary`, `work:status` (per-session pool state), `pool:status`, `pool:result`, `pool:wait` |
 | `coordinator-act` | `coordinator-act <task> '<input-json>'` | `pool:start`, `pool:send`, `pool:submit`, `gh:label`, `gh:comment`; one non-empty object, no other argument; `gh:comment` and `gh:label` only with `repo` under the owner's account (`sam.userConfig.git.userName/<repo>`); `coord:spawn`, `coord:handoff` and `herdr:message` are not reachable |
 | `cd` | into `~/claude-code-skills` | |
 | `Read` | the checkout and `~/.local/state/coordinator/` | |
