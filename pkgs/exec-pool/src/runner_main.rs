@@ -1,14 +1,15 @@
 //! `exec-pool-runner`: the pool runner (#652) for one slot, and its slot-control helper.
 //!
-//! `run` (the queue's peer role, from `exec-pool-runner@<slot>.service`) loops: reconcile, claim an attempt for the
-//! slot, accept `start`, write the manifest, start `exec-pool-exec@<slot>`, then checkpoint and settle from its
-//! result, record the result, and release the slot with `dev-env-reset@<slot>`. It begins no work before `start` is
-//! accepted, and never re-sends an event whose outcome is unknown: the lease expires and `reconcile` decides. While
-//! the helper runs it renews the lease every [`HEARTBEAT`]; a cancel the heartbeat reports, or a lease it finds lost,
-//! writes the cancel marker the helper stops at. A runner that dies renews nothing, and the lease expires. A reset
-//! that fails quarantines the slot until an operator removes the marker. With `EXEC_POOL_OFF_TIMER` it claims only
-//! while a claim, held up to `EXEC_POOL_CLAIM_SECS`, ends before that timer powers the host off; with a credentials
-//! directory it is a remote slot's runner, reaching the queue over TCP with the `db-password` credential. Each state change is one JSON line on stdout.
+//! `run` (the queue's peer role, or `exec_pool_runner` on another host's, from `exec-pool-runner-<slot>.service`)
+//! loops: reconcile, claim an attempt for the slot, accept `start`, write the manifest, start `exec-pool-exec@<slot>`,
+//! then checkpoint and settle from its result, record the result, and release the slot with `dev-env-reset@<slot>`. It
+//! begins no work before `start` is accepted, and never re-sends an event whose outcome is unknown: the lease expires
+//! and `reconcile` decides. While the helper runs it renews the lease every [`HEARTBEAT`]; a cancel the heartbeat
+//! reports, or a lease it finds lost, writes the cancel marker the helper stops at. A runner that dies renews nothing,
+//! and the lease expires. A reset that fails quarantines the slot until an operator removes the marker. With
+//! `EXEC_POOL_OFF_TIMER` it claims only while a claim, held up to `EXEC_POOL_CLAIM_SECS`, ends before that timer powers
+//! the host off; with a credentials directory it is a remote slot's runner, reaching the queue over TCP with the
+//! `db-password` credential. Each state change is one JSON line on stdout.
 //!
 //! `exec SLOT` (root, from `exec-pool-exec@<slot>.service`) reads the manifest, admits the attempt only to a slot home
 //! reset since the last one ran, runs the task's steps in the guest as its user with `systemd-run -M` in the attempt's

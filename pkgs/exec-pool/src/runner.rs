@@ -245,7 +245,8 @@ pub fn receipt(task_id: &str, attempt_id: &str, lease_epoch: u64, to: Settle) ->
 /// Whether a claim at `now` (unix seconds) that holds the slot up to `hold_secs` ends before the host's poweroff.
 ///
 /// `show` is `systemctl show -p LoadState -p NextElapseUSecRealtime --timestamp=unix` of its off timer: a claim the
-/// poweroff would cut short sends its attempt to review. A timer with no next elapse powers nothing off.
+/// poweroff would cut short sends its attempt to review. A timer with no next elapse is stopped, as a switch restarting
+/// it leaves it for a moment: that claims nothing either.
 ///
 /// # Errors
 /// A timer that is not loaded, or output this does not read: the runner claims nothing then.
@@ -258,7 +259,6 @@ pub fn claim_fits(now: u64, hold_secs: u32, show: &str) -> Result<bool, String> 
         return Err(format!("off timer not loaded: {show:?}"));
     }
     match field("NextElapseUSecRealtime") {
-        Some("") => Ok(true),
         Some(next) => next
             .strip_prefix('@')
             .and_then(|n| n.parse::<u64>().ok())
@@ -343,9 +343,9 @@ mod tests {
             claim_fits(off - 2999, 3000, &show(&format!("@{off}"))),
             Ok(false)
         );
-        assert_eq!(claim_fits(off + 60, 3000, &show("")), Ok(true));
         for bad in [
             "LoadState=not-found\nNextElapseUSecRealtime=\n".to_owned(),
+            show(""),
             show("Tue 2026-11-24 21:00:00 CET"),
             "LoadState=loaded\n".to_owned(),
             String::new(),
