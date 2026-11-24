@@ -942,13 +942,13 @@ def check_pool_compat():
           f"executionPool.agents = [ \"claude\" ]: pool1 stays agent none with no credential, gets only the anthropic egress and its ANTHROPIC_BASE_URL, and starts no session ({on.get('error') or on.get('failing') or {**s, 'extra': extra} })")
     out = run_eval(POOL_ALL % {"root": json.dumps(ROOT)})
     a = json.loads(out.stdout) if out.returncode == 0 else {"error": out.stderr.strip()[-600:]}
-    # acer's pool1 holds the push key (check_runner); nothing else of the host's
+    # acer's pool1 pushes through the GitHub proxy (check_runner) and holds nothing of the host's
     leaked = [b for b in a.get("binds", []) if b.startswith(("/run/secrets", "/run/user", "/run/credentials", "/var/lib/host-credentials/"))
-              and not b.endswith(("/ssh_host_ed25519_key", ".pub")) and b != "/var/lib/host-credentials/id_ed25519"]
-    check(a.get("failing") == [] and a.get("sockets") == ["anthropic-egress", "llm-gateway-egress", "openai-egress"] and not leaked
+              and not b.endswith(("/ssh_host_ed25519_key", ".pub"))]
+    check(a.get("failing") == [] and a.get("sockets") == ["anthropic-egress", "github-egress", "llm-gateway-egress", "openai-egress"] and not leaked
           and a.get("codexKey") == "held-by-the-host" and a.get("codexUrl") == 'openai_base_url = "http://127.0.0.1:4103/v1"' and a.get("pi") is True
           and {"llm_gateway_pi_key:/run/secrets/llm_gateway_pi_key", "codex-auth.json:/home/lukas/.codex/auth.json"} <= set(a.get("creds", [])),
-          f"executionPool.agents = [ \"claude\" \"codex\" \"pi\" ] on acer: pool1 gets the anthropic, openai and llm-gateway proxies, Codex and Pi pointed at them with placeholders, and the keys only in the proxy's credentials ({a.get('error') or {**a, 'leaked': leaked} })")
+          f"executionPool.agents = [ \"claude\" \"codex\" \"pi\" ] on acer: pool1 gets the anthropic, github, openai and llm-gateway proxies, Codex and Pi pointed at them with placeholders, and the keys only in the proxy's credentials ({a.get('error') or {**a, 'leaked': leaked} })")
     # POOL_CASES were prefetched; a whole msi per type error, one at a time
     outs = [run_eval(fleet(c[1])) for c in POOL_CASES]
     typed = [subprocess.run(["nix", "eval", "--impure", "--json", "--expr", POOL_THROW % {"root": json.dumps(ROOT), "case": c[1]}], capture_output=True, text=True)
@@ -1006,9 +1006,11 @@ let
   msi = flake.nixosConfigurations.msi-ms7758.config;
   r = acer.systemd.services.exec-pool-runner-pool1;
   # a slot's push key: its credentials, host-credential binds beside the sshd host key and public keys every
-  # environment binds, its ~/.ssh links, and the helper's git identity
+  # environment binds, its ~/.ssh links, its GitHub proxy's repositories and rewrite, and the helper's git identity
   push = c: n: {
     inherit (c.services.devEnvironments.instances.${n}) credentials;
+    repos = c.services.devEnvironments.instances.${n}.egress.github.repos;
+    rewrite = c.containers.${n}.config.environment.etc.gitconfig.text or null;
     binds = builtins.filter (b: builtins.match "/var/lib/host-credentials/.*" b != null && builtins.match ".*(/ssh_host_ed25519_key|[.]pub)" b == null) (builtins.attrNames c.containers.${n}.bindMounts);
     links = builtins.filter (r: builtins.match ".*(id_ed25519|gh-hosts).*" r != null) c.containers.${n}.config.systemd.tmpfiles.rules;
     git = c.systemd.services."exec-pool-exec@".environment;
@@ -1071,10 +1073,17 @@ def check_runner():
               f"{host}: container@pool1 and @pool2, exec-pool-exec@ and each slot's dev-env-reset@ have no start limit; the shared reset template and a named worker's container keep theirs ({lim or out.stderr.strip()[-300:]})")
     for host, p in got.get("push", {"acer-pool1": {}, "acer-pool2": {}, "msi-pool1": {}, "msi-pool2": {}}).items():
         links, git = p.get("links", []), p.get("git", {})
-        check(p.get("credentials") == ["id_ed25519"] and p.get("binds") == ["/var/lib/host-credentials/id_ed25519"]
-              and len(links) == 1 and "/.ssh/id_ed25519 " in links[0]
-              and git.get("EXEC_POOL_GIT_NAME") == "sammasak" and git.get("EXEC_POOL_GIT_EMAIL", "").endswith("@users.noreply.github.com"),
-              f"{host} holds the host's push key alone, linked as ~/.ssh/id_ed25519, no gh login, and its helper commits as the owner's git identity ({ {k: v for k, v in p.items() if k != 'git'} }, { {k: v for k, v in git.items() if 'GIT_' in k} })")
+        if host.startswith("acer"):
+            # an attempt's HOME has no Home Manager files: the system's git config sends its ssh push URL to the proxy
+            held = (p.get("credentials") == [] and p.get("binds") == [] and links == [] and "sammasak/nixos-config" in p.get("repos", [])
+                    and all(f'insteadOf = "{u}"' in (p.get("rewrite") or "") for u in ("https://github.com/", "git@github.com:", "ssh://git@github.com/")))
+            what = "holds no GitHub credential, pushes through the host's GitHub proxy for its listed repos, rewritten in the system's git config"
+        else:
+            held = (p.get("credentials") == ["id_ed25519"] and p.get("binds") == ["/var/lib/host-credentials/id_ed25519"] and p.get("repos") == []
+                    and len(links) == 1 and "/.ssh/id_ed25519 " in links[0])
+            what = "holds the host's push key alone, linked as ~/.ssh/id_ed25519, no gh login"
+        check(held and git.get("EXEC_POOL_GIT_NAME") == "sammasak" and git.get("EXEC_POOL_GIT_EMAIL", "").endswith("@users.noreply.github.com"),
+              f"{host} {what}, and its helper commits as the owner's git identity ({ {k: v for k, v in p.items() if k != 'git'} }, { {k: v for k, v in git.items() if 'GIT_' in k} })")
 
 
 def check_nested(facts):
