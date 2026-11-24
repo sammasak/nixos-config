@@ -28,16 +28,14 @@
   # 15.9 GiB RAM, ~2.8G of it the host's own: a 10G pool reserves 2G each for at most 5, 3 recommended
   # (docs/nspawn-workers.md, Sizing). No ghHostsFile: msi's lukas has no gh login (git push works over the SSH key).
   sam.workers = {
-    # Task slots that push over the SSH key: reset with dev-env-reset@<name> between tasks, no deploy.
-    instances.m1 = { };
-    instances.m2 = { };
     retired = [
       "research"
       "nats"
       "t1"
+      "m1"
+      "m2"
     ];
     labelPrefix = "msi";
-    shutdownNotice = "Mon-Fri 20:40";
     pool.memory = "10G";
   };
 

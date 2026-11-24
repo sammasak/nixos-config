@@ -816,9 +816,9 @@ def check_bounded():
 
 
 # modules/workers/execution-pool.nix on msi without its own slot (without_msi_pool): off (unset, or enable = false
-# with a count) it moves no worker unit, no container and no toplevel, and msi's named workers and their Herdr units
-# stay pinned by name (a change to msi's instances edits this list in the same PR); on, its 0/1/2 slots are shells
-# beside them that leave their units alone.
+# with a count) it moves no worker unit, no container and no toplevel, and a named worker beside it (msi declares none
+# since m1 and m2 were retired: `t` here, with the shutdown notice that prompts it) keeps its Herdr unit; on, its
+# 0/1/2 slots are shells beside it that leave its units alone.
 POOL_COMPAT = r"""
 let
   flake = builtins.getFlake (toString %(root)s);
@@ -846,6 +846,7 @@ in {
 }
 """
 POOL_ON = "{ sam.workers.executionPool = { enable = true; slots = %d; }; }"
+NAMED = '{ sam.workers.instances.t = { }; sam.workers.shutdownNotice = "Mon-Fri 20:40"; }'
 
 
 def without_msi_pool(case):
@@ -858,7 +859,7 @@ def without_msi_pool(case):
 
 # (name, module, expected message substring) on msi with the pool on; each must fail an assertion
 POOL_CASES = [(name, without_msi_pool(case), want) for name, case, want in [
-    ("slots above the pool", "{ sam.workers.executionPool = { enable = true; slots = 4; }; }", "their memory.reserved adds up to 12288M, more than pool.memory 10240M"),
+    ("slots above the pool", "{ sam.workers.executionPool = { enable = true; slots = 6; }; }", "their memory.reserved adds up to 12288M, more than pool.memory 10240M"),
     ("a slot's name declared by hand", "{ sam.workers.executionPool = { enable = true; slots = 1; }; sam.workers.instances.pool1 = { }; }", "pool1 is a pool slot's name"),
     ("a slot's name declared in the core", "{ sam.workers.executionPool = { enable = true; slots = 1; }; services.devEnvironments.instances.pool1 = { }; }", "pool1 is a pool slot's name"),
     ("a slot's name retired", '{ sam.workers.executionPool = { enable = true; slots = 1; }; sam.workers.retired = [ "pool1" ]; }', "pool1 is a pool slot's name"),
@@ -897,7 +898,8 @@ in c.system.build.toplevel.drvPath
 
 
 def pool_eval(case, toplevel=False):
-    out = run_eval(POOL_COMPAT % {"root": json.dumps(ROOT), "case": without_msi_pool(case), "toplevel": "c.system.build.toplevel.drvPath" if toplevel else "null"})
+    case = without_msi_pool("{ imports = [ (%s) (%s) ]; }" % (NAMED, case))
+    out = run_eval(POOL_COMPAT % {"root": json.dumps(ROOT), "case": case, "toplevel": "c.system.build.toplevel.drvPath" if toplevel else "null"})
     return json.loads(out.stdout) if out.returncode == 0 else {"error": out.stderr.strip()[-600:]}
 
 
@@ -907,10 +909,10 @@ def check_pool_compat():
     off = pool_eval("{ sam.workers.executionPool = { enable = false; slots = 2; }; }", True)
     check(absent.get("units") and absent.get("toplevel") and absent == off,
           f"executionPool off (unset, or enable = false with slots = 2) moves no worker unit, container or toplevel on msi ({absent.get('error') or [k for k in absent if absent[k] != off.get(k)]})")
-    named = ["m1", "m2"]
+    named = ["t"]
     check(absent.get("instances") == absent.get("declared") == absent.get("agents") == named
           and absent.get("herdr") == [f"worker-herdr-{n}" for n in named] and not absent.get("inventory"),
-          f"msi's sam.workers.instances are still {named}, each one worker-herdr-<name> unit, and no pool inventory ({ {k: absent.get(k) for k in ('instances', 'declared', 'agents', 'herdr', 'inventory')} })")
+          f"msi's sam.workers.instances are {named}, each one worker-herdr-<name> unit, and no pool inventory ({ {k: absent.get(k) for k in ('instances', 'declared', 'agents', 'herdr', 'inventory')} })")
     for n in range(3):
         on = pool_eval(POOL_ON % n)
         names = [f"pool{i}" for i in range(1, n + 1)]
@@ -961,41 +963,42 @@ def check_pool_compat():
 
 
 # the session dock (modules/workers/core.nix sessionDock): each pool slot binds its own .sessions/dock/<name> read-write
-# at /session, made root's by the activation; a named worker binds none
+# at /session, made root's by the activation; a named worker (`t` on msi, neither host declaring one) binds none
 DOCK = r"""
 let
   flake = builtins.getFlake (toString %(root)s);
+  named = (flake.nixosConfigurations.msi-ms7758.extendModules { modules = [ { sam.workers.instances.t = { }; } ]; }).config;
   of = c: n: {
     dock = c.services.devEnvironments.instances.${n}.sessionDock;
     bind = let b = c.containers.${n}.bindMounts."/session" or null; in
       if b == null then null else { inherit (b) hostPath isReadOnly; };
   };
-  host = h: named: let c = flake.nixosConfigurations.${h}.config; in {
-    slots = { pool1 = of c "pool1"; pool2 = of c "pool2"; };
-    named = of c named;
+  host = h: n: let c = flake.nixosConfigurations.${h}.config; in {
+    slots = builtins.listToAttrs (builtins.genList (i: { name = "pool${toString (i + 1)}"; value = of c "pool${toString (i + 1)}"; }) n);
     stateDir = c.services.devEnvironments.stateDir;
     activation = c.system.activationScripts.devEnvironments.text;
   };
-in { acer = host "acer-swift" "a1"; msi = host "msi-ms7758" "m1"; }
+in { acer = host "acer-swift" 3; msi = host "msi-ms7758" 4; named = of named "t"; }
 """
 
 
 def check_session_dock():
     out = run_eval(DOCK % {"root": json.dumps(ROOT)})
     got = json.loads(out.stdout) if out.returncode == 0 else {"error": out.stderr.strip()[-600:]}
-    for h in ("acer", "msi"):
+    for h, n in (("acer", 3), ("msi", 4)):
         d = got.get(h, {})
         dock = f"{d.get('stateDir')}/.sessions/dock"
-        check(d.get("slots") == {n: {"dock": True, "bind": {"hostPath": f"{dock}/{n}", "isReadOnly": False}} for n in ("pool1", "pool2")}
-              and d.get("named") == {"dock": False, "bind": None}
+        slots = [f"pool{i}" for i in range(1, n + 1)]
+        check(d.get("slots") == {s: {"dock": True, "bind": {"hostPath": f"{dock}/{s}", "isReadOnly": False}} for s in slots}
               and 'install -d -m 0711 "$d/.sessions"' in d.get("activation", "")
-              and all(f'install -d -m 0755 "$d/.sessions/dock" "$d/.sessions/dock/{n}"' in d.get("activation", "") for n in ("pool1", "pool2")),
-              f"{h}: pool1 and pool2 each bind their own {dock}/<slot> read-write at /session, made 0711/0755 root's by the activation; its named worker binds no /session ({got.get('error') or {k: v for k, v in d.items() if k != 'activation'} })")
+              and all(f'install -d -m 0755 "$d/.sessions/dock" "$d/.sessions/dock/{s}"' in d.get("activation", "") for s in slots),
+              f"{h}: {', '.join(slots)} each bind their own {dock}/<slot> read-write at /session, made 0711/0755 root's by the activation ({got.get('error') or {k: v for k, v in d.items() if k != 'activation'} })")
+    check(got.get("named") == {"dock": False, "bind": None}, f"a named worker binds no /session ({got.get('named') or got.get('error')})")
 
 
 # modules/homelab/exec-pool-runner.nix: on acer one runner per slot as the queue's role, its root helper, and a
 # polkit rule that lets that role start exactly the helpers and the resets of its slots, and clear those resets' failed
-# state; msi's two slots alike, its runner on acer's queue (exec-pool-db-acer-swift checks how it connects).
+# state; msi's four slots alike, its runner on acer's queue (exec-pool-db-acer-swift checks how it connects).
 # The slot claims for its pool agents, the helper hands a step the agent's route, and the reset never waits on an
 # attempt's workspace.
 RUNNER = r"""
@@ -1015,14 +1018,16 @@ let
     links = builtins.filter (r: builtins.match ".*(id_ed25519|gh-hosts).*" r != null) c.containers.${n}.config.systemd.tmpfiles.rules;
     git = c.systemd.services."exec-pool-exec@".environment;
   };
+  slots = n: builtins.genList (i: "pool${toString (i + 1)}") n;
   # what each start-limit setting a slot's per-turn units and a named worker's container evaluate to
-  limits = c: named: let s = c.systemd.services; in {
-    slots = map (n: s."container@${n}".unitConfig.StartLimitIntervalSec or null) [ "pool1" "pool2" ];
-    resets = map (n: { inherit (c.systemd.units."dev-env-reset@${n}.service") overrideStrategy text; }) [ "pool1" "pool2" ];
+  limits = c: n: let s = c.systemd.services; in {
+    slots = map (n: s."container@${n}".unitConfig.StartLimitIntervalSec or null) (slots n);
+    resets = map (n: { inherit (c.systemd.units."dev-env-reset@${n}.service") overrideStrategy text; }) (slots n);
     exec = s."exec-pool-exec@".unitConfig.StartLimitIntervalSec or null;
     reset = s."dev-env-reset@".unitConfig.StartLimitIntervalSec or null;
-    named = { inherit (s."container@${named}".unitConfig) StartLimitIntervalSec StartLimitBurst; };
   };
+  # neither host declares a named worker: msi with one, `t`
+  named = (flake.nixosConfigurations.msi-ms7758.extendModules { modules = [ { sam.workers.instances.t = { }; } ]; }).config.systemd.services."container@t".unitConfig;
 in {
   acer = units acer;
   msi = units flake.nixosConfigurations.msi-ms7758.config;
@@ -1036,9 +1041,10 @@ in {
   reset = acer.systemd.services."dev-env-reset@".script;
   polkit = acer.security.polkit.extraConfig;
   slot2 = builtins.fromJSON acer.systemd.services.exec-pool-runner-pool2.environment.EXEC_POOL_SLOT;
-  msiSlots = map (n: (builtins.fromJSON msi.systemd.services."exec-pool-runner-${n}".environment.EXEC_POOL_SLOT).agents) [ "pool1" "pool2" ];
-  limits = { acer = limits acer "a1"; msi = limits msi "m1"; };
-  push = { acer-pool1 = push acer "pool1"; acer-pool2 = push acer "pool2"; msi-pool1 = push msi "pool1"; msi-pool2 = push msi "pool2"; };
+  msiSlots = map (n: (builtins.fromJSON msi.systemd.services."exec-pool-runner-${n}".environment.EXEC_POOL_SLOT).agents) (slots 4);
+  limits = { acer = limits acer 3; msi = limits msi 4; };
+  namedLimit = { inherit (named) StartLimitIntervalSec StartLimitBurst; };
+  push = builtins.listToAttrs (map (n: { name = "acer-${n}"; value = push acer n; }) (slots 3) ++ map (n: { name = "msi-${n}"; value = push msi n; }) (slots 4));
 }
 """
 
@@ -1046,16 +1052,18 @@ in {
 def check_runner():
     out = run_eval(RUNNER % {"root": json.dumps(ROOT)})
     got = json.loads(out.stdout) if out.returncode == 0 else {}
-    rule = '["exec-pool-exec@pool1.service","dev-env-reset@pool1.service","exec-pool-exec@pool2.service","dev-env-reset@pool2.service"]'
-    check(got.get("acer") == ["exec-pool-exec@", "exec-pool-runner-password", "exec-pool-runner-pool1", "exec-pool-runner-pool2"]
-          and got.get("msi") == ["exec-pool-exec@", "exec-pool-runner-pool1", "exec-pool-runner-pool2"] and got.get("user") == "exec_pool"
+    acer_slots, msi_slots = [f"pool{i}" for i in range(1, 4)], [f"pool{i}" for i in range(1, 5)]
+    rule = json.dumps([u for n in acer_slots for u in (f"exec-pool-exec@{n}.service", f"dev-env-reset@{n}.service")], separators=(",", ":"))
+    check(got.get("acer") == ["exec-pool-exec@", "exec-pool-runner-password", *[f"exec-pool-runner-{n}" for n in acer_slots]]
+          and got.get("msi") == ["exec-pool-exec@", *[f"exec-pool-runner-{n}" for n in msi_slots]] and got.get("user") == "exec_pool"
           and got.get("wanted") == ["multi-user.target"] and got.get("slot", {}).get("id") == "pool1" and got.get("slot", {}).get("agents") == ["none", "claude", "pi"]
           and got.get("slot2", {}).get("id") == "pool2" and got.get("slot2", {}).get("agents") == ["none", "claude", "pi"]
-          and got.get("msiSlots") == [["none", "claude"], ["none", "claude"]]
+          and got.get("msiSlots") == [["none", "claude"]] * 4
           and got.get("exec", "").endswith("/bin/exec-pool-runner exec %i") and rule in got.get("polkit", "") and 'subject.user == "exec_pool"' in got.get("polkit", ""),
-          f"acer runs exec-pool-runner-pool1 and -pool2 as exec_pool with its root helper exec-pool-exec@, and polkit lets exec_pool start only {rule}; acer also sets the role's password, msi runs the same for its two slots, each claiming for none and claude ({ {k: got.get(k) for k in ('acer', 'msi', 'user', 'slot', 'slot2', 'msiSlots', 'exec')} or out.stderr.strip()[-300:]})")
+          f"acer runs exec-pool-runner-pool1 to -pool3 as exec_pool with its root helper exec-pool-exec@, and polkit lets exec_pool start only {rule}; acer also sets the role's password, msi runs the same for its four slots, each claiming for none and claude ({ {k: got.get(k) for k in ('acer', 'msi', 'user', 'slot', 'slot2', 'msiSlots', 'exec')} or out.stderr.strip()[-300:]})")
     polkit = got.get("polkit", "")
-    check('var resets = ["dev-env-reset@pool1.service","dev-env-reset@pool2.service"];' in polkit
+    resets = json.dumps([f"dev-env-reset@{n}.service" for n in acer_slots], separators=(",", ":"))
+    check(f'var resets = {resets};' in polkit
           and '(action.lookup("verb") == "reset-failed" && resets.indexOf(action.lookup("unit")) >= 0)' in polkit,
           f"polkit lets exec_pool clear the failed state of its slots' resets only, so a refused reset quarantines the slot without leaving the host degraded ({polkit[-400:]!r})")
     env, agent = got.get("env", {}), got.get("agentEnv", {})
@@ -1068,13 +1076,18 @@ def check_runner():
     # container's start limit, which still ends a guest that never gets ready
     script = got.get("reset", "")
     cleared = script.find('systemctl reset-failed "container@$n.service"')
-    for host, lim in got.get("limits", {"acer": {}, "msi": {}}).items():
-        check(lim.get("slots") == ["600", "600"] and lim.get("named") == {"StartLimitIntervalSec": "600", "StartLimitBurst": "3"}
+    for host, n in (("acer", 3), ("msi", 4)):
+        lim = got.get("limits", {}).get(host, {})
+        check(lim.get("slots") == ["600"] * n
               and 0 <= cleared < script.find('systemctl start "container@$n.service"')
               and lim.get("exec") == "0" and lim.get("reset") is None
-              and lim.get("resets") == [{"overrideStrategy": "asDropin", "text": "[Unit]\nStartLimitIntervalSec=0\n"}] * 2,
-              f"{host}: container@pool1, @pool2 and a named worker's container keep the core's 600 s / 3 starts, which dev-env-reset@ clears before it starts the container; exec-pool-exec@ and each slot's dev-env-reset@ have no start limit, the shared reset template keeps its own ({lim or out.stderr.strip()[-300:]})")
-    for host, p in got.get("push", {"acer-pool1": {}, "acer-pool2": {}, "msi-pool1": {}, "msi-pool2": {}}).items():
+              and lim.get("resets") == [{"overrideStrategy": "asDropin", "text": "[Unit]\nStartLimitIntervalSec=0\n"}] * n,
+              f"{host}: each slot's container@ keeps the core's 600 s / 3 starts, which dev-env-reset@ clears before it starts the container; exec-pool-exec@ and each slot's dev-env-reset@ have no start limit, the shared reset template keeps its own ({lim or out.stderr.strip()[-300:]})")
+    check(got.get("namedLimit") == {"StartLimitIntervalSec": "600", "StartLimitBurst": "3"},
+          f"a named worker's container keeps the core's start limit ({got.get('namedLimit') or out.stderr.strip()[-300:]})")
+    want = [f"acer-{n}" for n in acer_slots] + [f"msi-{n}" for n in msi_slots]
+    check(sorted(got.get("push", {})) == sorted(want), f"every slot of acer and msi is checked for its push key ({sorted(got.get('push', {}))})")
+    for host, p in got.get("push", {}).items():
         links, git = p.get("links", []), p.get("git", {})
         if host.startswith("acer"):
             # an attempt's HOME has no Home Manager files: the system's git config sends its ssh push URL to the proxy

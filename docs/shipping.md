@@ -148,7 +148,7 @@ It cannot see:
 - whether a re-read was wasteful or legitimate (the file changed after an edit or a merge);
 - outcome quality: fewer lookups is better only if the change was right.
 
-**Guests.** On a host that declares dev environments (acer-swift: a1 and its pool slots), each declared instance gets its own
+**Guests.** On a host that declares dev environments (acer-swift: its pool slots), each declared instance gets its own
 `nav-metrics-guest@<name>.service` and timer (hourly at :38, same module): the same script with `--worker <name>`, over
 `<stateDir>/<name>/home/.claude/projects/*/*.jsonl` with the guest's home path for `~`, writing
 `/var/lib/nav-metrics-guests/nav-guest-<name>.prom` in its own textfile directory: the same series, each with
