@@ -2,13 +2,16 @@
 //!
 //! `run` (the queue's peer role, from `exec-pool-runner@<slot>.service`) loops: reconcile, claim an attempt for the
 //! slot, accept `start`, write the manifest, start `exec-pool-exec@<slot>`, then checkpoint and settle from its
-//! result, and release the slot with `dev-env-reset@<slot>`. It begins no work before `start` is accepted, and never
-//! re-sends an event whose outcome is unknown: the lease expires and `reconcile` decides. A reset that fails
-//! quarantines the slot until an operator removes the marker. Each state change is one JSON line on stdout.
+//! result, record the result, and release the slot with `dev-env-reset@<slot>`. It begins no work before `start` is
+//! accepted, and never re-sends an event whose outcome is unknown: the lease expires and `reconcile` decides. While
+//! the helper runs it renews the lease every [`HEARTBEAT`]; a cancel the heartbeat reports, or a lease it finds lost,
+//! writes the cancel marker the helper stops at. A runner that dies renews nothing, and the lease expires. A reset
+//! that fails quarantines the slot until an operator removes the marker. Each state change is one JSON line on stdout.
 //!
 //! `exec SLOT` (root, from `exec-pool-exec@<slot>.service`) reads the manifest, admits the attempt only to a slot home
 //! reset since the last one ran, runs the task's steps in the guest as its user with `systemd-run -M` in the attempt's
-//! workspace, keeps the output under its state directory and writes the result there. It holds no queue access.
+//! workspace, keeps the output under its state directory and writes the result there. It stops the step running, and
+//! starts no other, once the runner's cancel marker names the attempt. It holds no queue access.
 
 use std::collections::BTreeMap;
 use std::fs::{self, File};
@@ -22,6 +25,7 @@ use exec_pool::queue::{Change, Claim, QueueError, Store};
 use exec_pool::runner::{
     CAPTURE_BYTES, ExecResult, Manifest, Stage, decide, guest_exit, read_regular, receipt, tail,
 };
+use exec_pool::task_result::TaskResult;
 use exec_pool::workspace::{HomeId, admit};
 use exec_pool::{Event, Kind, Receipt, SchemaVersion, Slot};
 use serde_json::{Value, json};
@@ -30,9 +34,13 @@ const USAGE: &str =
     "usage: exec-pool-runner run | exec SLOT   (configured by the environment its unit sets)";
 const MANIFEST: &str = "manifest.json";
 const RESULT: &str = "result.json";
+/// Beside the manifest: the attempt the helper is to stop, as [`Manifest::cancel_token`].
+const CANCEL: &str = "cancel";
 /// The slot home the last admitted attempt ran in, beside the slot's run directories.
 const LAST_HOME: &str = "home.json";
 const POLL: Duration = Duration::from_secs(10);
+/// How often the runner renews a lease and reads its cancel mark while the helper runs; the lease must be longer.
+const HEARTBEAT: Duration = POLL;
 const BACKOFF: Duration = Duration::from_secs(30);
 const PREPARE_TIMEOUT: Duration = Duration::from_secs(300);
 const RESET_TRIES: u32 = 3;
@@ -69,6 +77,17 @@ fn start_unit(unit: &str) -> Result<(), String> {
             String::from_utf8_lossy(&out.stderr).trim()
         ))
     }
+}
+
+/// `systemctl start` of the oneshot helper, which returns once the helper has run, as a child to wait on.
+fn spawn_start(unit: &str) -> Result<Child, String> {
+    Command::new("systemctl")
+        .args(["start", unit])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("systemctl: {e}"))
 }
 
 struct Runner {
@@ -170,6 +189,48 @@ impl Runner {
         }
     }
 
+    /// Renews the attempt's lease; once a cancel is asked for or the lease is lost, writes the marker that stops the
+    /// helper, and returns why. `stopping` is why it already did, if it did.
+    fn beat(
+        &self,
+        store: &mut Store,
+        m: &Manifest,
+        stopping: Option<&'static str>,
+    ) -> Option<&'static str> {
+        let why = match store.heartbeat(&m.attempt_id, m.lease_epoch, self.lease_secs) {
+            Ok(false) => None,
+            Ok(true) => Some("cancel_requested"),
+            Err(e @ (QueueError::NotLive(_) | QueueError::Fenced(_))) => {
+                self.error("heartbeat", &e);
+                Some("lease_lost")
+            }
+            // the lease may well still be live: the next beat tries again
+            Err(e) => {
+                self.error("heartbeat", &e);
+                None
+            }
+        };
+        if stopping.is_some() || why.is_none() {
+            return stopping;
+        }
+        let tmp = self.runtime.join(format!("{CANCEL}.tmp"));
+        let marked = fs::write(&tmp, m.cancel_token())
+            .and_then(|()| fs::rename(&tmp, self.runtime.join(CANCEL)));
+        match marked {
+            Ok(()) => {
+                line(
+                    &json!({ "msg": "stopping", "slot": self.slot.id, "attempt": m.attempt_id,
+                              "lease_epoch": m.lease_epoch, "reason": why }),
+                );
+                why
+            }
+            Err(e) => {
+                self.error("cancel_marker", &e);
+                None
+            }
+        }
+    }
+
     fn event(
         store: &mut Store,
         attempt: &str,
@@ -193,13 +254,16 @@ impl Runner {
             lease_epoch: epoch,
             task: claim.task.clone(),
         };
-        let written = serde_json::to_string(&manifest)
-            .map_err(io::Error::other)
-            .and_then(|json| {
-                let tmp = self.runtime.join(format!("{MANIFEST}.tmp"));
-                fs::write(&tmp, json)?;
-                fs::rename(&tmp, self.runtime.join(MANIFEST))
-            });
+        let marker = self.runtime.join(CANCEL);
+        let written = match fs::remove_file(&marker) {
+            Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+            _ => serde_json::to_string(&manifest).map_err(io::Error::other),
+        }
+        .and_then(|json| {
+            let tmp = self.runtime.join(format!("{MANIFEST}.tmp"));
+            fs::write(&tmp, json)?;
+            fs::rename(&tmp, self.runtime.join(MANIFEST))
+        });
         if let Err(e) = written {
             self.error("manifest", &e);
             return false;
@@ -210,8 +274,31 @@ impl Runner {
         }
         let claim_to_exec_ms = ms(claimed);
         let exec = Instant::now();
-        if let Err(e) = start_unit(&format!("exec-pool-exec@{}.service", self.slot.id)) {
-            self.error("exec", &e);
+        // a cancel asked for while leased: the helper sees the marker before its first step
+        let mut stopping = self.beat(store, &manifest, None);
+        let unit = format!("exec-pool-exec@{}.service", self.slot.id);
+        match spawn_start(&unit) {
+            Ok(mut child) => {
+                let mut beat = Instant::now();
+                let done = loop {
+                    match child.try_wait() {
+                        Ok(Some(status)) => break Ok(status),
+                        Ok(None) => {}
+                        Err(e) => break Err(e.to_string()),
+                    }
+                    if beat.elapsed() >= HEARTBEAT {
+                        beat = Instant::now();
+                        stopping = self.beat(store, &manifest, stopping);
+                    }
+                    thread::sleep(Duration::from_secs(1));
+                };
+                match done {
+                    Ok(status) if status.success() => {}
+                    Ok(status) => self.error("exec", &format!("systemctl start {unit}: {status}")),
+                    Err(e) => self.error("exec", &e),
+                }
+            }
+            Err(e) => self.error("exec", &e),
         }
         let exec_ms = ms(exec);
         let dir = self.exec_dir.join(manifest.run_dir());
@@ -235,9 +322,16 @@ impl Runner {
         if let Err(e) = &settled {
             self.error("settle", e);
         }
+        if settled.is_ok() {
+            let r = TaskResult::of(claim.task.command.agent, result.as_ref(), &stdout);
+            if let Err(e) = store.record_result(id, epoch, &r) {
+                self.error("record_result", &e);
+            }
+        }
         line(&json!({
             "msg": "run", "task_id": claim.task.id, "attempt": id, "lease_epoch": epoch, "slot": self.slot.id,
             "settle": format!("{to:?}"), "settled": settled.is_ok(), "output": dir,
+            "stopped_for": stopping,
             "exit_code": result.as_ref().and_then(|r| r.exit_code),
             "timed_out": result.as_ref().map(|r| r.timed_out),
             "stdout_tail": result.as_ref().map(|r| r.stdout_tail.as_str()),
@@ -258,6 +352,8 @@ fn run() -> Result<(), String> {
 struct Guest {
     slot: String,
     user: String,
+    /// The runner's cancel marker, and what it holds when it names this attempt.
+    cancel: (PathBuf, String),
     /// `K=V` for each step: the slot's agent route and a PATH that finds the agent.
     env: Vec<String>,
 }
@@ -265,9 +361,14 @@ struct Guest {
 struct StepEnd {
     exit_code: Option<i32>,
     timed_out: bool,
+    cancelled: bool,
 }
 
 impl Guest {
+    fn cancelled(&self) -> bool {
+        read_regular(&self.cancel.0).is_ok_and(|s| s == self.cancel.1)
+    }
+
     /// Copies at most [`CAPTURE_BYTES`] of `from` into `to` and drains the rest, so a chatty task cannot fill the host.
     fn capture(
         from: impl io::Read + Send + 'static,
@@ -331,13 +432,18 @@ impl Guest {
                 .transpose()?,
         ];
         let t = Instant::now();
-        let mut timed_out = false;
+        let mut stopped = false;
+        let (mut timed_out, mut cancelled) = (false, false);
         let status = loop {
             if let Some(status) = child.try_wait()? {
                 break status;
             }
-            if !timed_out && t.elapsed() > timeout {
-                timed_out = true;
+            if !timed_out && !cancelled {
+                timed_out = t.elapsed() > timeout;
+                cancelled = !timed_out && self.cancelled();
+            }
+            if (timed_out || cancelled) && !stopped {
+                stopped = true;
                 let _ = Command::new("systemctl")
                     .args(["-M", &self.slot, "stop", unit])
                     .status();
@@ -351,6 +457,7 @@ impl Guest {
         Ok(StepEnd {
             exit_code: guest_exit(status.code()),
             timed_out,
+            cancelled,
         })
     }
 
@@ -375,6 +482,10 @@ impl Guest {
                 result.prepare_ms = ms(t);
             }
             result.stage = stage;
+            if self.cancelled() {
+                result.cancelled = true;
+                break;
+            }
             let limit = match stage {
                 Stage::Prepare => PREPARE_TIMEOUT,
                 Stage::Run => timeout,
@@ -389,6 +500,7 @@ impl Guest {
                 StepEnd {
                     exit_code: None,
                     timed_out: false,
+                    cancelled: false,
                 }
             });
             if stage == Stage::Run {
@@ -396,7 +508,8 @@ impl Guest {
             }
             result.exit_code = end.exit_code;
             result.timed_out = end.timed_out;
-            if end.exit_code != Some(0) || end.timed_out {
+            result.cancelled = end.cancelled;
+            if end.exit_code != Some(0) || end.timed_out || end.cancelled {
                 break;
             }
         }
@@ -428,7 +541,8 @@ fn admit_home(home: &Path, seen: &Path) -> Result<(), String> {
 }
 
 fn exec(slot: &str) -> Result<(), String> {
-    let path = PathBuf::from(var("EXEC_POOL_RUNTIME")?).join(MANIFEST);
+    let runtime = PathBuf::from(var("EXEC_POOL_RUNTIME")?);
+    let path = runtime.join(MANIFEST);
     let manifest = read_regular(&path)
         .map_err(|e| format!("{}: {e}", path.display()))
         .and_then(|s| Manifest::parse(&s).map_err(|e| format!("manifest: {e}")))?;
@@ -455,6 +569,7 @@ fn exec(slot: &str) -> Result<(), String> {
     let guest = Guest {
         slot: slot.to_owned(),
         user: var("EXEC_POOL_GUEST_USER")?,
+        cancel: (runtime.join(CANCEL), manifest.cancel_token()),
         env: env.iter().map(|(k, v)| format!("{k}={v}")).collect(),
     };
     let mut result = ExecResult {
@@ -464,6 +579,7 @@ fn exec(slot: &str) -> Result<(), String> {
         stage: Stage::Prepare,
         exit_code: None,
         timed_out: false,
+        cancelled: false,
         container_active: true,
         stdout_tail: String::new(),
         stderr_tail: String::new(),

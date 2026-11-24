@@ -92,6 +92,7 @@ mod tests {
             stage,
             exit_code,
             timed_out: false,
+            cancelled: false,
             container_active: true,
             stdout_tail: String::new(),
             stderr_tail: String::new(),

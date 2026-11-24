@@ -65,6 +65,12 @@ impl Manifest {
         s
     }
 
+    /// What the runner writes to its cancel marker to have the helper stop this attempt, and no other.
+    #[must_use]
+    pub fn cancel_token(&self) -> String {
+        format!("{} {}\n", self.attempt_id, self.lease_epoch)
+    }
+
     /// The attempt's workspace under the guest user's home.
     ///
     /// # Errors
@@ -163,6 +169,9 @@ pub struct ExecResult {
     pub exit_code: Option<i32>,
     /// The helper stopped the guest command at its timeout.
     pub timed_out: bool,
+    /// The helper stopped the attempt, before or during a step, for the runner's cancel marker.
+    #[serde(default)]
+    pub cancelled: bool,
     /// `container@<slot>` was active when the command ended; a guest that went away leaves the outcome unknown.
     pub container_active: bool,
     pub stdout_tail: String,
@@ -181,7 +190,8 @@ impl ExecResult {
 
 /// Where the attempt `attempt` at `epoch` settles after its run.
 ///
-/// Only a run that never started the task's argv goes back to `queued`. No result (or someone else's), a timeout or
+/// A run the helper stopped for a cancel is `cancelled`, whatever stage it reached. Otherwise only a run that never
+/// started the task's argv goes back to `queued`. No result (or someone else's), a timeout or
 /// a guest that went away is `needs_review`, never replayed; otherwise [`agent::outcome`] of the exit and `stdout`
 /// (the task's whole captured stdout: Claude's verdict is its last line) decides.
 #[must_use]
@@ -195,6 +205,9 @@ pub fn decide(
     let Some(r) = result.filter(|r| r.attempt_id == attempt && r.lease_epoch == epoch) else {
         return Settle::NeedsReview;
     };
+    if r.cancelled {
+        return Settle::Cancelled;
+    }
     if r.stage == Stage::Prepare {
         return Settle::Queued;
     }
@@ -216,7 +229,7 @@ pub fn receipt(task_id: &str, attempt_id: &str, lease_epoch: u64, to: Settle) ->
         Settle::Succeeded => Outcome::Succeeded,
         Settle::Failed => Outcome::Failed,
         Settle::NeedsReview => Outcome::NeedsReview,
-        Settle::Waiting | Settle::Queued => return None,
+        Settle::Waiting | Settle::Queued | Settle::Cancelled => return None,
     };
     Some(Receipt {
         schema_version: SchemaVersion::CURRENT,
@@ -303,6 +316,7 @@ mod tests {
             stage,
             exit_code,
             timed_out: false,
+            cancelled: false,
             container_active: true,
             stdout_tail: String::new(),
             stderr_tail: String::new(),
@@ -454,6 +468,19 @@ mod tests {
             ..ok
         };
         assert_eq!(d("t1.a", 3, Some(&gone)), Settle::NeedsReview);
+    }
+
+    #[test]
+    fn a_cancelled_run_settles_cancelled_at_any_stage_but_only_its_own() {
+        for stage in [Stage::Prepare, Stage::Run] {
+            let stopped = ExecResult {
+                cancelled: true,
+                ..result(stage, None)
+            };
+            assert_eq!(d("t1.a", 3, Some(&stopped)), Settle::Cancelled);
+            assert_eq!(d("t1.a", 2, Some(&stopped)), Settle::NeedsReview);
+        }
+        assert_eq!(receipt("t1", "t1.a", 3, Settle::Cancelled), None);
     }
 
     #[test]

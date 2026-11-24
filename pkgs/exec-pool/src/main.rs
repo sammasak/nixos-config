@@ -19,7 +19,7 @@ const USAGE: &str = "usage: exec-pool-queue COMMAND [--flag value]...
   live < slot.json                                              (the attempt live on a slot: after exit 3 on a claim)
   start | checkpoint | wake --attempt ID --epoch N
   heartbeat --attempt ID --epoch N --lease-secs N
-  settle --attempt ID --epoch N --to waiting|queued|succeeded|failed|needs_review [< receipt.json, terminal only]
+  settle --attempt ID --epoch N --to waiting|queued|succeeded|failed|needs_review|cancelled [< receipt.json, terminal only]
   resolve --attempt ID --epoch N --to succeeded|failed|queued   (an operator closing a needs_review attempt)
   reconcile                                                     (expire overdue leases; run at startup)
   metrics       (Prometheus text for a textfile collector; install stdout whatever the exit code: on a failure it is
@@ -138,11 +138,14 @@ fn run(cmd: &str, args: &Args, store: &mut Store) -> Result<(), Fail> {
         "start" => apply(store, Kind::Start, None)?,
         "checkpoint" => apply(store, Kind::Checkpoint, None)?,
         "wake" => apply(store, Kind::Wake, None)?,
-        "heartbeat" => store.heartbeat(
-            args.get("attempt")?,
-            args.num("epoch")?,
-            args.num("lease-secs")?,
-        )?,
+        "heartbeat" => {
+            let cancel = store.heartbeat(
+                args.get("attempt")?,
+                args.num("epoch")?,
+                args.num("lease-secs")?,
+            )?;
+            result(&json!({ "cancel_requested": cancel }));
+        }
         "settle" => {
             let to = match args.get("to")? {
                 "waiting" => Settle::Waiting,
@@ -150,10 +153,11 @@ fn run(cmd: &str, args: &Args, store: &mut Store) -> Result<(), Fail> {
                 "succeeded" => Settle::Succeeded,
                 "failed" => Settle::Failed,
                 "needs_review" => Settle::NeedsReview,
+                "cancelled" => Settle::Cancelled,
                 other => return Err(Fail::Usage(format!("--to {other:?}"))),
             };
             let receipt = match to {
-                Settle::Waiting | Settle::Queued => None,
+                Settle::Waiting | Settle::Queued | Settle::Cancelled => None,
                 _ => Some(Receipt::parse(&stdin()?)?),
             };
             apply(store, Kind::Settle(to), receipt.as_ref())?;

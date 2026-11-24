@@ -21,15 +21,18 @@ use crate::{
 
 pub const UP: &str = include_str!("../migrations/0001_queue.up.sql");
 pub const DOWN: &str = include_str!("../migrations/0001_queue.down.sql");
-/// Migration `n` is `STEPS[n - 1]`; each records its own version.
-const STEPS: [&str; 3] = [
-    UP,
-    include_str!("../migrations/0002_submitter.up.sql"),
-    include_str!("../migrations/0003_result.up.sql"),
+/// Each migration, ascending, by the version it records. 4 is fleet dispatch's, on its own branch: a database
+/// migrated to 5 without it would never apply it, so 4 must be listed here before a build with 5 is deployed.
+const STEPS: [(i32, &str); 4] = [
+    (1, UP),
+    (2, include_str!("../migrations/0002_submitter.up.sql")),
+    (3, include_str!("../migrations/0003_result.up.sql")),
+    (5, include_str!("../migrations/0005_cancel.up.sql")),
 ];
 const DOWN_SUBMITTER: &str = include_str!("../migrations/0002_submitter.down.sql");
 const DOWN_RESULT: &str = include_str!("../migrations/0003_result.down.sql");
-const VERSION: i32 = 3;
+const DOWN_CANCEL: &str = include_str!("../migrations/0005_cancel.down.sql");
+const VERSION: i32 = 5;
 /// The fence's SQLSTATE, raised by `attempts_fence`.
 const FENCED: &str = "XP409";
 const LIVE: &str = "('leased', 'running', 'checkpointing')";
@@ -47,7 +50,7 @@ pub const METRICS_UNAVAILABLE: &str = concat!(up_help!(), "exec_pool_queue_up 0\
 /// The agent kinds a task's `command.agent` may name, as serialized.
 const AGENTS: [&str; 4] = ["none", "claude", "codex", "pi"];
 
-const STATUSES: [Status; 8] = [
+const STATUSES: [Status; 9] = [
     Status::Queued,
     Status::Leased,
     Status::Running,
@@ -56,6 +59,7 @@ const STATUSES: [Status; 8] = [
     Status::Succeeded,
     Status::Failed,
     Status::NeedsReview,
+    Status::Cancelled,
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -193,6 +197,7 @@ const fn status_str(s: Status) -> &'static str {
         Status::Succeeded => "succeeded",
         Status::Failed => "failed",
         Status::NeedsReview => "needs_review",
+        Status::Cancelled => "cancelled",
     }
 }
 
@@ -212,6 +217,7 @@ fn u64_of(field: &'static str, v: i64) -> Result<u64, QueueError> {
 const fn reason(kind: &Kind, to: Status) -> &'static str {
     match (kind, to) {
         (Kind::Settle(Settle::Failed) | Kind::Resolve(Resolution::Failed), _) => "failed",
+        (Kind::Settle(Settle::Cancelled), _) => "cancelled",
         (_, Status::Failed) => "attempts_exhausted",
         (Kind::Lease(_), _) => "lease",
         (Kind::Start, _) => "start",
@@ -458,11 +464,10 @@ impl Store {
             if done > VERSION {
                 return Err(QueueError::SchemaAhead(done));
             }
-            let done = usize::try_from(done).map_err(|_| QueueError::Range("schema version"))?;
             STEPS
                 .iter()
-                .skip(done)
-                .try_for_each(|step| Ok(tx.batch_execute(step)?))
+                .filter(|(v, _)| *v > done)
+                .try_for_each(|(_, step)| Ok(tx.batch_execute(step)?))
         })
     }
 
@@ -474,7 +479,9 @@ impl Store {
         self.tx(|tx| match Self::version(tx)? {
             None => Err(QueueError::NotMigrated),
             Some(v) if v > VERSION => Err(QueueError::SchemaAhead(v)),
-            Some(_) => Ok(tx.batch_execute(&format!("{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"))?),
+            Some(_) => {
+                Ok(tx.batch_execute(&format!("{DOWN_CANCEL}{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"))?)
+            }
         })
     }
 
@@ -646,7 +653,7 @@ impl Store {
         })
     }
 
-    /// Extends a live lease to `lease_secs` from now.
+    /// Extends a live lease to `lease_secs` from now; whether its submitter asked to cancel it.
     ///
     /// # Errors
     /// [`QueueError::NotLive`] when the attempt has no unexpired lease, [`QueueError::Fenced`] at a stale epoch.
@@ -655,23 +662,43 @@ impl Store {
         attempt: &str,
         epoch: u64,
         lease_secs: u32,
-    ) -> Result<(), QueueError> {
+    ) -> Result<bool, QueueError> {
         if lease_secs == 0 {
             return Err(QueueError::Range("lease_secs"));
         }
         self.tx(|tx| {
-            let n = tx.execute(
+            let rows = tx.query(
                 &format!(
                     "UPDATE attempts SET lease_deadline = now() + make_interval(secs => $3), fence = $2 \
-                     WHERE id = $1 AND status IN {LIVE} AND lease_deadline > clock_timestamp()"
+                     WHERE id = $1 AND status IN {LIVE} AND lease_deadline > clock_timestamp() \
+                     RETURNING cancel_requested"
                 ),
                 &[&attempt, &i64_of("epoch", epoch)?, &f64::from(lease_secs)],
             )?;
-            if n == 1 {
-                Ok(())
-            } else {
-                Err(QueueError::NotLive(attempt.to_owned()))
-            }
+            rows.first().map_or_else(
+                || Err(QueueError::NotLive(attempt.to_owned())),
+                |r| Ok(r.try_get(0)?),
+            )
+        })
+    }
+
+    /// Cancels the task `id` names (its own id or its attempt's) through `cancel_task`, which `exec_pool_submit` may
+    /// call for the tasks it queued: a queued or waiting attempt is cancelled at once, a live one is marked for its
+    /// runner to stop and settle, anything else is left. The attempt and its status after the call.
+    ///
+    /// # Errors
+    /// [`QueueError::NotFound`] when the caller queued no task `id` names, or what the database reports.
+    pub fn cancel(&mut self, id: &str) -> Result<(String, Status), QueueError> {
+        self.tx(|tx| {
+            let row = tx
+                .query_one("SELECT o_attempt, o_status FROM cancel_task($1)", &[&id])
+                .map_err(|e| match e.as_db_error() {
+                    Some(db) if db.code() == &SqlState::NO_DATA_FOUND => {
+                        QueueError::NotFound(id.to_owned())
+                    }
+                    _ => e.into(),
+                })?;
+            Ok((row.try_get(0)?, parse_status(row.try_get(1)?)?))
         })
     }
 
