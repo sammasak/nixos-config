@@ -25,7 +25,7 @@ pub const DOWN: &str = include_str!("../migrations/0001_queue.down.sql");
 /// From 7 each records its floor, the oldest VERSION whose reads and writes stay correct on it: an additive one keeps
 /// the previous floor, so a binary rolled back across it still serves; one an older binary would misread or break by
 /// its writes records its own version.
-const STEPS: [(i32, &str); 10] = [
+const STEPS: [(i32, &str); 11] = [
     (1, UP),
     (2, include_str!("../migrations/0002_submitter.up.sql")),
     (3, include_str!("../migrations/0003_result.up.sql")),
@@ -39,6 +39,7 @@ const STEPS: [(i32, &str); 10] = [
         10,
         include_str!("../migrations/0010_session_metrics.up.sql"),
     ),
+    (11, include_str!("../migrations/0011_claim_host.up.sql")),
 ];
 const DOWN_SUBMITTER: &str = include_str!("../migrations/0002_submitter.down.sql");
 const DOWN_RESULT: &str = include_str!("../migrations/0003_result.down.sql");
@@ -47,7 +48,8 @@ const DOWN_QUARANTINE: &str = include_str!("../migrations/0007_quarantine.down.s
 const DOWN_SLOTS: &str = include_str!("../migrations/0008_slots.down.sql");
 const DOWN_SESSION: &str = include_str!("../migrations/0009_session.down.sql");
 const DOWN_SESSION_METRICS: &str = include_str!("../migrations/0010_session_metrics.down.sql");
-const VERSION: i32 = 10;
+const DOWN_CLAIM_HOST: &str = include_str!("../migrations/0011_claim_host.down.sql");
+const VERSION: i32 = 11;
 /// The fence's SQLSTATE, raised by `attempts_fence`.
 const FENCED: &str = "XP409";
 const LIVE: &str = "('leased', 'running', 'checkpointing')";
@@ -610,7 +612,7 @@ impl Store {
             None => Err(QueueError::NotMigrated),
             Some(v) if v > VERSION => Err(QueueError::SchemaAhead(v)),
             Some(_) => Ok(tx.batch_execute(&format!(
-                "{DOWN_SESSION_METRICS}{DOWN_SESSION}{DOWN_SLOTS}{DOWN_QUARANTINE}{DOWN_CANCEL}{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"
+                "{DOWN_CLAIM_HOST}{DOWN_SESSION_METRICS}{DOWN_SESSION}{DOWN_SLOTS}{DOWN_QUARANTINE}{DOWN_CANCEL}{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"
             ))?),
         })
     }
