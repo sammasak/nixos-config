@@ -2,8 +2,8 @@
 # dashboard queries must come from one of these sources, each read from what its host runs (from none is a finding):
 # - node-exporter: the deployed command on node_exporter's own sysfs/procfs fixtures (node.prom); the systemd and
 #   timex collectors' names from their source and flags (systemd.prom); the repo's textfile writers (writers.prom),
-#   and the names scripts/shipping-metrics.py, scripts/nav-metrics.py and scripts/shunt-metrics.py print with --list
-#   (shipping.prom, nav.prom, shunt.prom);
+#   the names scripts/shipping-metrics.py, scripts/nav-metrics.py and scripts/shunt-metrics.py print with --list
+#   (shipping.prom, nav.prom, shunt.prom) and the series exec-pool's renderer types (exec-pool.prom);
 # - the monitoring stack's own /metrics, run here (scripts/monitoring-exposition.sh: Prometheus, Alertmanager, Alloy);
 # - name literals and registrations in the source each host runs: Loki, Alloy, Caddy and blackbox (`sources` below),
 #   llm-gateway, Authentik; AdGuard's (dns.prom); the GPU exporter's (the gpu-telemetry-exporter check's output);
@@ -40,7 +40,7 @@ let
   exporterHosts = lib.filterAttrs (
     _: h: h.config.services.prometheus.exporters.node.enable
   ) config.flake.nixosConfigurations;
-  # a textfile directory adds only the metrics of its own files (shipping_*, agent_nav_* and shunt_* come from their
+  # a textfile directory adds only the metrics of its own files (shipping_*, agent_nav_*, shunt_* and exec_pool_* come from their
   # collectors' --list below), so those flags are left out of the comparison
   flagsOf =
     c: with c.services.prometheus.exporters.node; [
@@ -531,12 +531,15 @@ in
             python3 -I ${../scripts/nav-metrics.py} --list > nav.prom
             # lenovo's Shunt textfile (modules/homelab/shunt-metrics.nix)
             python3 -I ${../scripts/shunt-metrics.py} --list > shunt.prom
+            # acer's execution pool textfile (modules/homelab/exec-pool.nix): every series its renderer types
+            rg --no-filename -o '# TYPE (exec_pool_[a-z_]+) ' -r '$1' ${../pkgs/exec-pool/src} | sort -u > exec-pool.prom
+            grep -qx exec_pool_queue_up exec-pool.prom
             # Authentik's names from the Python package and the Go server acer runs
             python3 -I ${../scripts/authentik-metric-names.py} ${acer.systemd.services.authentik-worker.environment.PYTHONPATH} \
               ${lib.head (lib.splitString " " acer.systemd.services.authentik.serviceConfig.ExecStart)} > authentik.prom
             checker=${pkgs.python3.withPackages (ps: [ ps.pyyaml ])}/bin/python3
             static=(node-exporter=node.prom node-exporter=systemd.prom node-exporter=writers.prom
-              node-exporter=${adguardCheck}/dns.prom node-exporter=shipping.prom node-exporter=nav.prom node-exporter=shunt.prom
+              node-exporter=${adguardCheck}/dns.prom node-exporter=shipping.prom node-exporter=nav.prom node-exporter=shunt.prom node-exporter=exec-pool.prom
               node-exporter=${compactionInfo}
               llm-gateway=llm-gateway.prom authentik-server=authentik.prom authentik-worker=authentik.prom
               nvidia-gpu=${self'.checks.gpu-telemetry-exporter} \
