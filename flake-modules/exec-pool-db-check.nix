@@ -1,11 +1,12 @@
 # acer's queue PostgreSQL for msi's runner (homelab.execPool.remoteRunners, on for acer), evaluated only: off, no TCP,
-# no host rule and no password unit; on, the role's password from sops by LoadCredential, one scram rule for msi's address and the exec_pool_runner role, bound to acer's fleet address at the
+# no host rule and no password unit, but the role migration 0004 grants to; on, the role's password from sops by
+# LoadCredential, one scram rule for msi's address and the exec_pool_runner role, bound to acer's fleet address at the
 # exec-pool-db listener's port, which acer's firewall admits from msi alone; each wrong remote role fails its assertion.
 { config, lib, ... }:
 let
   acer = config.flake.nixosConfigurations.acer-swift;
   seed = module: (acer.extendModules { modules = [ module ]; }).config;
-  # the seeded wrong roles stand alone: acer's own exec_pool_runner would merge with theirs
+  # acer with remoteRunners off: its exec_pool_runner declared but disabled, beside a seeded wrong role
   bare =
     module:
     seed {
@@ -43,14 +44,15 @@ in
           assert lib.assertMsg (
             l.host == "acer-swift" && l.from == [ "msi-ms7758" ]
           ) "exec-pool-db-check: the listener is ${builtins.toJSON l}";
-          assert lib.assertMsg (
-            !off.services.postgresql.enableTCPIP
-            && off.services.postgresql.settings.listen_addresses == ""
-            && hostRules off == [ ]
-          ) "exec-pool-db-check: acer's Postgres listens on TCP with remoteRunners off";
-          assert lib.assertMsg (
-            failing on == [ ]
-          ) "exec-pool-db-check: acer fails ${toString (failing on)}";
+          assert lib.assertMsg
+            (
+              !off.services.postgresql.enableTCPIP
+              && off.services.postgresql.settings.listen_addresses == ""
+              && hostRules off == [ ]
+              && lib.any (u: u.name == "exec_pool_runner") off.services.postgresql.ensureUsers
+            )
+            "exec-pool-db-check: acer's Postgres listens on TCP with remoteRunners off, or has no exec_pool_runner for migration 0004 to grant to";
+          assert lib.assertMsg (failing on == [ ]) "exec-pool-db-check: acer fails ${toString (failing on)}";
           assert lib.assertMsg
             (
               on.services.postgresql.settings.listen_addresses == hosts.acer-swift.address
@@ -94,21 +96,17 @@ in
               && lib.elem "exec-pool-runner-password.service" on.sops.secrets.exec_pool_runner_password.restartUnits
             )
             "exec-pool-db-check: the role's password is not set from the sops file by LoadCredential after setup";
-          assert expectFailure "a listener on msi" (bare (remote "exec_pool_runner" "ollama-msi"));
-          assert expectFailure "a listener fleet.nix lacks" (bare (remote "exec_pool_runner" "nope"));
+          assert expectFailure "a listener on msi" (bare (remote "other_runner" "ollama-msi"));
+          assert expectFailure "a listener fleet.nix lacks" (bare (remote "other_runner" "nope"));
           assert expectFailure "the owner role remote" (bare (remote "exec_pool" "exec-pool-db"));
           assert expectFailure "a peer client remote" (bare (remote "exec_pool_submit" "exec-pool-db"));
           assert expectFailure "a database acer lacks" (bare {
-            homelab.postgresql.remoteClients.exec_pool_runner = {
+            homelab.postgresql.remoteClients.other_runner = {
               database = "nope";
               listener = "exec-pool-db";
             };
           });
-          assert expectFailure "two listeners" (
-            bare (
-              lib.recursiveUpdate (remote "exec_pool_runner" "exec-pool-db") (remote "other_runner" "gateway-api")
-            )
-          );
+          assert expectFailure "two listeners" (seed (remote "other_runner" "gateway-api"));
           assert lib.assertMsg (
             on.boot.kernel.sysctl."net.ipv4.ip_nonlocal_bind" == 1
             && !(off.boot.kernel.sysctl ? "net.ipv4.ip_nonlocal_bind")
