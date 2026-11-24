@@ -16,10 +16,13 @@
     ../../modules/homelab/shunt-metrics.nix
     ../../modules/homelab/monitoring/alloy-otlp.nix
     ../../modules/homelab/journal-collector.nix
+    ../../modules/homelab/scheduled-gate.nix
   ];
 
   homelab.journalCollector.enable = true;
   homelab.shuntMetrics.enable = true;
+  # the always-on heavy host: msi and asus are off at night
+  homelab.scheduledGate.enable = true;
   # Shunt on for worker a1 alone; herman and the host stay off, so the collector compares on and off (#625).
   # Compaction at 300K for herman alone, its Shunt-off peer the host, so the two comparisons stay apart (#626).
   services.devEnvironments.guestModules = [
