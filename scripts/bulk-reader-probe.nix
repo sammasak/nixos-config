@@ -11,7 +11,10 @@ let
         other = { };
       };
       services.devEnvironments.guestModules = [
-        ({ devEnvironment, ... }: { sam.claude.bulkReader.enable = devEnvironment.name == "probe"; })
+        # mkForce: acer's own guest module sets it for every guest
+        ({ devEnvironment, ... }: {
+          sam.claude.bulkReader.enable = lib.mkForce (devEnvironment.name == "probe");
+        })
       ];
     })
   ];
