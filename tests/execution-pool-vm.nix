@@ -1,4 +1,4 @@
-# sam.workers.executionPool on in QEMU beside a named environment: two idle slots boot, a slot is used, released by
+# homelab.execPool's slots on in QEMU beside a named environment: two idle slots boot, a slot is used, released by
 # dev-env-reset@ and used again without a switch, stops and restarts alone, and sees no host secret or socket.
 # The runtime-host role's closure plus three guests: `nix build .#execution-pool-vm` on msi only.
 {
@@ -32,12 +32,12 @@ pkgs.testers.runNixOSTest {
           agent = "none";
           memory.reserved = "512M";
         };
-        executionPool = {
-          enable = true;
-          slots = 2;
-          memory.reserved = "512M";
-        };
         pool.memory = "3G";
+      };
+      homelab.execPool = {
+        enable = true;
+        slots = 2;
+        slot.memory = "512M";
       };
       virtualisation.memorySize = 5120;
       # a VM has no client key for the named guest to bind (the hosts have lukas's own)

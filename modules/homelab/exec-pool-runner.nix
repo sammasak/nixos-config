@@ -1,6 +1,6 @@
-# The pool runner (#652, pkgs/exec-pool/src/runner_main.rs): one exec-pool-runner-<slot> per sam.workers.executionPool
-# slot, claiming tasks for no agent or one of the slot's sam.workers.executionPool agents. It runs as the queue's peer
-# role, or with `queue` as exec_pool_runner on another host's, and holds no host privilege; on a host with a power
+# The pool runner (#652, pkgs/exec-pool/src/runner_main.rs), homelab.execPool's `runner` role: one
+# exec-pool-runner-<slot> per slot, claiming tasks for no agent or one of the slots' agents. It runs as the queue's peer
+# role, or with `queueListener` as exec_pool_runner on another host's, and holds no host privilege; on a host with a power
 # window it claims only ahead of its drain, which stops the running attempt before the poweroff. The polkit rule
 # below lets it start only its slot's exec-pool-exec@ (root, which runs the task in the guest as its user and holds no
 # queue access) and dev-env-reset@, which releases the slot with every one of its refusals intact, and clear a refused
@@ -12,12 +12,11 @@
   ...
 }:
 let
-  cfg = config.homelab.execPool.runner;
-  pool = config.sam.workers.executionPool;
+  cfg = config.homelab.execPool;
   dev = config.services.devEnvironments;
   guestHome = config.users.users.${dev.user}.home or "/home/${dev.user}";
   # every slot is declared alike, so the first one's guest stands for all
-  guest = lib.optionalAttrs (pool.slots > 0) config.containers.pool1.config;
+  guest = lib.optionalAttrs (cfg.slots > 0) config.containers.pool1.config;
   # what a login shell in the slot would hold: the egress routes' variables, and a PATH with the user's profile, where
   # the agent is; a step does not run under one
   routeVars = lib.concatMap (e: lib.attrNames e.guest.env) (lib.attrValues dev.egress);
@@ -26,7 +25,7 @@ let
   };
   pkg = pkgs.callPackage ../../pkgs/exec-pool/package.nix { };
   exe = "${pkg}/bin/exec-pool-runner";
-  slotNames = map (n: "pool${toString n}") (lib.range 1 pool.slots);
+  slotNames = map (n: "pool${toString n}") (lib.range 1 cfg.slots);
   execDir = "/var/lib/exec-pool-exec";
   # the helper stops the task at timeoutSecs; above it, four prepare steps of up to 300 s, the branch listed before and
   # after the run (60 s each) and the stop's own wait; a session turn adds its restore, relink and probes, and the park's
@@ -37,7 +36,7 @@ let
   leaseSecs = 300;
   # this long before a poweroff the runner stops the running attempt (a session's turn parks and pushes its work, a
   # one-shot run goes back to the queue): the step's 60 s stop, the park's push and the reset
-  drainSecs = 600;
+  inherit (cfg) drainSecs;
   # a claim no longer has to finish before the poweroff, only to start its run ahead of the drain
   claimSecs = drainSecs + 300;
   slot =
@@ -48,11 +47,11 @@ let
       id = n;
       state = "idle";
       inherit (cfg) capabilities;
-      agents = [ "none" ] ++ pool.agents;
+      agents = [ "none" ] ++ cfg.agents;
     };
   # a queue on another host, by scram over its sam.fleet listener; null: this host's own, by peer
-  remote = cfg.queue != null;
-  listener = config.sam.fleet.listeners.${cfg.queue};
+  remote = cfg.queueListener != null;
+  listener = config.sam.fleet.listeners.${cfg.queueListener};
   db =
     if remote then
       "host=${
@@ -111,34 +110,9 @@ let
 in
 {
 
-  options.homelab.execPool.runner = {
-    enable = lib.mkEnableOption "the execution pool's runner, one per sam.workers.executionPool slot";
-    timeoutSecs = lib.mkOption {
-      type = lib.types.ints.positive;
-      default = 1800;
-      description = "How long a task's command, or one turn of a session, may run in its slot before it is stopped: a one-shot attempt then goes to needs_review, a session's turn parks as turn_timeout and continues in a new turn, up to three in a row with no message between.";
-    };
-    queue = lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
-      default = null;
-      example = "exec-pool-db";
-      description = "The sam.fleet listener of the queue's PostgreSQL on another host, reached as exec_pool_runner with the sops password; null: this host's own queue (exec-pool.nix), by peer.";
-    };
-    conninfo = lib.mkOption {
-      type = lib.types.str;
-      readOnly = true;
-      internal = true;
-      default = db;
-      description = "The queue the runner claims from, as its EXEC_POOL_DB.";
-    };
-    capabilities = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      default = [ ];
-      description = "The capabilities each slot offers; a task claims a slot only when it offers every one the task names.";
-    };
-  };
+  imports = [ ./exec-pool-options.nix ];
 
-  config = lib.mkIf cfg.enable {
+  config = lib.mkIf (cfg.enable && lib.elem "runner" cfg.roles) {
     environment.systemPackages = [ drain ];
 
     systemd.services = {
@@ -204,7 +178,7 @@ in
           );
           path = [ config.systemd.package ];
           environment = {
-            EXEC_POOL_DB = cfg.conninfo;
+            EXEC_POOL_DB = db;
             EXEC_POOL_SLOT = slot n;
             EXEC_POOL_LEASE_SECS = toString leaseSecs;
             EXEC_POOL_RUNTIME = "/run/exec-pool-runner/${n}";
@@ -270,18 +244,14 @@ in
 
     assertions = [
       {
-        assertion = pool.enable && pool.slots > 0;
-        message = "homelab.execPool.runner: a runner needs sam.workers.executionPool enabled with a slot.";
-      }
-      {
         assertion =
           !remote
           || (
-            config.sam.fleet.listeners ? ${cfg.queue}
+            config.sam.fleet.listeners ? ${cfg.queueListener}
             && listener.host != config.networking.hostName
             && lib.elem config.networking.hostName listener.from
           );
-        message = "homelab.execPool.runner.queue: ${toString cfg.queue} must be a sam.fleet listener on another host whose `from` names ${config.networking.hostName}.";
+        message = "homelab.execPool.queueListener: ${toString cfg.queueListener} must be a sam.fleet listener on another host whose `from` names ${config.networking.hostName}.";
       }
     ];
   };

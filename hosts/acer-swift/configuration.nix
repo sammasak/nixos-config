@@ -49,21 +49,22 @@
       "herman"
       "a1"
     ];
-    executionPool = {
-      enable = true;
-      slots = 3;
-      # no codex: this host sets no sam.workers.codexAuthFile
-      agents = [
-        "claude"
-        "pi"
-      ];
-    };
   };
-  homelab.execPool.runner = {
+  homelab.execPool = {
     enable = true;
+    roles = [
+      "queue"
+      "runner"
+    ];
+    slots = 3;
+    # no codex: this host sets no sam.workers.codexAuthFile
+    agents = [
+      "claude"
+      "pi"
+    ];
+    # msi's runner claims from this queue over the fleet LAN (exec-pool-db listener)
+    remoteRunners = true;
   };
-  # msi's runner claims from this queue over the fleet LAN (exec-pool-db listener)
-  homelab.execPool.remoteRunners = true;
   # the #494 usage spike: the workers' cgroup counters every minute (scripts/guest-records.py --usage)
   services.devEnvironments.records.usage = "1min";
   sam.herdr.trustedDirs = map (d: "/home/${config.sam.profile.username}/${d}") [

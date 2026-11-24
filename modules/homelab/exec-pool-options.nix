@@ -1,0 +1,136 @@
+# The execution pool's one option set (docs/records/execution-pool-contract.md, Turning it on). Three parts read it:
+# the slots (modules/workers/execution-pool.nix, every host), the runner (exec-pool-runner.nix) and the queue
+# (exec-pool.nix, which turns on this host's PostgreSQL and so is imported only where the queue runs).
+{ config, lib, ... }:
+let
+  inherit (lib) mkOption types;
+  cfg = config.homelab.execPool;
+  has = r: lib.elem r cfg.roles;
+in
+{
+  options.homelab.execPool = {
+    enable = lib.mkEnableOption "the execution pool on this host: its slots, and the roles it takes";
+    roles = mkOption {
+      type = types.listOf (
+        types.enum [
+          "queue"
+          "runner"
+        ]
+      );
+      default = [ ];
+      example = [
+        "queue"
+        "runner"
+      ];
+      description = "What this host does for the pool: `queue` keeps the tasks, sessions and transcripts in its PostgreSQL (import modules/homelab/exec-pool.nix); `runner` claims tasks for its slots, from this host's queue or `queueListener`'s. Neither: slots alone, claimed by nothing.";
+    };
+    slots = mkOption {
+      type = types.ints.unsigned;
+      default = 0;
+      description = "How many slots, named pool1..pool<slots>, each a reusable environment with no agent and no prompt; each reserves `slot.memory` of sam.workers.pool.memory. A slot dropped by a lower count keeps its home: retire it.";
+    };
+    slot = {
+      memory = mkOption {
+        type = types.strMatching "[1-9][0-9]*[KMGT]?";
+        default = "2G";
+        description = "Each slot's MemoryMin, as an instance's memory.reserved.";
+      };
+      cpu = mkOption {
+        type = types.ints.positive;
+        default = 2;
+        description = "Each slot's cores, as an instance's cpu.reserved.";
+      };
+      credentials = mkOption {
+        type = types.listOf types.str;
+        default = [ ];
+        example = [ "netrc" ];
+        description = "Which of services.devEnvironments.credentials a slot may hold; none by default, never the host user's SSH key.";
+      };
+      rootInGuest = mkOption {
+        type = types.bool;
+        default = false;
+        description = "Each slot's rootInGuest; a slot's session dock refuses it.";
+      };
+    };
+    repos = mkOption {
+      type = types.listOf types.str;
+      # what tasks hand back to, and nixos-config's private flake and devenv inputs for its fetch
+      default = map (r: "sammasak/${r}") [
+        "nixos-config"
+        "skills"
+        "alert-bridge"
+        "factum"
+        "nix-audit"
+        "llm-gateway"
+        "rf-proto"
+        "herman"
+        "devenv-platform"
+        "paddock"
+      ];
+      description = "The GitHub repositories a slot reaches, through the host's sidecar (or sam.fleet.listeners.github-egress's host), which signs its fetch, push and gh calls so the slot holds no credential. A session's park pushes its snapshot ref there too. A repository whose flake or devenv has a private input needs that input listed.";
+    };
+    agents = mkOption {
+      type = types.listOf (
+        types.enum [
+          "claude"
+          "codex"
+          "pi"
+        ]
+      );
+      default = [ ];
+      example = [ "claude" ];
+      description = "Agents a task may run in a slot, each through its egress proxy with no credential in the guest (anthropic; openai with sam.workers.codexAuthFile; llm-gateway with the host's Pi key). Sessions run claude only. The CLIs are the workers' guest packages (modules/workers/default.nix).";
+    };
+    capabilities = mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+      description = "The capabilities each slot offers; a task claims a slot only when it offers every one the task names.";
+    };
+    timeoutSecs = mkOption {
+      type = types.ints.positive;
+      default = 1800;
+      description = "How long a task's command, or one turn of a session, may run before it is stopped: a one-shot attempt then goes to needs_review, a session's turn parks as turn_timeout and continues in a new turn, up to three in a row with no message between.";
+    };
+    queueListener = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      example = "exec-pool-db";
+      description = "For a runner on a host without the queue: the sam.fleet listener of the queue's PostgreSQL, reached as exec_pool_runner with the sops password. Null: this host's own queue, by peer.";
+    };
+    remoteRunners = mkOption {
+      type = types.bool;
+      default = false;
+      description = "For the queue: admit the exec_pool_runner role from the sam.fleet exec-pool-db listener's hosts, over TCP by scram. Off, PostgreSQL keeps no TCP listener.";
+    };
+    drainSecs = mkOption {
+      type = types.ints.positive;
+      default = 600;
+      description = "On a host with a power window (sam.fleet.hosts.<host>.power): how long before its scheduled poweroff the runner stops the running attempt (a session turn parks and pushes its work); it claims only while a run can start 300 s before that.";
+    };
+    queueModule = mkOption {
+      type = types.bool;
+      default = false;
+      internal = true;
+      description = "Set by exec-pool.nix: the queue's part is imported.";
+    };
+  };
+
+  config.assertions = lib.mkIf cfg.enable [
+    {
+      assertion = has "queue" == cfg.queueModule;
+      message = "homelab.execPool.roles: `queue` needs modules/homelab/exec-pool.nix imported, and that module needs it in roles.";
+    }
+    {
+      assertion = !(has "runner") || (cfg.slots > 0 && cfg.agents != [ ]);
+      message = "homelab.execPool: a runner needs slots and agents.";
+    }
+    {
+      assertion = !(has "runner") || has "queue" != (cfg.queueListener != null);
+      message = "homelab.execPool.queueListener: set it for a runner without this host's queue, and only then.";
+    }
+    {
+      assertion = !cfg.remoteRunners || has "queue";
+      message = "homelab.execPool.remoteRunners: only a queue admits remote runners.";
+    }
+  ];
+}

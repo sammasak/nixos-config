@@ -112,7 +112,7 @@ FLEET_CASES = [
     ("claude without the token secret", "{ sam.hostSecrets.enable = lib.mkForce false; sam.workers.instances.t = { }; }", "claude instance's calls are signed with the host's sops secret"),
     # asus signs its own GitHub calls; msi forwards them to acer's sidecar (FORWARD)
     ("github without a gh login", '{ sam.workers.instances.t.egress.github.repos = [ "o/r" ]; }', "signed with the token in sam.workers.ghHostsFile", "asus-b460m"),
-    ("github keeping the ssh key", '{ sam.workers = { ghHostsFile = "/home/lukas/hosts.yml"; instances.t = { egress.github.repos = [ "o/r" ]; credentials = [ "id_ed25519" ]; }; }; }',
+    ("github keeping the ssh key", '{ sam.workers = { ghHostsFile = "/home/lukas/hosts.yml"; instances.t = { egress.github.repos = [ "o/r" ]; slot.credentials = [ "id_ed25519" ]; }; }; }',
      "gets neither id_ed25519 nor gh-hosts.yml"),
     ("telemetry without nativeOtel", "{ sam.profile.nativeOtel = lib.mkForce false; sam.workers.instances.t.telemetry = true; }", "runs only with sam.profile.nativeOtel"),
     ("telemetry from a guest module", "{ sam.workers.instances.t.telemetry = false; services.devEnvironments.guestModules = [ { sam.claude.telemetry.enable = true; } ]; }",
@@ -421,7 +421,7 @@ let
 in {
   listener = { inherit (msi.sam.fleet.listeners.github-egress) host port from url; };
   msi = { caddy = caddy msi; creds = msi.systemd.services.dev-env-egress.serviceConfig.LoadCredential; paths = builtins.attrNames msi.systemd.paths; };
-  acer = { caddy = caddy acer; repos = acer.sam.workers.executionPool.github.repos; msiAddress = acer.sam.fleet.hosts.msi-ms7758.address; };
+  acer = { caddy = caddy acer; repos = acer.homelab.execPool.repos; msiAddress = acer.sam.fleet.hosts.msi-ms7758.address; };
 }
 """
 
@@ -889,7 +889,7 @@ in {
   inventory = builtins.any (p: (p.name or "") == "worker-pool-inventory") c.environment.systemPackages;
 }
 """
-POOL_ON = "{ sam.workers.executionPool = { enable = true; slots = %d; }; }"
+POOL_ON = "{ homelab.execPool = { enable = true; slots = %d; }; }"
 NAMED = '{ sam.workers.instances.t = { }; sam.workers.shutdownNotice = "Mon-Fri 20:40"; }'
 
 
@@ -903,22 +903,22 @@ def without_msi_pool(case):
 
 # (name, module, expected message substring) on msi with the pool on; each must fail an assertion
 POOL_CASES = [(name, without_msi_pool(case), want) for name, case, want in [
-    ("slots above the pool", "{ sam.workers.executionPool = { enable = true; slots = 6; }; }", "their memory.reserved adds up to 12288M, more than pool.memory 10240M"),
-    ("a slot's name declared by hand", "{ sam.workers.executionPool = { enable = true; slots = 1; }; sam.workers.instances.pool1 = { }; }", "pool1 is a pool slot's name"),
-    ("a slot's name declared in the core", "{ sam.workers.executionPool = { enable = true; slots = 1; }; services.devEnvironments.instances.pool1 = { }; }", "pool1 is a pool slot's name"),
-    ("a slot's name retired", '{ sam.workers.executionPool = { enable = true; slots = 1; }; sam.workers.retired = [ "pool1" ]; }', "pool1 is a pool slot's name"),
-    ("a slot with the push key", '{ sam.workers.executionPool = { enable = true; slots = 1; credentials = [ "id_ed25519" ]; }; }', "never with the host user's SSH key"),
-    ("a credential the host has not", '{ sam.workers.executionPool = { enable = true; slots = 1; credentials = [ "nope" ]; }; }', "pool1.credentials names one that"),
-    ("codex without a codex login", '{ sam.workers.executionPool = { enable = true; slots = 1; agents = [ "codex" ]; }; }', "signed with the API key in sam.workers.codexAuthFile"),
-    ("pi on a host without the Pi key", '{ sam.workers.executionPool = { enable = true; slots = 1; agents = [ "pi" ]; }; }', "signed with the sops secret llm_gateway_pi_key"),
-    ("a session dock with rootInGuest", "{ sam.workers.executionPool = { enable = true; slots = 1; rootInGuest = true; }; }", "sessionDock with rootInGuest"),
+    ("slots above the pool", "{ homelab.execPool = { enable = true; slots = 6; }; }", "their memory.reserved adds up to 12288M, more than pool.memory 10240M"),
+    ("a slot's name declared by hand", "{ homelab.execPool = { enable = true; slots = 1; }; sam.workers.instances.pool1 = { }; }", "pool1 is a pool slot's name"),
+    ("a slot's name declared in the core", "{ homelab.execPool = { enable = true; slots = 1; }; services.devEnvironments.instances.pool1 = { }; }", "pool1 is a pool slot's name"),
+    ("a slot's name retired", '{ homelab.execPool = { enable = true; slots = 1; }; sam.workers.retired = [ "pool1" ]; }', "pool1 is a pool slot's name"),
+    ("a slot with the push key", '{ homelab.execPool = { enable = true; slots = 1; slot.credentials = [ "id_ed25519" ]; }; }', "never with the host user's SSH key"),
+    ("a credential the host has not", '{ homelab.execPool = { enable = true; slots = 1; slot.credentials = [ "nope" ]; }; }', "pool1.credentials names one that"),
+    ("codex without a codex login", '{ homelab.execPool = { enable = true; slots = 1; agents = [ "codex" ]; }; }', "signed with the API key in sam.workers.codexAuthFile"),
+    ("pi on a host without the Pi key", '{ homelab.execPool = { enable = true; slots = 1; agents = [ "pi" ]; }; }', "signed with the sops secret llm_gateway_pi_key"),
+    ("a session dock with rootInGuest", "{ homelab.execPool = { enable = true; slots = 1; slot.rootInGuest = true; }; }", "sessionDock with rootInGuest"),
 ]]
 # acer (a pi host, the gateway's own) with every agent: one proxy route each, placeholders in the guest, no credential bound
 POOL_ALL = r"""
 let
   c = ((builtins.getFlake (toString %(root)s)).nixosConfigurations.acer-swift.extendModules { modules = [ {
     sam.workers.codexAuthFile = "/home/lukas/.codex/auth.json";
-    sam.workers.executionPool.agents = [ "claude" "codex" "pi" ];
+    homelab.execPool.agents = [ "claude" "codex" "pi" ];
   } ]; }).config;
   g = c.containers.pool1.config;
 in {
@@ -933,8 +933,8 @@ in {
 }
 """
 POOL_TYPED = [(name, without_msi_pool(case), want) for name, case, want in [
-    ("negative slots", "{ sam.workers.executionPool = { enable = true; slots = -1; }; }", "is not of type `unsigned integer"),
-    ("a slot reserve that is no size", '{ sam.workers.executionPool = { enable = true; slots = 1; memory.reserved = "2 GB"; }; }', "is not of type `string matching the pattern"),
+    ("negative slots", "{ homelab.execPool = { enable = true; slots = -1; }; }", "is not of type `unsigned integer"),
+    ("a slot reserve that is no size", '{ homelab.execPool = { enable = true; slots = 1; slot.memory = "2 GB"; }; }', "is not of type `string matching the pattern"),
 ]]
 POOL_THROW = r"""
 let c = ((builtins.getFlake (toString %(root)s)).nixosConfigurations.msi-ms7758.extendModules { modules = [ ({ lib, ... }: %(case)s) ]; }).config;
@@ -951,7 +951,7 @@ def pool_eval(case, toplevel=False):
 def check_pool_compat():
     # a whole msi each, one at a time: five in one process ran a 16G host out of memory
     absent = pool_eval("{ }", True)
-    off = pool_eval("{ sam.workers.executionPool = { enable = false; slots = 2; }; }", True)
+    off = pool_eval("{ homelab.execPool = { enable = false; slots = 2; }; }", True)
     check(absent.get("units") and absent.get("toplevel") and absent == off,
           f"executionPool off (unset, or enable = false with slots = 2) moves no worker unit, container or toplevel on msi ({absent.get('error') or [k for k in absent if absent[k] != off.get(k)]})")
     named = ["t"]
@@ -980,7 +980,7 @@ def check_pool_compat():
               and {k: v for k, v in on.get("containers", {}).items() if k not in names} == absent.get("containers") and on.get("inventory") == (n > 0),
               f"slots = {n}: a container@, dev-env-reset@ drop-in, worker- and worker-herdr- unit per slot, the named workers' units and containers unchanged, worker-pool-inventory {'installed' if n else 'absent'} ({sorted(mine)}, moved {sorted(moved)})")
     # agents = [ "claude" ]: the slot gets a named Claude worker's route, the anthropic proxy, and nothing more
-    on = pool_eval('{ sam.workers.executionPool = { enable = true; slots = 1; agents = [ "claude" ]; }; }')
+    on = pool_eval('{ homelab.execPool = { enable = true; slots = 1; agents = [ "claude" ]; }; }')
     s = on.get("slots", {}).get("pool1", {})
     extra = [x for x in s.get("sockets", []) if x.endswith("-egress")] + [b for b in s.get("binds", []) if b.startswith(("/run/secrets", "/run/user", "/run/credentials", "/run/egress", "/var/lib/host-credentials/")) and not b.endswith(("/ssh_host_ed25519_key", ".pub"))]
     check(on.get("failing") == [] and s.get("agent") == "none" and s.get("credentials") == [] and s.get("headlessAgents") == ["claude"]

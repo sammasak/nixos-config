@@ -499,7 +499,7 @@ in
           }
           ${githubSite {
             egress.github = {
-              inherit (config.sam.workers.executionPool.github) repos;
+              inherit (config.homelab.execPool) repos;
               graphql = false;
             };
           }}
@@ -717,7 +717,7 @@ in
       }
       {
         assertion = ghServes -> lib.any onGithub (lib.attrValues dev.instances);
-        message = "sam.workers: this host serves sam.fleet.listeners.github-egress, whose token its proxy loads only for an instance of its own with egress.github.repos (sam.workers.executionPool.github.repos).";
+        message = "sam.workers: this host serves sam.fleet.listeners.github-egress, whose token its proxy loads only for an instance of its own with egress.github.repos (homelab.execPool.repos).";
       }
       {
         assertion = profile.nativeOtel || !lib.any (i: i.telemetry) (lib.attrValues dev.instances);

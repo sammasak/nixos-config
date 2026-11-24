@@ -3,13 +3,11 @@
 {
   imports = [ ../../modules/homelab/exec-pool-runner.nix ];
 
-  sam.workers.executionPool = {
+  homelab.execPool = {
     enable = true;
+    roles = [ "runner" ];
     slots = 4;
     agents = [ "claude" ];
-  };
-  homelab.execPool.runner = {
-    enable = true;
-    queue = "exec-pool-db";
+    queueListener = "exec-pool-db";
   };
 }
