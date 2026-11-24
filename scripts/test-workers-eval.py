@@ -1241,12 +1241,18 @@ def check_submitter():
 
 
 SESSIONS_GC = r"""
-(builtins.getFlake (toString %(root)s)).nixosConfigurations.acer-swift.config.systemd.units."exec-pool-sessions-gc.service".unit
+let u = (builtins.getFlake (toString %(root)s)).nixosConfigurations.acer-swift.config.systemd.units;
+in (import <nixpkgs> { }).linkFarm "gc" [
+  { name = "gc"; path = u."exec-pool-sessions-gc.service".unit; }
+  { name = "list"; path = u."exec-pool-sessions-list.service".unit; }
+]
 """
 
 SESSIONS_GC_MSI = r"""
-let s = (builtins.getFlake (toString %(root)s)).nixosConfigurations.msi-ms7758.config.systemd.services.exec-pool-sessions-gc;
-in { inherit (s.environment) EXEC_POOL_DB; inherit (s.serviceConfig) User LoadCredential PrivateNetwork; }
+let c = (builtins.getFlake (toString %(root)s)).nixosConfigurations.msi-ms7758.config.systemd.services;
+  s = c.exec-pool-sessions-list; g = c.exec-pool-sessions-gc;
+in { inherit (s.environment) EXEC_POOL_DB; inherit (s.serviceConfig) User LoadCredential PrivateNetwork;
+  gc = { inherit (g.serviceConfig) PrivateNetwork RestrictAddressFamilies; cred = g.serviceConfig ? LoadCredential; env = g.environment ? EXEC_POOL_DB; }; }
 """
 
 
@@ -1254,20 +1260,24 @@ def check_sessions_gc():
     """Runs acer's session remover against a scratch state dir and a written `sessions` list; msi's lists over TCP."""
     out = subprocess.run(["nix", "build", "--no-link", "--print-out-paths", "--impure", "--expr", SESSIONS_GC % {"root": json.dumps(ROOT)}],
                          capture_output=True, text=True)
-    unit = pathlib.Path(out.stdout.strip(), "exec-pool-sessions-gc.service") if out.returncode == 0 else None
-    exe = re.search(r"^ExecStart=!(\S+)", unit.read_text(), re.M) if unit else None
-    pre = re.search(r"^ExecStartPre=(\S+)", unit.read_text(), re.M) if unit else None
+    unit = pathlib.Path(out.stdout.strip(), "gc/exec-pool-sessions-gc.service") if out.returncode == 0 else None
+    lunit = pathlib.Path(out.stdout.strip(), "list/exec-pool-sessions-list.service") if out.returncode == 0 else None
+    exe = re.search(r"^ExecStart=(\S+)", unit.read_text(), re.M) if unit else None
+    pre = re.search(r"^ExecStart=(\S+)", lunit.read_text(), re.M) if lunit else None
     if not exe or not pre:
-        check(False, f"acer's session remover is on, root only for the moves (ExecStart=!) after the list as exec_pool ({out.stderr.strip()[-300:]})")
+        check(False, f"acer's session remover and its lister are on ({out.stderr.strip()[-300:]})")
         return
-    check("User=exec_pool" in unit.read_text() and re.search(r"exec-pool sessions > /run/exec-pool-sessions-gc-list/sessions$",
-                                                            pathlib.Path(pre.group(1)).read_text(), re.M) is not None,
-          "acer lists every session as exec_pool, by peer, before the moves")
+    g = unit.read_text()
+    check("User=exec_pool" in lunit.read_text() and "User=" not in g and "PrivateNetwork=true" in g
+          and "Requires=exec-pool-sessions-list.service" in g
+          and re.search(r"exec-pool sessions > /run/exec-pool-sessions-gc-list/sessions.tmp$", pathlib.Path(pre.group(1)).read_text(), re.M) is not None,
+          "acer lists every session as exec_pool, by peer, in its own unit; root's remover, after it, has no network")
     out = run_eval(SESSIONS_GC_MSI % {"root": json.dumps(ROOT)})
     got = json.loads(out.stdout) if out.returncode == 0 else {}
     check(got.get("EXEC_POOL_DB", "").endswith("dbname=exec_pool user=exec_pool_runner") and got.get("User") == "exec_pool"
-          and got.get("PrivateNetwork") is False and [c.split(":")[0] for c in got.get("LoadCredential", [])] == ["db-password"],
-          f"msi's remover is on and lists acer's queue as exec_pool_runner with its runner's password credential ({got or out.stderr.strip()[-300:]})")
+          and got.get("PrivateNetwork") is False and [c.split(":")[0] for c in got.get("LoadCredential", [])] == ["db-password"]
+          and got.get("gc") == {"PrivateNetwork": True, "RestrictAddressFamilies": ["AF_UNIX"], "cred": False, "env": False},
+          f"msi's lister reads acer's queue as exec_pool_runner with its runner's password credential; root's remover has neither network nor credential ({got or out.stderr.strip()[-300:]})")
     text = pathlib.Path(exe.group(1)).read_text()
     with tempfile.TemporaryDirectory() as d:
         state, metrics, own, listed = (pathlib.Path(d, n) for n in ("state", "metrics", "own", "sessions"))

@@ -364,12 +364,15 @@ fn main() -> ExitCode {
         let args = Args::parse(rest)?;
         let conninfo = std::env::var("EXEC_POOL_DB").unwrap_or_else(|_| DB.to_owned());
         // a unit's db-password credential (LoadCredential), as exec-pool-runner's: another host's queue over TCP
-        let mut store = match std::env::var_os("CREDENTIALS_DIRECTORY") {
-            Some(dir) => {
-                let password = std::fs::read(std::path::Path::new(&dir).join("db-password"))
-                    .map_err(|e| Fail::Usage(format!("db-password credential: {e}")))?;
-                Store::open_remote(&conninfo, password.strip_suffix(b"\n").unwrap_or(&password))?
-            }
+        let password = std::env::var_os("CREDENTIALS_DIRECTORY")
+            .map(|dir| std::path::Path::new(&dir).join("db-password"))
+            .filter(|p| p.exists())
+            .map(|p| {
+                std::fs::read(&p).map_err(|e| Fail::Usage(format!("db-password credential: {e}")))
+            })
+            .transpose()?;
+        let mut store = match password {
+            Some(pw) => Store::open_remote(&conninfo, pw.strip_suffix(b"\n").unwrap_or(&pw))?,
             None => Store::open(&conninfo)?,
         };
         run(cmd, &args, &mut store)

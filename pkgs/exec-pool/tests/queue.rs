@@ -559,9 +559,9 @@ fn the_cli_reaches_a_remote_queue_by_its_units_password_credential() {
             .output()
             .unwrap()
     };
-    let out = cli("host=192.168.10.110 port=5432 dbname=exec_pool user=exec_pool_runner");
-    assert_eq!(out.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&out.stderr).contains("db-password credential"));
+    // another unit's credentials, no db-password: the socket, as without them (no database here: 75)
+    let out = cli("host=/nonexistent dbname=exec_pool user=exec_pool");
+    assert_eq!(out.status.code(), Some(75));
     // with the password, a socket conninfo is refused as open_remote refuses it, before any connection
     std::fs::write(dir.join("db-password"), "pw\n").unwrap();
     let out = cli("host=/run/postgresql dbname=exec_pool user=exec_pool_runner");
@@ -2276,6 +2276,7 @@ fn session_metrics_count_turns_wakes_and_tokens() {
     has("exec_pool_sessions_parked_seconds_bucket{agent=\"claude\",le=\"86400\"} 1");
     has("exec_pool_sessions_gc_eligible 0");
     has("exec_pool_sessions_stale 0");
+    has("exec_pool_sessions_gc_kept 0");
     assert!(!m.contains(&id), "no id in a label");
 }
 
@@ -2407,18 +2408,15 @@ fn session_gc_lists_only_what_the_queue_knows_is_safe_to_remove() {
         assert!(!eligible.contains(&json!(kept)));
     }
     let m = owner.metrics(None).unwrap();
-    assert!(
-        m.lines()
-            .any(|l| l == "exec_pool_sessions{state=\"needs_review\"} 1")
-    );
-    assert!(
-        m.lines()
-            .any(|l| l == "exec_pool_session_age_seconds_count{agent=\"claude\"} 4")
-    );
-    assert!(
-        m.lines()
-            .any(|l| l == "exec_pool_session_turns_bucket{agent=\"claude\",le=\"1\"} 4")
-    );
+    // unpushed and unknown ran a turn; unrun has no tree to keep
+    for want in [
+        "exec_pool_sessions_gc_kept 2",
+        "exec_pool_sessions{state=\"needs_review\"} 1",
+        "exec_pool_session_age_seconds_count{agent=\"claude\"} 4",
+        "exec_pool_session_turns_bucket{agent=\"claude\",le=\"1\"} 4",
+    ] {
+        assert!(m.lines().any(|l| l == want), "{want}");
+    }
 
     let lines = gc_cli(&pg);
     assert_eq!(lines.len(), 1);

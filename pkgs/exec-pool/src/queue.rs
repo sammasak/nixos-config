@@ -1122,7 +1122,7 @@ impl Store {
         self.tx(|tx| {
             tx.query(
                 "SELECT jsonb_build_object('task_id', task, 'state', state, 'last_change', changed_at, 'hosts', hosts, \
-                 'handed_back', handed_back, 'eligible', eligible, 'stale', stale) \
+                 'handed_back', handed_back, 'eligible', eligible, 'stale', stale, 'kept', kept) \
                  FROM session_gc WHERE eligible OR NOT $1 ORDER BY changed_at, task",
                 &[&eligible_only],
             )?
@@ -1639,15 +1639,17 @@ fn session_totals(tx: &mut Transaction<'_>, out: &mut String) -> Result<(), Queu
              FROM events e JOIN tasks t ON t.id = e.task_id WHERE t.session AND e.to_status = 'running') l (host, prev) \
              WHERE l.prev IS NOT NULL AND l.host IS DISTINCT FROM l.prev), \
              (SELECT count(*) FILTER (WHERE eligible) FROM session_gc), \
-             (SELECT count(*) FILTER (WHERE stale) FROM session_gc) {waiting}"
+             (SELECT count(*) FILTER (WHERE stale) FROM session_gc), \
+             (SELECT count(*) FILTER (WHERE kept) FROM session_gc) {waiting}"
         ),
         &[],
     )?;
-    let (oldest, moved, eligible, stale): (f64, i64, i64, i64) = (
+    let (oldest, moved, eligible, stale, kept): (f64, i64, i64, i64, i64) = (
         row.try_get(0)?,
         row.try_get(1)?,
         row.try_get(2)?,
         row.try_get(3)?,
+        row.try_get(4)?,
     );
     let _ = write!(
         out,
@@ -1658,7 +1660,9 @@ fn session_totals(tx: &mut Transaction<'_>, out: &mut String) -> Result<(), Queu
          # HELP exec_pool_sessions_gc_eligible Sessions session_gc lets the remover delete.\n\
          # TYPE exec_pool_sessions_gc_eligible gauge\nexec_pool_sessions_gc_eligible {eligible}\n\
          # HELP exec_pool_sessions_stale Sessions waiting unchanged for 14 days that session_gc keeps: their tree may hold unpushed work.\n\
-         # TYPE exec_pool_sessions_stale gauge\nexec_pool_sessions_stale {stale}\n"
+         # TYPE exec_pool_sessions_stale gauge\nexec_pool_sessions_stale {stale}\n\
+         # HELP exec_pool_sessions_gc_kept Sessions final for 7 days that ran a turn and session_gc keeps: their tree was not handed back whole.\n\
+         # TYPE exec_pool_sessions_gc_kept gauge\nexec_pool_sessions_gc_kept {kept}\n"
     );
     let rows = tx.query(
         "SELECT t.spec->'command'->>'agent', count(u.input_tokens), coalesce(sum(u.input_tokens), 0)::bigint, \
