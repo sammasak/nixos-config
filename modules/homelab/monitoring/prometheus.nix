@@ -123,6 +123,8 @@ in
       # the 15 d projection is 0.8 to 1.1 GB; the cap keeps the SD card's 3 GB root floor with Loki
       "--storage.tsdb.retention.size=1500MB"
       "--web.enable-otlp-receiver"
+      # Loki's ruler here writes its recordings (homelab.loki.ruler); open to what the listener admits, as OTLP is
+      "--web.enable-remote-write-receiver"
     ];
     configText = builtins.toJSON {
       global = {
@@ -142,6 +144,7 @@ in
         ./rules/prometheus.yaml
         ./rules/llm-gateway.yaml
         ./rules/shunt.yaml
+        ./rules/exec-pool.yaml
         (import ./rules/homelab.nix { inherit lib hosts; }).file
         llmBench
         shipping

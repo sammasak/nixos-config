@@ -23,6 +23,7 @@
   homelab.loki = {
     enable = true;
     listenAddress = config.sam.fleet.hosts.black-pi.address;
+    ruler.enable = true;
   };
 
   # to its own LAN address, which the kernel delivers on lo (always accepted), so sam.fleet.loki.from leaves it out

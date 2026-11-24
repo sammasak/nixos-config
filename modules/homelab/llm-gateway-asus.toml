@@ -1,0 +1,33 @@
+
+# asus as a tier-3 provider beside msi: appended to llm-gateway.toml only when
+# homelab.llmGateway.asus.enable is set (llm-gateway.nix), so the catalog the
+# gateway reads without it is the base file alone. asus powers off every night
+# and the owner powers it off by hand (sam.fleet.hosts.asus-b460m.power): a
+# floor that may be absent. health_url holds its models `unreachable` while it
+# is off, a failed connect cools the model and fails over, and nothing starts
+# or checks the gateway against it. llm-gateway-asus.nix asserts all of this.
+[[providers]]
+name = "asus"
+kind = "ollama"
+# asus: services.ollama on the node itself (sam.fleet.listeners.ollama-asus,
+# which admits acer, where the gateway runs).
+base_url = "http://@asus@:11434/v1"
+# One request slot and one resident model at the 130 W cap
+# (docs/records/asus-one-slot-baseline-2026-11-20.md); extra requests queue,
+# then fail over as busy.
+max_concurrency = 1
+drop_fields = ["reasoning_effort", "reasoning"]
+health_url = "http://@asus@:11434/api/tags"
+
+# One model: Ollama keeps one resident (OLLAMA_MAX_LOADED_MODELS 1), so a
+# second would swap weights between requests. After msi in catalog order.
+[[models]]
+provider = "asus"
+id = "gemma4:e4b-it-qat"
+tier = 3
+cost_class = "free"
+enabled = true
+context_window = 32768
+# false until the replay shows gemma4 completing a Pi tool loop on asus (#494): then true, and the note changes with it
+tool_capable = false
+notes = "tool use unverified: verify a Pi tool loop on asus (#494) before enabling"

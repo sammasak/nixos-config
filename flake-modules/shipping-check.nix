@@ -24,6 +24,8 @@ let
   n = toString;
   gateFor = a.GateFailRateHigh.forMinutes.value;
   staleFor = a.ShippingCollectorStale.forMinutes.value;
+  untouchedFor = a.OpenIssuesUntouched.forMinutes.value;
+  untouchedMax = a.OpenIssuesUntouched.max.value;
   fallbackFor = a.LeadTimeFallbacksHigh.forMinutes.value;
   merged = 40;
   retroFor = a.RetroDueGateSlower.forMinutes.value;
@@ -71,8 +73,10 @@ let
   stepFor = a.RetroDueStepFailsRepeat.forMinutes.value;
   minFails = a.RetroDueStepFailsRepeat.minFailures.value;
   lastRuns = a.RetroDueStepFailsRepeat.lastRuns.value;
+  newFailFor = a.RetroDueStepFailsRepeat.newFailureHours.value;
   # check: the flake check's inner check ("" for a step-level count); failures: its 7-d count of heads; runs: the gate
-  # sample behind it. A second check of the same step sits one under the threshold: checks are counted apart.
+  # sample behind it. A second check of the same step sits one under the threshold: checks are counted apart. No
+  # last-failure series, as from an older collector: the count alone decides.
   stepCase = name: check: failures: runs: fires: {
     inherit name;
     interval = "1m";
@@ -158,6 +162,44 @@ let
           {
             alertname = "GateFailRateHigh";
             eval_time = "${n (gateFor + 25)}m";
+            exp_alerts = [ ];
+          }
+        ];
+      }
+      {
+        name = "untouched issues: over the max summed over repos fires after its for and not before, back at the max clears";
+        interval = "1m";
+        input_series = [
+          {
+            series = ''shipping_issues_untouched{repo="nixos-config"}'';
+            values = "${n untouchedMax}x${n (2 * untouchedFor + 30)}";
+          }
+          {
+            series = ''shipping_issues_untouched{repo="skills"}'';
+            values = "1x${n (untouchedFor + 10)} 0x${n (untouchedFor + 20)}";
+          }
+        ];
+        alert_rule_test = [
+          {
+            alertname = "OpenIssuesUntouched";
+            eval_time = "${n (untouchedFor - 5)}m";
+            exp_alerts = [ ];
+          }
+          {
+            alertname = "OpenIssuesUntouched";
+            eval_time = "${n (untouchedFor + 5)}m";
+            exp_alerts = [
+              {
+                exp_labels = {
+                  severity = "warning";
+                  team = "shipping";
+                };
+              }
+            ];
+          }
+          {
+            alertname = "OpenIssuesUntouched";
+            eval_time = "${n (untouchedFor + 25)}m";
             exp_alerts = [ ];
           }
         ];
@@ -369,6 +411,71 @@ let
         (minFails - 1)
         lastRuns
         false
+      )
+      (
+        let
+          # the last failure at 0, the next one at repeatAt, the 7-d count at the threshold throughout
+          repeatAt = newFailFor * 60 + 60;
+          firing = [
+            {
+              exp_labels = {
+                step = "nixos-flake-check";
+                severity = "warning";
+                team = "shipping";
+              };
+            }
+          ];
+          at = t: exp_alerts: {
+            alertname = "RetroDueStepFailsRepeat";
+            eval_time = "${n t}m";
+            inherit exp_alerts;
+          };
+        in
+        {
+          name = "a pattern clears newFailureHours after its last failure, the count still at the threshold, and fires again on the next, or on a late one";
+          interval = "1m";
+          input_series = [
+            {
+              series = ''shipping_gate_step_failures{check="",step="nixos-flake-check",window="7d"}'';
+              values = "${n minFails}x${n (repeatAt + stepFor + 20)}";
+            }
+            {
+              series = ''shipping_gate_step_last_failure_timestamp_seconds{check="",step="nixos-flake-check"}'';
+              values = "0x${n (repeatAt - 1)} ${n (repeatAt * 60)}x${n (stepFor + 20)}";
+            }
+            # a third failure Loki receives late, under a time past the window: the count's rise fires it
+            {
+              series = ''shipping_gate_step_failures{check="",step="lint",window="7d"}'';
+              values = "${n (minFails - 1)}x${n (repeatAt - 1)} ${n minFails}x${n (stepFor + 20)}";
+            }
+            {
+              series = ''shipping_gate_step_last_failure_timestamp_seconds{check="",step="lint"}'';
+              values = "0x${n (repeatAt + stepFor + 20)}";
+            }
+            {
+              series = ''shipping_gate_runs_counted{host="lenovo"}'';
+              values = "${n lastRuns}x${n (repeatAt + stepFor + 20)}";
+            }
+          ];
+          alert_rule_test = [
+            (at (stepFor + 5) firing)
+            (at (newFailFor * 60 - 5) firing)
+            (at (newFailFor * 60 + 5) [ ])
+            (at (repeatAt + stepFor - 5) [ ])
+            (at (repeatAt + stepFor + 5) (
+              firing
+              ++ [
+                {
+                  exp_labels = {
+                    step = "lint";
+                    severity = "warning";
+                    team = "shipping";
+                  };
+                }
+              ]
+            ))
+          ];
+        }
       )
       {
         name = "a gate median at its own baseline does not fire";

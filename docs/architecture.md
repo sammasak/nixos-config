@@ -14,8 +14,7 @@
 - `runtime-host-vm-test.nix`: the QEMU tests (x86_64-linux only), `runtime-host-role-vm` (the base and runtime-host roles with msi-ms7758's role list), `dev-env-reset-vm`, `socket-rebind-vm`, `rebuild-trigger-vm` and `post-deploy-check-vm` (`just deploy`'s unit check against real systemd states), as both flake checks (`nix flake check` and the pre-push gate boot them) and packages (`just role-vm-test`, `.broken`)
 - `templates.nix`: devShell flake templates (with `.envrc`) stamped by `dev-init`
 - `rf-beacons-rs.nix`: the rf-proto beacon table package and its `rf-beacons-parity` check
-- `loki-check.nix`: the `loki-config-msi-ms7758` check (x86_64-linux), homelab.loki on a seeded msi: `loki -verify-config` on the rendered file and the module's assertions, held and failing
-- `alert-bridge-check.nix`: lenovo's alert-bridge admits only the Alertmanager host, read from the rendered firewall rules
+- `loki-check.nix`: the `loki-config-msi-ms7758` check (x86_64-linux), homelab.loki on a seeded msi: `loki -verify-config` on the rendered file and the module's assertions, held and failing; `loki-ruler-black-pi`, black-pi's ruler config verified and run on loopback (`scripts/test-loki-ruler.py`)
 - `authentik-backup-check.nix`: Authentik's off-host copy spans acer (dump, `latest`) and lenovo (pull); neither host's evaluation sees both halves
 - `grafana-dashboards-check.nix`: black-pi's dashboards against the metrics the fleet exports, with seeded failing dashboards
 - `journal-collector-check.nix`: `alloy validate` on the config black-pi's journal collector renders (an aarch64 host is only evaluated)
@@ -134,7 +133,7 @@ Composable role modules assigned per host in `flake-modules/hosts.nix`:
 - **laptop** — laptop-specific overrides
 - **homelab-agent** — always-on fleet host that is not the control host; disables sleep/suspend, ModemManager and Nix trust for the login user
 - **homelab-server** — the control host (lenovo); turns on dns (with TLS), acme, ntfy and the rebuild trigger, and
-  imports AdGuard Home, tailscale, the alerting watchdog and the alert bridge
+  imports AdGuard Home, tailscale and the alerting watchdog
 - **runtime-host** — headless worker host, msi-ms7758, asus-b460m and acer-swift, running the declared nspawn developer environments
   (`sam.workers`, docs/nspawn-workers.md): the run credential, no Stylix outside a
   desktop specialisation, and nix-gc / nix-optimise that wait for a synchronised clock

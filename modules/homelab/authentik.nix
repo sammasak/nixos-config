@@ -1,6 +1,6 @@
 # Authentik and its Postgres on this host, from nixpkgs' package (unit layout after nix-community/authentik-nix's
 # module.nix): Caddy (edge.nix) reaches the server and its embedded outpost on loopback; Postgres has no TCP listener
-# and admits only its own superuser and authentik, by peer. The units start only on a restored database: an empty one
+# and admits only its own superuser and each database's own role (authentik's, exec-pool.nix's), by peer. The units start only on a restored database: an empty one
 # would come up as a fresh install with an open akadmin setup flow. Restore: pg_restore of a latest.dump (here or
 # lenovo's authentik-offhost copy) into an empty authentik database, as the authentik role.
 {
@@ -20,6 +20,7 @@ let
   });
   pyEnv = py.withPackages (_: [ django ]);
   postgres = config.services.postgresql.package;
+  hba = lib.filter (l: l != "") (lib.splitString "\n" config.services.postgresql.authentication);
   fw = config.networking.firewall;
   state = "/var/lib/authentik";
   backups = "/var/lib/authentik-backup";
@@ -320,12 +321,15 @@ in
       assertion =
         !config.services.postgresql.enableTCPIP
         && config.services.postgresql.settings.listen_addresses == ""
-        &&
-          lib.splitString "\n" (lib.trim config.services.postgresql.authentication) == [
-            "local all postgres peer"
-            "local authentik authentik peer"
-          ];
-      message = "modules/homelab/authentik.nix: Postgres must have no TCP listener and admit only postgres and authentik, by peer.";
+        && lib.elem "local authentik authentik peer" hba
+        && lib.all (
+          l:
+          lib.elem l (
+            [ "local all postgres peer" ]
+            ++ map (db: "local ${db} ${db} peer") config.services.postgresql.ensureDatabases
+          )
+        ) hba;
+      message = "modules/homelab/authentik.nix: Postgres must have no TCP listener and admit only postgres and each database's own role, by peer.";
     }
     {
       assertion = lib.all (l: lib.hasPrefix "127.0.0.1:" l) (

@@ -8,12 +8,10 @@
 }:
 let
   a = policy.alerts;
-  actionable = ''shipping_issues_open{class="actionable"}'';
   gateMedian = ''shipping_gate_seconds{quantile="0.5"}'';
   # the gate series are per host; the fleet's fail ratio and sample are their run-weighted sums
   gateRuns = "sum(shipping_gate_runs_counted)";
   gateFailRatio = "sum(shipping_gate_fail_ratio * shipping_gate_runs_counted) / ${gateRuns}";
-  at = i: if i == 0 then "sum(${actionable})" else "sum(${actionable} offset ${toString i}d)";
   alert =
     name: expr: summary: extra:
     {
@@ -40,7 +38,23 @@ let
       path: v: v // { path = lib.concatStringsSep "." path; }
     ) policy
   );
+  untouchedDays = a.OpenIssuesUntouched.days.value;
+  parkedOut = lib.concatMapStringsSep " " (r: "-repo:sammasak/${r}") policy.issues.parkedRepos.value;
   setting = v: if builtins.isList v then toString (builtins.length v) else toString v;
+  quietHours =
+    let
+      d = policy.notify.quietUntilUtcHour.value - policy.notify.quietFromUtcHour.value;
+    in
+    if d < 0 then d + 24 else d;
+  newFailureHours =
+    let
+      h = a.RetroDueStepFailsRepeat.newFailureHours.value;
+    in
+    # muted shipping alerts are sent when the night ends only if still firing: a shorter window drops a night's failure
+    assert lib.assertMsg
+      (builtins.isInt h && h > quietHours + a.RetroDueStepFailsRepeat.forMinutes.value / 60.0)
+      "shipping-policy.json: RetroDueStepFailsRepeat.newFailureHours ${toString h} is not a whole number of hours over the ${toString quietHours} h quiet hours";
+    h;
 in
 {
   groups = [
@@ -65,11 +79,9 @@ in
     {
       name = "shipping.alerts";
       rules = [
-        (alert "OpenIssuesGrowing"
-          (lib.concatMapStringsSep " and " (i: "(${at i} - ${at (i + 1)}) > 0") (
-            lib.range 0 (a.OpenIssuesGrowing.days.value - 1)
-          ))
-          "Open actionable issues grew on each of the last ${toString a.OpenIssuesGrowing.days.value} days."
+        (alert "OpenIssuesUntouched"
+          "sum(shipping_issues_untouched) > ${toString a.OpenIssuesUntouched.max.value}"
+          "{{ $value }} open actionable issues have had no update for ${toString untouchedDays} d. List them with gh search issues --owner sammasak --state open --archived=false --updated \"<$(date -u -d -${toString untouchedDays}days +%FT%TZ)\" --sort updated --order asc -- ${parkedOut}, then close, park or work each."
           { }
         )
         (alert "PrLeadTimeHigh"
@@ -117,9 +129,22 @@ in
           { }
         )
         # one step, or one check inside the flake check, failing on 3 heads over a full sample: one bad change on two hosts
-        # makes 2, so 3 is a pattern; the flake check's own count covers only failures no inner check explains
+        # makes 2, so 3 is a pattern; the flake check's own count covers only failures no inner check explains. It
+        # clears newFailureHours after the unit's last failure unless its count rose since (a failure Loki received
+        # late, under its old time), and fires again on the next; with no timestamp (an older collector) the count
+        # alone decides
         (alert "RetroDueStepFailsRepeat"
-          ''max by (step, check) (shipping_gate_step_failures{window="7d"}) >= ${toString a.RetroDueStepFailsRepeat.minFailures.value} and on () ${gateRuns} >= ${toString a.RetroDueStepFailsRepeat.lastRuns.value}''
+          (
+            let
+              fails = ''max by (step, check) (shipping_gate_step_failures{window="7d"})'';
+              before = ''max by (step, check) (shipping_gate_step_failures{window="7d"} offset ${toString newFailureHours}h)'';
+              stale = "time() - max by (step, check) (shipping_gate_step_last_failure_timestamp_seconds) > ${
+                toString (newFailureHours * 3600)
+              }";
+              rose = "${fails} > ${before} or ${fails} unless on (step, check) ${before}";
+            in
+            "${fails} >= ${toString a.RetroDueStepFailsRepeat.minFailures.value} unless on (step, check) (${stale} unless on (step, check) (${rose})) and on () ${gateRuns} >= ${toString a.RetroDueStepFailsRepeat.lastRuns.value}"
+          )
           "Gate step {{ $labels.step }}{{ if $labels.check }}, check {{ $labels.check }},{{ end }} failed on {{ $value }} heads in 7 d: a retro is due (Shipping dashboard: failed gate steps; Platform health for the runs)."
           { }
         )

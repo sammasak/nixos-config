@@ -134,6 +134,13 @@ in
       };
     };
 
+    claude.autoCompactWindow = mkOption {
+      type = types.nullOr (types.ints.between 100000 1000000);
+      default = null;
+      example = 300000;
+      description = "Claude Code's `autoCompactWindow` setting: a session compacts its context at this many tokens (2.1.300 takes 100000 to 1000000, capped by the model's own window); null leaves Claude's default. A developer environment's guest does not inherit it from its host.";
+    };
+
     claude.telemetry = {
       enable = mkOption {
         type = types.bool;

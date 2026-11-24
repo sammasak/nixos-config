@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """The app registry (apps/registry.json through lib/app-manifest/pins.nix), evaluated lib-only without fetching any
-source: the live registry type-checks; each case is that registry with one field bent and must fail evaluation with a
+source: the live registry type-checks; each case is a one-app registry with one field bent and must fail evaluation with a
 message naming the field (a bad rev, a missing or malformed narHash, an unallowlisted repo, no grant, an unknown field,
 an unknown host), and an app no entry registers fails by name. A wrong narHash for a good rev is the fetcher's own
 refusal, which needs the network, so it is not a case here. The flake check app-manifest runs this with `--store
@@ -17,6 +17,11 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 PINS = ROOT / "lib/app-manifest/pins.nix"
 LIVE = json.loads((ROOT / "apps/registry.json").read_text())
 APP = "alert-bridge"
+ONE = {
+    "grants": {APP: {"owner": "sammasak", "repo": "sammasak/alert-bridge", "host": "lenovo-21CB001PMX"}},
+    "apps": {APP: {"source": {"repo": "sammasak/alert-bridge", "rev": "6c704c797f1f05637ad03d36bd31f34ab8f20600",
+                              "narHash": "sha256-vjD7Xr2YsEyHP+wf3YuO4UTzX/gktV0wsbUX2c7+YN8="}}},
+}
 EXPR = """{ lib, registry, app }:
 let p = import %s { lib = import lib; inherit registry; };
 in if app == "" then builtins.attrNames p.checked
@@ -25,7 +30,7 @@ in if app == "" then builtins.attrNames p.checked
 
 
 def bent(fn):
-    r = copy.deepcopy(LIVE)
+    r = copy.deepcopy(ONE)
     fn(r)
     return r
 
@@ -53,7 +58,7 @@ CASES = {
     "no-grant": (bent(drop("grants", APP)), "", f"apps.{APP}: no grants.{APP}, so the platform has not admitted it."),
     "unknown-field": (bent(source(ref="refs/heads/dev")), "", f"The option `apps.{APP}.source.ref' does not exist"),
     "unknown-host": (bent(lambda r: r["grants"][APP].update(host="nohost")), "", f"`grants.{APP}.host' is not of type"),
-    "unknown-app": (LIVE, "nope", f"no apps.nope; registered: {APP}"),
+    "unknown-app": (ONE, "nope", f"no apps.nope; registered: {APP}"),
 }
 
 parser = argparse.ArgumentParser()
@@ -83,8 +88,8 @@ def evaluate(name, registry, app):
 run = evaluate("live", LIVE, "")
 check(run.returncode == 0 and json.loads(run.stdout) == sorted(LIVE["apps"]),
       f"apps/registry.json type-checks and registers {sorted(LIVE['apps'])}" + ("" if run.returncode == 0 else f": {run.stderr.strip()[-400:]}"))
-run = evaluate("live-pin", LIVE, f"pin:{APP}")
-check(run.returncode == 0 and json.loads(run.stdout) == LIVE["apps"][APP]["source"]["rev"],
+run = evaluate("pin", ONE, f"pin:{APP}")
+check(run.returncode == 0 and json.loads(run.stdout) == ONE["apps"][APP]["source"]["rev"],
       f"pin {APP}: the checked entry's rev, with no fetch (a sandbox's nix has no fetch-tree)"
       + ("" if run.returncode == 0 else f": {run.stderr.strip()[-400:]}"))
 for name, (registry, app, want) in CASES.items():

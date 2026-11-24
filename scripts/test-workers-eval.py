@@ -881,7 +881,7 @@ def check_pool_compat():
         units = on.get("units", {})
         mine = {u for u in units if any(u.startswith(p + s) for s in names for p in ("container@", "worker-", "worker-herdr-"))}
         # the host's shared units list every instance, so a slot moves them; each named worker's own units stay
-        shared = {"dev-env-egress.service", "dev-env-records.service", "dev-env-reset@.service"}
+        shared = {"dev-env-egress.service", "dev-env-records.service", "dev-env-reset@.service", "dev-env-usage.service"}
         moved = {u for u in units.keys() - mine if units[u] != absent.get("units", {}).get(u)}
         check(moved <= shared and units.keys() - mine == absent.get("units", {}).keys() and len(mine) == 3 * n
               and {k: v for k, v in on.get("containers", {}).items() if k not in names} == absent.get("containers") and on.get("inventory") == (n > 0),

@@ -557,7 +557,7 @@
         },
         "overrides": []
       },
-      "description": "The system profile generation the host activated last (scripts/nixos-textfile.sh at activation)."
+      "description": "The system profile generation the host activated last (pkgs/nixos-textfile at activation)."
     },
     {
       "id": 15,

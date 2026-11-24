@@ -162,6 +162,25 @@ let
     IPAddressAllow = cfg.records.address;
     MemoryMax = "128M";
   };
+  # the shipper's sandbox, pushing usage instead of the spools: cgroup files and the containers' confs are world-readable
+  usageUnit =
+    names:
+    let
+      u = recordsUnit names "25s";
+    in
+    u
+    // {
+      ExecStart =
+        u.ExecStart
+        + " "
+        + lib.escapeShellArgs [
+          "--usage"
+          "--cgroup"
+          "/sys/fs/cgroup/${slice}.slice"
+          "--containers"
+          "/etc/nixos-containers"
+        ];
+    };
   prepareDirs = ''
     install -d -m 0711 "$d"
     install -d -m 0700 -o ${user} -g ${group} "$d/.nix-cache"
@@ -500,6 +519,9 @@ let
 
     # the guest holds placeholders, not the tokens: the proxy adds the login to each call
     environment.variables = lib.mkMerge (map (s: s.guest.env) (egressOf w));
+    # platform-record keeps its records in the spool the host ships: a push of its own could never reach Loki.
+    # sessionVariables: also the user manager's, so a guest user unit that records gets it too
+    environment.sessionVariables = lib.mkIf (cfg.records != null) { PLATFORM_RECORD_SHIPPER = "host"; };
     systemd.sockets = lib.listToAttrs (
       map (
         s:
@@ -734,6 +756,11 @@ in
               type = types.listOf (types.strMatching "[a-z][a-z-]*");
               description = "The record kinds shipped, as the `kind` label; a line of any other kind is dropped.";
             };
+            usage = mkOption {
+              type = types.nullOr (types.strMatching "[1-9][0-9]*(s|min)");
+              default = null;
+              description = "How often dev-env-usage pushes each running instance's container cgroup counters and system, as host-made kind=usage records (nixos-config#494: per-task usage, joined to the coordinator's handoffs); null, never.";
+            };
             fleet = mkOption {
               type = types.listOf (types.strMatching "[A-Za-z0-9][A-Za-z0-9-]*");
               description = "The fleet's hostnames: a guest line whose node= or owner= names one (or its flake attribute, the name before a dash) is dropped, so a guest cannot speak for a fleet host.";
@@ -958,6 +985,20 @@ in
         timerConfig = {
           OnCalendar = "*:0/5";
           Persistent = true;
+        };
+      };
+    })
+    (lib.mkIf (running != [ ] && cfg.records != null && cfg.records.usage != null) {
+      systemd.services.dev-env-usage = {
+        description = "Push the running developer environments' cgroup usage to Loki";
+        serviceConfig = usageUnit (map (w: w.name) running);
+      };
+      systemd.timers.dev-env-usage = {
+        wantedBy = [ "timers.target" ];
+        timerConfig = {
+          OnBootSec = "1min";
+          OnUnitActiveSec = cfg.records.usage;
+          AccuracySec = "1s";
         };
       };
     })

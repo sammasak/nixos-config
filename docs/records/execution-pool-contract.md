@@ -8,7 +8,7 @@ and the owners; it adds no daemon, database, socket, port, Nix option or host ch
 | Concern | Owner | Where |
 |---|---|---|
 | Static slot capacity (how many reusable nspawn slots a host declares, their closure, cgroups, egress) | NixOS `services.devEnvironments`, changed only by a reviewed deploy | `modules/workers/core.nix`, `modules/workers/default.nix`, `modules/workers/execution-pool.nix` |
-| Task and attempt state (queued to terminal, leases, epochs, idempotency keys) | a separate queue process (#651, PostgreSQL first) | not built; its records are `pkgs/exec-pool/src/lib.rs` |
+| Task and attempt state (queued to terminal, leases, epochs, idempotency keys) | the queue (#651, PostgreSQL) | `pkgs/exec-pool/src/queue.rs`, CLI `exec-pool-queue`; on acer (`modules/homelab/exec-pool.nix`), nothing claims yet |
 | Slot assignment on a host (claim, start, stop, sanitise, resource accounting) | a host-local dispatcher (#652) | not built |
 | The inner tool loop | the native Claude, Codex and Pi CLIs, unchanged | `docs/herdr.md` |
 | Viewing sessions | Herdr, observe only: never the source of queue truth | `docs/herdr.md` |
@@ -36,6 +36,8 @@ queued -> leased -> running -> checkpointing -> waiting | queued | succeeded | f
 waiting -> queued            (explicit wake)
 leased  -> queued            (lease expired before its start was accepted)
 running | checkpointing -> needs_review   (lease expired: effects unknown, never replayed blindly)
+needs_review -> succeeded | failed | queued   (resolve: an operator's explicit decision, never automatic)
+any return to queued with no attempt left -> failed
 ```
 
 One `Attempt` id spans every lease of that attempt, told apart by the epoch, which is why a `Receipt` is keyed by
@@ -47,7 +49,39 @@ ran nothing. An attempt's placement (host, slot) is cleared on `queued` and `wai
 review. Delivery is **at-least-once**: a resubmission under the same idempotency key returns the task already queued,
 a different task under that key is refused, and no external effect (a GitHub mutation included) is claimed
 exactly-once. A `Receipt` lists the effects an attempt reports, for reconciliation; it counts only with the `settle`
-accepted at its lease epoch.
+accepted at its lease epoch: `Receipt::settles` checks the task, attempt, epoch and outcome against the attempt the
+settle left, and only a settle to succeeded, failed or needs_review takes one (and must). Every lease but one that settles to
+`waiting` (a planned pause) counts against `retry.max_attempts` (at least 1), so an expiring lease cannot loop. `TaskSpec`, `Attempt`, `Slot` and `Receipt` each
+have a `parse()` that reads the version before any other field.
+
+## Queue (#651)
+
+PostgreSQL over a Unix socket only (`Store::open` refuses a TCP host), so the database's peer authentication is the
+caller's. Schema `pkgs/exec-pool/migrations/0001_queue.up.sql`; forward-only in production, with
+`exec-pool-queue migrate-down` dropping everything after the operator has exported what they keep. A claim locks only the queued
+row it takes, `FOR UPDATE SKIP LOCKED`; every change runs `transition` and then the `attempts_fence` trigger, which refuses
+a write that names any epoch but the current one (or none), moves the epoch by more than one, leases from anything
+but queued, or touches a succeeded or failed attempt. One live attempt per slot is a unique index. A holder's event
+after its lease deadline is refused; `reconcile` (at startup and on a timer) expires overdue leases. A database that
+does not answer is `QueueError::Unavailable` (CLI exit 75), never an empty result, and a connection lost during COMMIT is
+`QueueError::OutcomeUnknown` (exit 3): read the state (`Store::live_on` for a claim), never replay. The queue holds no GitHub or agent
+token: the task's `credential_class` is resolved by the host. Prompt, argv and workdir stay in `tasks`; `events`
+holds ids, states and reason codes.
+
+Instrumentation (#658's first slice): every change is one JSON line on stdout, `{"msg":"state_change","change":{
+task_id, attempt, lease_epoch, host, slot, from, to, reason, durations: {in_state_ms, since_submit_ms}}}`, and
+`exec-pool-queue metrics` renders `exec_pool_queue_up`, `exec_pool_attempts{state}`,
+`exec_pool_queued_oldest_seconds` and `exec_pool_transitions_total{from,to,reason}` for a textfile collector. Ids
+stay in the log line, never in a label. When the render fails for any reason it prints only `exec_pool_queue_up 0`
+and exits non-zero; the collector installs stdout whatever the exit code, so a missing source reads as absent, not as
+zero traffic or as the last good counts.
+
+On acer (`modules/homelab/exec-pool.nix`): database and role `exec_pool` in the host's PostgreSQL (Authentik's
+cluster), peer over `/run/postgresql` alone; `exec-pool-migrate.service` runs `migrate` at start, and the minutely
+`exec-pool-metrics` writes `/var/lib/exec-pool-metrics/exec-pool.prom`, alert ExecPoolQueueDown. The nightly
+`exec-pool-backup` dumps the database beside it, on the same disk, like open-webui's backup; nothing copies it off the
+host (lenovo pulls Authentik's dump alone, `modules/homelab/authentik-offhost.nix`), which a queue holding real tasks
+needs before a runner lands.
 
 ## Not `sam.agentRuntime`
 

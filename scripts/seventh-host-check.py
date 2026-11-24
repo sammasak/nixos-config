@@ -3,7 +3,8 @@
 The seed is one flake-modules/hosts.nix entry, one modules/core/fleet.nix hosts entry and hosts/seventh copied from
 scripts/fixtures/seventh-host (base role, no secrets, so no .sops.yaml recipient; its pinned key a throwaway one).
 Each host is its own nix eval (scripts/seventh-host-probe.nix) of the seeded copy, and for the real hosts of an
-unseeded copy of the same files.
+unseeded copy of the same files. Inside nixos:qa that unseeded toplevel is the one its flake check evaluated from the
+same files (NIXOS_QA_TOPLEVELS), not evaluated again; naked-pi's, the cheapest, still is, and must be the same drv.
 
 Proved: the seed's toplevel drvPath evaluates; it is in every list derived from the fleet (deploy nodes, every host's
 ssh known_hosts, black-pi's node-exporter targets and dashboards, lenovo's AdGuard rewrites, Loki's and each store
@@ -20,6 +21,7 @@ Removing a host is #295's other half and is not seeded here: scripts/test-fleet-
 asus-b460m removed and shows lenovo's machines and jump-host assertions fail (its "removed from hosts.nix" seed)."""
 import importlib.util
 import json
+import os
 import pathlib
 import re
 import resource
@@ -182,6 +184,26 @@ def couplings(failing, known_couplings=COUPLINGS):
     return known, unknown
 
 
+def toplevels(text):
+    """NIXOS_QA_TOPLEVELS' "host drv" lines; a host named twice is a flake check fault, not a choice."""
+    pairs = [l.split() for l in text.splitlines()]
+    check(all(len(p) == 2 for p in pairs) and len({p[0] for p in pairs}) == len(pairs),
+          f"NIXOS_QA_TOPLEVELS has one \"host drv\" line per host ({pairs})")
+    return dict(pairs)
+
+
+def same_baseline(reused, evaluated):
+    """Reused baselines stand only while the one still evaluated here (naked-pi) is the flake check's too."""
+    return not reused or reused.get("naked-pi") == evaluated
+
+
+check(not same_baseline({"naked-pi": "/nix/store/a.drv"}, "/nix/store/b.drv")
+      and not same_baseline({"lenovo": "/nix/store/a.drv"}, "/nix/store/b.drv")
+      and same_baseline({}, "/nix/store/b.drv") and same_baseline({"naked-pi": "/nix/store/b.drv"}, "/nix/store/b.drv")
+      and toplevels("") == {} and toplevels("a /x.drv\nb /y.drv\n") == {"a": "/x.drv", "b": "/y.drv"},
+      "seeded: reused baselines fail unless naked-pi's is the evaluated one, or there are none")
+
+
 with tempfile.TemporaryDirectory() as tmp:
     base, seeded, broken, unpinned = (pathlib.Path(tmp) / n for n in ("baseline", "seeded", "broken", "unpinned"))
     tracked = subprocess.run(["git", "-C", str(ROOT), "ls-files"], check=True, stdout=subprocess.PIPE, text=True).stdout.split()
@@ -201,7 +223,17 @@ with tempfile.TemporaryDirectory() as tmp:
 
     real = sorted(set(re.findall(r"^    ([a-z0-9-]+) = \{", (base / "flake-modules/hosts.nix").read_text(), re.M)))
     check(len(real) >= 6 and SEED not in real, f"the real hosts are read from hosts.nix ({real})")
-    P = {h: probe(seeded, h, baseline=base, full=True) for h in real}
+    # "host drv" lines of this gate's flake check, which evaluated the tree these copies are of (an edit between the
+    # two steps fails the moved check below, never passes it)
+    reused = toplevels(pathlib.Path(os.environ.get("NIXOS_QA_TOPLEVELS", os.devnull)).read_text())
+    again = {"naked-pi"} | {h for h in real if h not in reused}
+    print(f"seventh-host: unseeded toplevels from the flake check: {sorted(set(real) - again) or 'none'}; "
+          f"evaluated here: {sorted(again)}", flush=True)
+    P = {h: probe(seeded, h, baseline=base if h in again else None, full=True) for h in real}
+    for h in set(real) - again:
+        P[h]["baselineDrv"] = reused[h]
+    check(same_baseline(reused, P["naked-pi"]["baselineDrv"]),
+          f"the flake check's naked-pi toplevel is the unseeded copy's ({reused.get('naked-pi')}, {P['naked-pi']['baselineDrv']})")
     P[SEED] = probe(seeded, SEED, full=True)
     B = {h: probe(broken, h) for h in ["black-pi", "lenovo", "acer-swift", SEED]}
     U = probe(unpinned, SEED, asserts=True)

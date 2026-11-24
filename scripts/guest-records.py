@@ -10,7 +10,12 @@ ahead of now. Skipped: older than Loki takes. At most PER_RUN lines go per insta
 
 platform_record.py rewrites the spool (a new inode) on every record, so progress is by content: the hash and time of
 the last line handled, kept under --progress (the unit's StateDirectory). Lines after that line go; when it is gone,
-lines no older than it."""
+lines no older than it.
+
+--usage (nixos-config#494) pushes instead one host-made kind=usage line per instance: its container's cgroup counters
+(cpu.stat usage_usec and user_usec, memory.current, memory.stat anon, memory.peak, the container's lifetime
+high-water mark, never reset) and the system it runs (SYSTEM_PATH in its nixos-containers conf). No guest file is read,
+and kind usage is not on the guests' allow-list, so a guest cannot write one."""
 import argparse
 import errno
 import fcntl
@@ -222,6 +227,62 @@ def ship(base, name, args, kinds, fleet=frozenset()):
         return True
 
 
+STORE_PATH = re.compile(r"/nix/store/[0-9a-z]{32}-[A-Za-z0-9+._?=-]+")
+
+
+def usage_body(name, args):
+    """One kind=usage body for an instance, from host files only. OSError when its cgroup is not there (not running)."""
+    d = os.path.join(args.cgroup, f"container@{name}.service")
+
+    def read(f):
+        with open(os.path.join(d, f)) as fh:
+            return fh.read(65536)
+
+    def table(text):
+        return dict(line.split(None, 1) for line in text.splitlines() if " " in line)
+
+    cpu, mem = table(read("cpu.stat")), table(read("memory.stat"))
+    toplevel = "unknown"
+    try:
+        with open(os.path.join(args.containers, f"{name}.conf")) as f:
+            for line in f.read(65536).splitlines():
+                if line.startswith("SYSTEM_PATH=") and STORE_PATH.fullmatch(line[12:].strip()):
+                    toplevel = line[12:].strip()
+    except OSError:
+        pass
+    fields = {"cpu_usec": int(cpu["usage_usec"]), "user_usec": int(cpu["user_usec"]),
+              "mem_current": int(read("memory.current")), "mem_anon": int(mem["anon"]),
+              "mem_peak": int(read("memory.peak")), "toplevel": toplevel}
+    return " ".join(f"{k}={v}" for k, v in fields.items())
+
+
+def ship_usage(names, args):
+    """One push of every running instance's usage line, each in its own host=<prefix>-<name> stream. An instance with no
+    cgroup is stopped (paused, or between deploys): skipped and logged, not a failure. A cgroup that is there but
+    cannot be read is one."""
+    now, streams, ok, stopped = time.time(), [], True, []
+    # no slice at all is a wrong path or a host without the environments' slice: every instance would read as stopped
+    if not os.path.isdir(args.cgroup):
+        print(f"usage: {args.cgroup} is not a directory; nothing read", file=sys.stderr)
+        return False
+    for name in names:
+        if not os.path.isdir(os.path.join(args.cgroup, f"container@{name}.service")):
+            stopped.append(name)
+            continue
+        try:
+            body = usage_body(name, args)
+        except (OSError, KeyError, ValueError) as e:
+            print(f"{name}: no usage ({type(e).__name__}: {e})", file=sys.stderr)
+            ok = False
+            continue
+        streams.append({"stream": {"job": "platform", "kind": "usage", "host": f"{args.prefix}-{name}"},
+                        "values": [[str(int(now)) + "000000000", body]]})
+    if streams and not push(args.url, streams):
+        return False
+    print(f"usage: {len(streams)} instance(s) to Loki" + (f"; not running, skipped: {', '.join(stopped)}" if stopped else ""))
+    return ok
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--state-dir", required=True, help="the environments' state dir; <name>/home is a guest's home")
@@ -230,10 +291,18 @@ def main():
     p.add_argument("--url", required=True, help="Loki's push URL")
     p.add_argument("--kinds", required=True, help="comma-separated allow-list")
     p.add_argument("--fleet", default="", help="comma-separated fleet hostnames a guest line may not name in node= or owner=")
+    p.add_argument("--usage", action="store_true", help="push each instance's cgroup usage, not its spool")
+    p.add_argument("--cgroup", default="/sys/fs/cgroup/environments.slice", help="the slice holding container@<name>.service")
+    p.add_argument("--containers", default="/etc/nixos-containers", help="where <name>.conf names SYSTEM_PATH")
     p.add_argument("names", nargs="*")
     args = p.parse_args()
     if not args.progress:
         p.error("--progress or STATE_DIRECTORY is required")
+    if args.usage:
+        bad = [n for n in args.names if not NAME.fullmatch(n)]
+        for n in bad:
+            print(f"{n!r}: not an environment name", file=sys.stderr)
+        return 0 if ship_usage([n for n in args.names if n not in bad], args) and not bad else 1
     kinds = set(args.kinds.split(","))
     fleet = frozenset(h.lower() for h in args.fleet.split(",") if h)
     base = os.open(args.state_dir, DIR)

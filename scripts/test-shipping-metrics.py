@@ -41,9 +41,9 @@ def iso(hours_ago):
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(NOW - hours_ago * 3600))
 
 
-def issue(repo, n, hours_ago, labels=()):
+def issue(repo, n, hours_ago, labels=(), updated_ago=None):
     return {"repository_url": f"https://api.github.com/repos/sammasak/{repo}", "number": n, "created_at": iso(hours_ago),
-            "labels": [{"name": x} for x in labels]}
+            "updated_at": iso(hours_ago if updated_ago is None else updated_ago), "labels": [{"name": x} for x in labels]}
 
 
 def pr(n, opened, merged):
@@ -51,8 +51,11 @@ def pr(n, opened, merged):
 
 
 parked = json.loads(POLICY.read_text())["issues"]["parkedRepos"]["value"][0]
-OPEN = [issue("nixos-config", 1, 10, ["needs-live"]), issue("nixos-config", 2, 50, ["approved"]),
-        issue(parked, 3, 100), issue("old", 4, 1000)]
+idle_hours = json.loads(POLICY.read_text())["alerts"]["OpenIssuesUntouched"]["days"]["value"] * 24
+# issue 1 is older than the policy's untouched days but updated since; parked and archived issues never count; skills
+# has only a fresh issue
+OPEN = [issue("nixos-config", 1, idle_hours + 10, ["needs-live"], 10), issue("nixos-config", 2, idle_hours + 50, ["approved"]),
+        issue(parked, 3, idle_hours + 100), issue("old", 4, idle_hours + 1000), issue("skills", 5, 5)]
 PRS = [pr(10, 5, 1), pr(11, 30, 2), pr(12, 3, 2.5), pr(13, 4.2, 0.2)]
 # PR 10 is a batch: opened 5 h ago, its lanes' commits authored 40 and 20 h ago; PR 11's oldest commit is on its
 # second page; PR 12's commits answer 404 (a deleted repo), so it falls back to its open time
@@ -113,7 +116,8 @@ class Fake(http.server.BaseHTTPRequestHandler):
         elif not github_up:
             return self.send_error(503)
         elif u.path in ("/user/repos", "/users/sammasak/repos"):
-            body = [{"name": "nixos-config", "archived": False}, {"name": parked, "archived": False}, {"name": "old", "archived": True}]
+            body = [{"name": "nixos-config", "archived": False}, {"name": parked, "archived": False}, {"name": "old", "archived": True},
+                    {"name": "skills", "archived": False}]
         elif u.path == "/search/issues":
             s = q["q"][0]
             items = (OPEN if "is:open" in s else PRS if "is:merged" in s else [issue("nixos-config", 9, 2, ["escape"])] if "label:escape" in s else [])
@@ -201,6 +205,9 @@ check(sm.step_failures([rec("gate=nixos-qa step=lint result=fail sha=none"), rec
       "seeded: head none (NIXOS_QA_HEAD's fallback outside git) is no head: three such records count 3, not 1")
 check(sm.step_failures([check_rec(DASH, "none"), step_rec("nixos-flake-check", "none")]) == {("nixos-flake-check", DASH): 1, ("nixos-flake-check", ""): 1},
       "seeded: an umbrella record with head none is not matched to a check record with head none")
+check(sm.step_last_failures([(30, check_rec(DASH, H1)[1]), (20, step_rec("nixos-flake-check", H2)[1]), (10, check_rec(DASH, H2)[1])])
+      == {("nixos-flake-check", DASH): 30},
+      "seeded: a unit's newest failure is its latest record's time; an umbrella record its inner check explains is not one")
 
 with tempfile.TemporaryDirectory() as tmp:
     out = f"{tmp}/shipping.prom"
@@ -211,6 +218,9 @@ with tempfile.TemporaryDirectory() as tmp:
           and m.get('shipping_issues_open{class="archived",repo="old"}') == 1,
           "open issues split into actionable, parked (policy) and archived (the API's flag)")
     check(m.get('shipping_issues_open_labelled{label="needs-live"}') == 1, "labels count actionable issues")
+    check(m.get('shipping_issues_untouched{repo="nixos-config"}') == 1 and m.get('shipping_issues_untouched{repo="skills"}') == 0
+          and not any(k.startswith("shipping_issues_untouched{") and not ("nixos-config" in k or "skills" in k) for k in m),
+          "untouched counts actionable issues by their last update, not their age; a repo with none reads 0")
     check(m.get("shipping_review_prs_counted") == 3 and abs(m.get("shipping_review_first_pass_ratio", 0) - 2 / 3) < 1e-9
           and m.get("shipping_review_unreviewed_prs") == 1,
           "first verdict against the policy grade; a PR without a verdict is unreviewed, not a pass")
@@ -234,6 +244,9 @@ with tempfile.TemporaryDirectory() as tmp:
     check(m.get('shipping_gate_step_failures{check="",step="lint",window="7d"}') == 1
           and not any(k.startswith("shipping_gate_step_failures") and 'step="lint"' not in k for k in m),
           "a failed push-gate step from Loki is written with an empty check label")
+    check(abs(m.get('shipping_gate_step_last_failure_timestamp_seconds{check="",step="lint"}', 0) - NOW) < 1
+          and sum(k.startswith("shipping_gate_step_last_failure") for k in m) == 1,
+          "the step's newest failure is written beside its count, with the same labels")
     check(m.get('shipping_gate_runs_counted{host="unknown"}') == 1
           and not any('host=""' in k for k in m),
           "a stream without a host label counts as host=\"unknown\", never as an empty host")

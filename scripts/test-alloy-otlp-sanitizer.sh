@@ -167,9 +167,10 @@ jq -e . "$near_limit_payload_file" >/dev/null
 jq -e . "$oversized_payload_file" >/dev/null
 
 post_otlp() {
-  local signal=$1 payload=$2 token=${3:-$test_token}
+  local signal=$1 payload=$2 token=${3:-$test_token} worker=${4:-}
   local -a headers=(-H 'Content-Type: application/json')
   [[ -n "$token" ]] && headers+=(-H "Authorization: Bearer $token")
+  [[ -n "$worker" ]] && headers+=(-H "X-Otel-Worker: $worker")
   curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
     --max-time 5 "${headers[@]}" -d "$payload" "$endpoint/v1/$signal"
 }
@@ -187,7 +188,8 @@ log_status=$(post_otlp logs "$log_payload")
 codex_log_status=$(post_otlp logs "$codex_log_payload")
 non_tool_log_status=$(post_otlp logs "$non_tool_log_payload")
 usage_log_status=$(post_otlp logs "$usage_log_payload")
-cost_metric_status=$(post_otlp metrics "$cost_metric_payload")
+# stamped as a host relay stamps a guest's post: the stamp, not the payload's worker.name, names the worker
+cost_metric_status=$(post_otlp metrics "$cost_metric_payload" "$test_token" herman)
 invalid_token_status=$(post_otlp metrics "$unauthenticated_payload" 'not-the-smoke-token')
 near_limit_status=$(post_otlp_file metrics "$near_limit_payload_file")
 oversized_payload_status=$(post_otlp_file metrics "$oversized_payload_file")
@@ -267,6 +269,7 @@ for expected in \
   'input_tokens: Int(321)' \
   'cost_usd: Double(0.5)' \
   'worker: Str(nspawn-a1)' \
+  'worker: Str(herman)' \
   'Body: Str(skill_activated)' \
   'skill.name: Str(other)' \
   'skill.source: Str(userSettings)' \

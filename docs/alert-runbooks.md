@@ -1,20 +1,21 @@
 # Alert runbooks
 
-One section per alert in `modules/homelab/monitoring/rules/homelab.yaml` and `modules/homelab/monitoring/rules/shunt.yaml`;
+One section per alert in `modules/homelab/monitoring/rules/homelab.yaml`, `modules/homelab/monitoring/rules/shunt.yaml`,
+`modules/homelab/monitoring/rules/exec-pool.yaml` and Loki's ruler rules, `modules/homelab/monitoring/loki-rules/fake/homelab.yaml`;
 each alert's `runbook_url` points at its heading here. The shipping alerts point at [shipping.md](shipping.md#alerts).
 
-Every homelab, Shunt and shipping alert carries the same annotations, held by the `monitoring-alert-annotations` check
+Every homelab, Shunt, execution pool, shipping and Loki-ruler alert carries the same annotations, held by the `monitoring-alert-annotations` check
 (`flake-modules/monitoring-check.nix`, `scripts/check-alert-annotations.py`):
 
 | annotation | holds |
 |---|---|
 | `summary` | one line: the symptom and the component |
 | `description` | the observed condition, its threshold and duration, the affected host or service, the first safe step |
-| `query` | the first diagnostic PromQL, runnable as is in Prometheus on black-pi (`{{ $labels.* }}` are filled in by Prometheus); the `grafana-dashboards` check parses it and holds its metric names and jobs |
+| `query` | the first diagnostic PromQL, runnable as is in Prometheus on black-pi (`{{ $labels.* }}` are filled in by Prometheus); the `grafana-dashboards` check parses it and holds its metric names and jobs. A Loki-ruler alert's is LogQL, for Grafana's Explore on the Loki data source, and that check does not read it |
 | `runbook_url` | a heading in a tracked doc of this repo, on `main` |
 
-alert-bridge puts `summary` and `description` in the ntfy page; `query` and `runbook_url` show in Alertmanager and
-Prometheus's alert view. Run the query at `http://192.168.10.137:9090/graph`.
+The ntfy page (Alertmanager's webhook payload, `modules/homelab/monitoring/alertmanager.nix`) carries `summary`,
+`description` and `Query: <query>`, and a tap opens `runbook_url`; all four also show in Prometheus's alert view. Run a PromQL query at `http://192.168.10.137:9090/graph`.
 
 ## HostExpectedOff
 
@@ -38,6 +39,15 @@ First: on the host, `systemctl status prometheus-nvidia-gpu-exporter` and `nvidi
 Fires: `node_vmstat_oom_kill` increased in the last 15 minutes.
 First: on the host, `journalctl -k --since -1h | grep -i 'killed process'` names the process and its cgroup.
 Do not: raise a `MemoryMax` before the journal shows which unit hit it.
+
+## UnitOOMKilled
+
+Fires: systemd logged "A process of this unit has been killed by the OOM killer" for a system unit in the last 15
+minutes (Loki's ruler on black-pi; `run-*`, `session-*` and `systemd-coredump@*` fold as the journal collector folds them). It
+names the unit that NodeOOMKill only counts, so one kill pages both. Its `query` is LogQL, for Grafana's Explore.
+Not matched: kills by systemd-oomd, and user units (their journal is not shipped).
+First: on the host, `journalctl -u <unit> -b` and `systemctl show <unit> -p MemoryMax -p MemoryPeak`.
+Do not: raise the unit's `MemoryMax` before its journal shows what grew.
 
 ## NodeSystemdUnitFailed
 
@@ -141,6 +151,21 @@ First: on acer, `journalctl -u alloy-otlp --since -30m`; for a 401 or 413, on th
 `journalctl -u native-otel-relay --since -30m`.
 Do not: raise `max_request_body_size` or the relay's body limit before the journal names the sender.
 
+## ClaudeCompactionLoop
+
+Fires: Claude Code on one host or worker auto-compacted more than 5 times in the last hour, read from
+`host_worker:claude_code_auto_compactions:count1m`, which Loki's ruler records from the sanitized compaction events
+(`modules/homelab/monitoring/loki-rules/fake/homelab.yaml`). An empty `worker` is a session on the host itself. One session compacting again and
+again is a loop: its context refills right after each compaction and the goal it started with gets lost. It resolves
+once the hour holds 5 or fewer. The count is a lower bound, so a real loop may fire a few minutes late.
+First: in Grafana's Explore on Loki, the events of that worker by session (ids are line fields, never labels):
+`sum by (attributes_session_id) (count_over_time({observer="harness", service_name="claude-code", event_name="compaction", host_name="<host>"} | json | attributes_trigger="auto" | attributes_worker="<worker>" [1h]))`.
+For an empty worker, filter `attributes_worker=""`. One session with most of them is the loop: stop it there. Many sessions each compacting a few times is load, not a
+loop.
+Rollback: for herman on acer, remove `sam.claude.autoCompactWindow` from `hosts/acer-swift/configuration.nix` (an
+approved deploy); a session keeps the window it started with until restarted.
+Do not: raise the threshold before the events show which session it was.
+
 ## EdgeSocketDown
 
 Fires: nothing listens on Caddy's upstream socket on acer, or the edge check stopped writing, for 2 minutes. Signed-in
@@ -171,14 +196,30 @@ First: the query lists each `homelab:health:*` KPI; follow the one that fails it
 
 ## ShuntCollectorStale
 
-Fires: on a host that enables `homelab.shuntMetrics` (lenovo), `shunt-metrics.service` has not read the hook log
-successfully for over 45 minutes, its runs kept failing for 20 minutes, or its unit exists but has never written
-`/var/lib/shunt-metrics/shunt.prom`. A sleeping or disabled host never fires: the alert reads the collector's own
+Fires: on a host that enables `homelab.shuntMetrics` (lenovo, acer), `shunt-metrics.service` has not read the hook
+log successfully for over 45 minutes, its runs kept failing for 20 minutes, or its unit exists but has never written
+`/var/lib/shunt-metrics/shunt.prom`; with a worker label, the same for that guest's
+`shunt-metrics-guest-<worker>.service`. A sleeping or disabled host never fires: the alert reads the collector's own
 series and unit. The Shunt panels on Agent harnesses and ShuntDelegationFailing are blind while it fires.
-First: on the host, `systemctl status shunt-metrics.timer shunt-metrics.service` and `journalctl -u shunt-metrics.service`;
+First: on the host, `systemctl status shunt-metrics.timer shunt-metrics.service` and `journalctl -u shunt-metrics.service`
+(for a worker, `shunt-metrics-guest-<worker>`);
 the script names a failed scan's exception type there. `ls -l ~/.local/state/claude-hooks/` shows whether the hook log exists.
 Do not: delete the textfile to silence it; a missing file fires as well.
 Rollback: `homelab.shuntMetrics.enable = false` in the host's configuration and deploy; Shunt itself keeps working.
+
+## ExecPoolQueueDown
+
+Fires: on a host that runs the execution pool queue (`modules/homelab/exec-pool.nix`, acer), `exec-pool-metrics` has
+written `exec_pool_queue_up 0` for 10 minutes (PostgreSQL or the `exec_pool` database did not answer), or has not
+rewritten `/var/lib/exec-pool-metrics/exec-pool.prom` for over 10 minutes. An empty queue is up 1 with zero counts and
+never fires; a sleeping host never does. A failing collector unit also fires SystemdUnitFailed.
+First: on the host, `systemctl status postgresql.service exec-pool-migrate.service exec-pool-metrics.timer
+exec-pool-metrics.service` and `journalctl -u exec-pool-metrics.service -u exec-pool-migrate.service`; the CLI names the
+error there (exit 75: the database is unavailable). Authentik shares the PostgreSQL cluster, so its health is the same check.
+Do not: delete the textfile or write `exec_pool_queue_up 1` by hand; nothing dispatches from the queue yet, so there
+is no task to rescue.
+Rollback: drop the `exec-pool.nix` import from acer's configuration and deploy; the `exec_pool` database stays until
+dropped by hand.
 
 ## ShuntDelegationFailing
 
@@ -192,3 +233,18 @@ First: on the host, the outcomes without any content:
 auth: the OAuth token (`/run/secrets/claude_oauth_token`); rate_limited or model_unavailable: the model's quota or
 availability; timeout: the `files` and `bytes` the timed-out calls delegated.
 Rollback: `SHUNT_DISABLE=1` in the environment the sessions start from, or `sam.claude.bulkReader.enable = false`.
+
+## ShuntSilent
+
+Fires: on a host or worker whose series say `shunt="on"` (its declared `sam.claude.bulkReader.enable`: lenovo, acer's
+a1), the agent made a Bash call in the last hour (validate-bash logged it) but no Shunt hook has logged for 2 h, for an
+hour; or a Shunt hook logged `error` (shunt-spill could not save an output) or `nostate` (shunt-read/shunt-bash could
+not keep its state) in the collector's 24 h window. An off worker never fires, so the on/off comparison it guards is
+the one between `shunt="on"` and `shunt="off"` series.
+First: in the home it reads (the owner's on the host; a worker's is `/var/lib/workers/<worker>/home` on the host,
+as root), `jq -r '.hooks.PreToolUse[].hooks[].command' .claude/settings.json | grep shunt` (no line: the hooks are
+not registered, e.g. a skills pin without them), then the results without any content:
+`jq -c 'select(.hook | startswith("shunt-")) | {ts, hook, result}' .local/state/claude-hooks/$(date -u +%F).jsonl | tail`.
+`SHUNT_DISABLE=1` in the session's environment also silences them, and a session started before the switch keeps
+the hooks it started with: restart it.
+Rollback: `sam.claude.bulkReader.enable = false` for that host or worker (acer: the guest module in its configuration).

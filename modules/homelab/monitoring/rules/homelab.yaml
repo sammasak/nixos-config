@@ -296,6 +296,24 @@ groups:
           query: 'sum by ("http.response.status_code") (increase({__name__="http.server.request.duration_seconds_count",job="alloy-otlp",component_id="otelcol.receiver.otlp.native","http.request.method"="POST"}[1h]))'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#otlpwritesrejected"
 
+      # A compaction loop (#626): the Loki ruler's per-minute count of Claude Code's auto compactions
+      # (../loki-rules/fake/homelab.yaml), summed over the last hour per host and worker. worker is empty for a session on
+      # the host itself. 5 per hour is the issue's bound for the autoCompactWindow comparison; the count is a lower
+      # bound (late lines are not counted), so it can only fire late, never early. keep_firing_for: a steady loop near
+      # 6 an hour would otherwise resolve and fire again with each compaction.
+      - alert: ClaudeCompactionLoop
+        expr: |
+          sum by (host, worker) (sum_over_time(host_worker:claude_code_auto_compactions:count1m[1h])) > 5
+        keep_firing_for: 30m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "Claude Code on {{ $labels.host }}{{ with $labels.worker }} worker {{ . }}{{ end }} is auto-compacting in a loop"
+          description: "Claude Code on {{ $labels.host }}{{ with $labels.worker }} worker {{ . }}{{ end }} auto-compacted {{ $value }} times in the last hour, over 5: a session keeps refilling its context and compacting, losing its goal and spending cache tokens. Find the session in Loki's compaction events before changing its autoCompactWindow."
+          query: 'sum_over_time(host_worker:claude_code_auto_compactions:count1m{host="{{ $labels.host }}",worker="{{ $labels.worker }}"}[1h])'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#claudecompactionloop"
+
       # Caddy's unix upstreams on acer (open-webui.nix's edge check): the probe above sees only forward auth's 302
       - alert: EdgeSocketDown
         # absent: a check that never ran (timer dead, the directory missing after a reboot) writes no series at all

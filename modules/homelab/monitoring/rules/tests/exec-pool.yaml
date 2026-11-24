@@ -1,0 +1,74 @@
+# promtool test rules for exec-pool.yaml (flake-modules/monitoring-check.nix runs it). acer runs the queue; lenovo
+# does not and has another textfile.
+rule_files: [../exec-pool.yaml]
+evaluation_interval: 1m
+tests:
+  # an empty queue, rewritten every minute: never fires
+  - interval: 1m
+    input_series:
+      - series: 'exec_pool_queue_up{job="node-exporter",node="acer-swift"}'
+        values: '1x120'
+      - series: 'exec_pool_attempts{job="node-exporter",node="acer-swift",state="queued"}'
+        values: '0x120'
+      - series: 'node_textfile_mtime_seconds{job="node-exporter",node="acer-swift",file="/var/lib/exec-pool-metrics/exec-pool.prom"}'
+        values: '0+60x120'
+      - series: 'node_textfile_mtime_seconds{job="node-exporter",node="lenovo-21CB001PMX",file="/run/node-exporter-textfile/adguard.prom"}'
+        values: '0x120'
+    alert_rule_test:
+      - eval_time: 120m
+        alertname: ExecPoolQueueDown
+        exp_alerts: []
+
+  # the database stops answering at 10m: up 0 from then, firing 10m later
+  - interval: 1m
+    input_series:
+      - series: 'exec_pool_queue_up{job="node-exporter",node="acer-swift"}'
+        values: '1x10 0x30'
+      - series: 'node_textfile_mtime_seconds{job="node-exporter",node="acer-swift",file="/var/lib/exec-pool-metrics/exec-pool.prom"}'
+        values: '0+60x40'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: ExecPoolQueueDown
+        exp_alerts: []
+      - eval_time: 21m
+        alertname: ExecPoolQueueDown
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: acer-swift}
+            exp_annotations:
+              summary: "The execution pool queue on acer-swift is unreachable"
+              description: "exec-pool-metrics on acer-swift has not reached the queue's database for 10 minutes, or has not rewritten its textfile for over 10 minutes, so the queue's counts read absent. Run systemctl status postgresql.service exec-pool-migrate.service exec-pool-metrics.service there."
+              query: 'exec_pool_queue_up{job="node-exporter",node="acer-swift"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolqueuedown"
+
+  # the timer stops at 600 s with the last file saying up 1: older than 600 s from 20m, firing 10m later
+  - interval: 1m
+    input_series:
+      - series: 'exec_pool_queue_up{job="node-exporter",node="acer-swift"}'
+        values: '1x60'
+      - series: 'node_textfile_mtime_seconds{job="node-exporter",node="acer-swift",file="/var/lib/exec-pool-metrics/exec-pool.prom"}'
+        values: '0+60x10 600x50'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: ExecPoolQueueDown
+        exp_alerts: []
+      - eval_time: 31m
+        alertname: ExecPoolQueueDown
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: acer-swift}
+            exp_annotations:
+              summary: "The execution pool queue on acer-swift is unreachable"
+              description: "exec-pool-metrics on acer-swift has not reached the queue's database for 10 minutes, or has not rewritten its textfile for over 10 minutes, so the queue's counts read absent. Run systemctl status postgresql.service exec-pool-migrate.service exec-pool-metrics.service there."
+              query: 'exec_pool_queue_up{job="node-exporter",node="acer-swift"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolqueuedown"
+
+  # the host sleeps from 10m: no series, no alert
+  - interval: 1m
+    input_series:
+      - series: 'exec_pool_queue_up{job="node-exporter",node="acer-swift"}'
+        values: '1x10 _x50'
+      - series: 'node_textfile_mtime_seconds{job="node-exporter",node="acer-swift",file="/var/lib/exec-pool-metrics/exec-pool.prom"}'
+        values: '0+60x10 _x50'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: ExecPoolQueueDown
+        exp_alerts: []

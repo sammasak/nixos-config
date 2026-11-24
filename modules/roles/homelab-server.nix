@@ -8,7 +8,6 @@
     ../homelab/tailscale.nix
     ../homelab/ntfy.nix
     ../homelab/cluster-watchdog.nix
-    ../homelab/alert-bridge.nix
     ../homelab/nixos-rebuild-trigger
   ];
 
