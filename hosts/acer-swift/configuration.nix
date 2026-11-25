@@ -73,6 +73,7 @@
     ++ lib.optional (config.sam.workers.codexAuthFile != null) "codex";
     # msi's runner claims from this queue over the fleet LAN (exec-pool-db listener)
     remoteRunners = true;
+    monitoring = true;
     ownRefsOnly = true;
   };
   # the #494 usage spike: the workers' cgroup counters every minute (scripts/guest-records.py --usage)

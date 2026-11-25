@@ -881,6 +881,7 @@ let
         ${pkgs.python3}/bin/python scripts/test-gate-steps.py
         ${pkgs.python3}/bin/python scripts/test-heavy-lock.py ${lib.getExe heavyLock}
         ${pkgs.python3}/bin/python scripts/test-deferred-checks.py
+        ${pkgs.python3}/bin/python scripts/test-pool-merge-check.py
       '';
 
   run = lib.concatMapStringsSep "\n" lib.getExe;
@@ -1595,7 +1596,7 @@ in
     "nixos:build-bounds-test" =
       task "nix-daemon builds are bounded (cores, jobs, MemoryHigh/Max) on lenovo and the environment hosts; lenovo's user slice has a ceiling" buildBoundsTest;
     "nixos:qa-push-test" =
-      task "The pre-push hook without Nix: every push runs the fast set and records the full gate owed, never a green; a clean manual nixos:qa records its tree per gate and generation, lints only for it plus docs; a linked worktree is judged on the pushed commit; the shim refuses new commits to two refs; nixos:qa takes the heavy-work lock once (an ancestor's counts); a deferred check is recorded owner:check per head, and built by its owner; deferred-checks.py says which still wait for their owner" qaPushTest;
+      task "The pre-push hook without Nix: every push runs the fast set and records the full gate owed, never a green; a clean manual nixos:qa records its tree per gate and generation, lints only for it plus docs; a linked worktree is judged on the pushed commit; the shim refuses new commits to two refs; nixos:qa takes the heavy-work lock once (an ancestor's counts); a deferred check is recorded owner:check per head, and built by its owner; deferred-checks.py says which still wait for their owner; pool-merge-check picks its checks from the changed paths" qaPushTest;
     "nixos:journal-collector-test" =
       task "homelab.journalCollector on msi only: journald to Loki, no secret, a local readiness probe" journalCollectorTest;
     "nixos:fleet-endpoints-test" =

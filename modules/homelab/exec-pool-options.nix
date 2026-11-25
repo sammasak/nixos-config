@@ -130,6 +130,11 @@ in
       default = 600;
       description = "On a host with a power window (sam.fleet.hosts.<host>.power): how long before its scheduled poweroff the runner stops the running attempt (a session turn parks and pushes its work); it claims only while a run can start 300 s before that.";
     };
+    monitoring = mkOption {
+      type = types.bool;
+      default = false;
+      description = "Each slot queries black-pi's Prometheus, Alertmanager and Loki read only, through the host's egress proxy (PROMETHEUS_URL, ALERTMANAGER_URL, LOKI_ADDR in the guest; docs/records/execution-pool-contract.md). The host must be in those listeners' `from`.";
+    };
     queueModule = mkOption {
       type = types.bool;
       default = false;
