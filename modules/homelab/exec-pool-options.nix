@@ -63,6 +63,11 @@ in
       ];
       description = "The GitHub repositories a slot reaches, through the host's sidecar (or sam.fleet.listeners.github-egress's host), which signs its fetch, push and gh calls so the slot holds no credential. A session's park pushes its snapshot ref there too. A repository whose flake or devenv has a private input needs that input listed.";
     };
+    ownRefsOnly = mkOption {
+      type = types.bool;
+      default = false;
+      description = "A slot pushes only its task's branch `pool/<task id>` and snapshot `refs/pool-wip/<task id>`: the host's exec-pool-push-filter reads each push's ref updates, against the runner's manifest of the slot's attempt, before the sidecar signs it. Off, a slot may push any ref of a listed repository.";
+    };
     agents = mkOption {
       type = types.listOf (
         types.enum [

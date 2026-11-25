@@ -158,7 +158,10 @@ Open: the 4.6 GiB idle figure predates the named workers moving to pool slots; r
 9. lenovo cannot push nixos-config (stale devenv gate) or fetch a new private skills pin as a user.
 10. Cost: about 45 USD of session cost on 24 Nov; cost per merged PR is in `exec-pool sessions` and the dashboard
     table once `pool/cli-8ce84f45f00fc734` deploys to acer; read it after a day.
-11. Store follow-ups in #754; credential slices 3 and 4.
+11. Store follow-ups in #754. Credential slice 3 (a slot pushes only `pool/<task id>` and `refs/pool-wip/<task id>`,
+    `exec-pool-push-filter` behind `homelab.execPool.ownRefsOnly`, on for acer) on `pool/cli-3d4da7d4a57f8ba1`: deploy
+    acer, see a push `passed` and one `refused`, then turn it on for msi. Slice 4 (GitHub App tokens) needs the owner to
+    create the App and a sops secret for its key first.
 12. Session state lives in git (#781, merged); its old trees and store are removed by the legacy remover once deployed.
 13. The proxy cannot hold a pull request to the task's own repository and `pool/<task id>` branch: the head is in the
     request body, which Caddy does not read, and acer's fleet site does not know which slot asks. Today any listed
