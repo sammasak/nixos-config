@@ -459,7 +459,7 @@ let
           ownerHome = acer.users.users.${acer.services.devEnvironments.user}.home;
         };
         derive = svc.codex-egress-token.serviceConfig.ExecStart;
-        codex = lib.getExe acer.pkgs.codex;
+        codex = lib.getExe hosts.acer-swift.pkgs.codex;
         path = acer.systemd.paths.codex-egress-token.pathConfig;
         refresh = {
           inherit (svc.codex-egress-refresh) environment onSuccess;
