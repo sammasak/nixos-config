@@ -117,6 +117,8 @@ let
   # what a gate step built off its own node would compile against: CUDA or the NVIDIA driver (#502); one pattern for the
   # flake check and scripts/gate_defer.py (GATE_HEAVY)
   gateHeavy = "-cuda[0-9._]*-|cuda_|nvidia-x11";
+  # the output kinds the flake check evaluates, as `nix flake show --json | jq -c keys` prints them
+  flakeKinds = builtins.toJSON (lib.importJSON ./scripts/flake-output-kinds.json);
   flakeCheck =
     gate "nixos-flake-check"
       (with pkgs; [
@@ -187,9 +189,13 @@ let
           echo "nixos-flake-check: refused on lenovo: $(tr '\n' ' ' <<<"$vms")boot a QEMU VM (memory); run the gate on msi or acer" >&2
           exit 1
         fi
+        # scripts/test-flake-output-kinds.py compares the flake with flakeKinds in seconds, without evaluating an output
         kinds=$(nix flake show --json --all-systems --no-write-lock-file | jq -c 'keys')
-        [ "$kinds" = '["checks","deploy","formatter","nixosConfigurations","overlays","packages","templates"]' ] \
+        [ "$kinds" = '${flakeKinds}' ] \
           || { echo "nixos-flake-check: flake outputs are $kinds: add the new kind to this step" >&2; exit 1; }
+        # flake show omits legacyPackages' contents: pkgsDir's entries are evaluated here, built only by pool-merge-check
+        nix eval --no-write-lock-file .#legacyPackages \
+          --apply 'builtins.mapAttrs (_: s: builtins.mapAttrs (_: p: p.drvPath) s.pkgsDir)' >/dev/null
         nix eval --no-write-lock-file .#overlays --apply 'builtins.mapAttrs (_: o: assert builtins.isFunction o; true)' >/dev/null
         nix eval --no-write-lock-file .#templates \
           --apply 'builtins.mapAttrs (_: t: assert builtins.pathExists t.path && builtins.isString t.description; true)' >/dev/null
