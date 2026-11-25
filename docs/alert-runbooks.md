@@ -382,8 +382,9 @@ Rollback: none; the alert clears when the docks fall under 70%.
 Fires: over the last day, the Claude turns on a pool host's slots with a declared `sam.claude.autoCompactWindow`
 (`variant`, the window in tokens) cost over 1.5 times per turn what the same host's default slots cost, with Shunt off
 on both sides and at least 10 turns on each, for an hour. Read from the `host_variant:exec_pool_session_*:increase1d`
-records (`modules/homelab/monitoring/rules/exec-pool.yaml`): the queue's per-slot usage joined with
-`claude_auto_compact_window_info` on the slot's host. This is #626's live comparison judging the window worse.
+records (`modules/homelab/monitoring/rules/exec-pool.yaml`): the queue's usage by the arm (window and Shunt) each slot's
+runner records with its turns (`EXEC_POOL_ARM`, `modules/homelab/exec-pool-runner.nix`). This is #626's live
+comparison judging the window worse.
 First: the "Compaction window on versus off" table in the Agent harnesses dashboard (Sessions row): tokens per turn and
 per session, turns per session and auto compactions per session per variant. One long session on the on side can carry a
 day; `exec-pool list` names the sessions.

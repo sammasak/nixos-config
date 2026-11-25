@@ -4,49 +4,26 @@
 # park push and prepare counters are each slot host's own textfile, split by node. A failed collector unit is
 # SystemdUnitFailed's.
 groups:
-  # #626's compaction window comparison: each slot's Claude turns joined with its declared window (variant) and Shunt,
-  # from claude_auto_compact_window_info on the slot's own host (modules/homelab/shunt-metrics.nix). A day's increase:
-  # a session that spans days or slots counts on each. A slot without that line (no homelab.shuntMetrics) drops out.
+  # #626's compaction window comparison: Claude turns by the arm their slot declared (variant: its autoCompactWindow
+  # or default; shunt), over a day. A session that spans days or arms counts on each; unknown is a turn from before.
   - name: exec-pool.variants
     rules:
       - record: host_variant:exec_pool_session_turns:increase1d
         expr: |
-          sum by (host, variant, shunt) (
-            increase(exec_pool_session_turns_reported_total{job="node-exporter",agent="claude"}[1d])
-            * on (host, worker) group_left (variant, shunt) max by (host, worker, variant, shunt) (
-              label_replace(claude_auto_compact_window_info{job="node-exporter"}, "host", "$1", "node", "(.*)")
-            )
-          )
+          sum by (host, variant, shunt) (increase(exec_pool_session_turns_reported_total{job="node-exporter",agent="claude"}[1d]))
       - record: host_variant:exec_pool_sessions:increase1d
         expr: |
-          sum by (host, variant, shunt) (
-            increase(exec_pool_sessions_reported_total{job="node-exporter",agent="claude"}[1d])
-            * on (host, worker) group_left (variant, shunt) max by (host, worker, variant, shunt) (
-              label_replace(claude_auto_compact_window_info{job="node-exporter"}, "host", "$1", "node", "(.*)")
-            )
-          )
+          sum by (host, variant, shunt) (increase(exec_pool_sessions_reported_total{job="node-exporter",agent="claude"}[1d]))
       # uncached input, output, cache read and cache creation together
       - record: host_variant:exec_pool_session_tokens:increase1d
         expr: |
-          sum by (host, variant, shunt) (
-            (
-              sum by (host, worker) (increase(exec_pool_session_input_tokens_total{job="node-exporter",agent="claude"}[1d]))
-              + sum by (host, worker) (increase(exec_pool_session_output_tokens_total{job="node-exporter",agent="claude"}[1d]))
-              + sum by (host, worker) (increase(exec_pool_session_cache_read_tokens_total{job="node-exporter",agent="claude"}[1d]))
-              + sum by (host, worker) (increase(exec_pool_session_cache_creation_tokens_total{job="node-exporter",agent="claude"}[1d]))
-            )
-            * on (host, worker) group_left (variant, shunt) max by (host, worker, variant, shunt) (
-              label_replace(claude_auto_compact_window_info{job="node-exporter"}, "host", "$1", "node", "(.*)")
-            )
-          )
+          sum by (host, variant, shunt) (increase(exec_pool_session_input_tokens_total{job="node-exporter",agent="claude"}[1d]))
+          + sum by (host, variant, shunt) (increase(exec_pool_session_output_tokens_total{job="node-exporter",agent="claude"}[1d]))
+          + sum by (host, variant, shunt) (increase(exec_pool_session_cache_read_tokens_total{job="node-exporter",agent="claude"}[1d]))
+          + sum by (host, variant, shunt) (increase(exec_pool_session_cache_creation_tokens_total{job="node-exporter",agent="claude"}[1d]))
       - record: host_variant:exec_pool_session_cost_usd:increase1d
         expr: |
-          sum by (host, variant, shunt) (
-            increase(exec_pool_session_cost_usd_total{job="node-exporter",agent="claude"}[1d])
-            * on (host, worker) group_left (variant, shunt) max by (host, worker, variant, shunt) (
-              label_replace(claude_auto_compact_window_info{job="node-exporter"}, "host", "$1", "node", "(.*)")
-            )
-          )
+          sum by (host, variant, shunt) (increase(exec_pool_session_cost_usd_total{job="node-exporter",agent="claude"}[1d]))
 
   - name: exec-pool.alerts
     rules:
@@ -184,8 +161,8 @@ groups:
         # left out, so only the window differs
         expr: |
           (
-            host_variant:exec_pool_session_cost_usd:increase1d{variant!="default",shunt="off"}
-            / (host_variant:exec_pool_session_turns:increase1d{variant!="default",shunt="off"} >= 10)
+            host_variant:exec_pool_session_cost_usd:increase1d{variant!~"default|unknown",shunt="off"}
+            / (host_variant:exec_pool_session_turns:increase1d{variant!~"default|unknown",shunt="off"} >= 10)
           )
           > on (host) group_left ()
           1.5 * (

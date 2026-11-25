@@ -19,8 +19,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use exec_pool::queue::{
-    Logs, METRICS_UNAVAILABLE, Park, QueueError, Store, Submitted, TRANSCRIPT_BYTES, Transcript,
-    Turn, TurnLog,
+    Arm, Logs, METRICS_UNAVAILABLE, Park, QueueError, Store, Submitted, TRANSCRIPT_BYTES,
+    Transcript, Turn, TurnLog,
 };
 use exec_pool::task_result::{TaskResult, Usage};
 use exec_pool::wake::Wake;
@@ -239,12 +239,12 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
         .query_one("SELECT max(version) FROM schema_migrations", &[])
         .unwrap()
         .get(0);
-    assert_eq!(version, 19);
+    assert_eq!(version, 20);
     submit(&mut s, &task("t-1", 1));
     // a newer binary's additive migration keeps the floor: this one still serves the database, as after a rollback
     pg.sql()
         .execute(
-            "INSERT INTO schema_migrations (version, floor) VALUES (20, 19)",
+            "INSERT INTO schema_migrations (version, floor) VALUES (21, 20)",
             &[],
         )
         .unwrap();
@@ -252,17 +252,17 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
     assert!(s.claim(&slot("s0"), 60).unwrap().is_some());
     // one this binary would misread, or one that names no floor, is refused
     pg.sql()
-        .execute("INSERT INTO schema_migrations (version) VALUES (21)", &[])
+        .execute("INSERT INTO schema_migrations (version) VALUES (22)", &[])
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(21))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(22))));
     pg.sql()
         .execute(
-            "UPDATE schema_migrations SET floor = 21 WHERE version = 21",
+            "UPDATE schema_migrations SET floor = 22 WHERE version = 22",
             &[],
         )
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(21))));
-    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(21))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(22))));
+    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(22))));
 }
 
 #[test]
@@ -1743,6 +1743,7 @@ fn park(reason: ParkReason, upto: i64) -> Park {
         undelivered: false,
         wake: None,
         transcript: None,
+        arm: None,
     }
 }
 
@@ -2833,6 +2834,7 @@ fn session_metrics_count_turns_wakes_and_tokens() {
         cache_creation_tokens: 400,
         cost_usd: Some(0.5),
     });
+    reported.arm = Some(Arm::parse(r#"{"variant": "300000", "shunt": "off"}"#).unwrap());
     owner.park(&a, epoch, &reported).unwrap();
     s.send(&id, "next").unwrap();
     // the next turn on another host
@@ -2868,25 +2870,28 @@ fn session_metrics_count_turns_wakes_and_tokens() {
     has("exec_pool_session_wake_seconds_count{host=\"msi-ms7758\",source=\"timer\"} 0");
     has("exec_pool_session_host_changes_total{host=\"asus-b460m\"} 1");
     has("exec_pool_session_host_changes_total{host=\"msi-ms7758\"} 1");
-    // usage on the host and slot its turn ran on; a turn that reported none counts no session there
+    // usage by the host and arm its turn ran under; a turn that reported none counts no session there, and a host
+    // with no turn under an arm reads zero only for its default one
+    let arm = "variant=\"300000\",shunt=\"off\"";
+    has(&format!(
+        "exec_pool_session_turns_reported_total{{host=\"msi-ms7758\",{arm},agent=\"claude\"}} 1"
+    ));
+    has(&format!(
+        "exec_pool_session_cache_read_tokens_total{{host=\"msi-ms7758\",{arm},agent=\"claude\"}} 3000"
+    ));
+    has(&format!(
+        "exec_pool_session_cost_usd_total{{host=\"msi-ms7758\",{arm},agent=\"claude\"}} 0.5"
+    ));
+    has(&format!(
+        "exec_pool_sessions_reported_total{{host=\"msi-ms7758\",{arm},agent=\"claude\"}} 1"
+    ));
     has(
-        "exec_pool_session_turns_reported_total{host=\"msi-ms7758\",worker=\"pool1\",agent=\"claude\"} 1",
+        "exec_pool_session_turns_reported_total{host=\"asus-b460m\",variant=\"unknown\",shunt=\"unknown\",agent=\"claude\"} 0",
     );
     has(
-        "exec_pool_session_cache_read_tokens_total{host=\"msi-ms7758\",worker=\"pool1\",agent=\"claude\"} 3000",
+        "exec_pool_sessions_reported_total{host=\"msi-ms7758\",variant=\"default\",shunt=\"off\",agent=\"claude\"} 0",
     );
-    has(
-        "exec_pool_session_cost_usd_total{host=\"msi-ms7758\",worker=\"pool1\",agent=\"claude\"} 0.5",
-    );
-    has(
-        "exec_pool_session_cost_usd_total{host=\"asus-b460m\",worker=\"pool1\",agent=\"claude\"} 0",
-    );
-    has(
-        "exec_pool_sessions_reported_total{host=\"msi-ms7758\",worker=\"pool1\",agent=\"claude\"} 1",
-    );
-    has(
-        "exec_pool_sessions_reported_total{host=\"asus-b460m\",worker=\"pool1\",agent=\"claude\"} 0",
-    );
+    assert!(!m.contains("host=\"asus-b460m\",variant=\"300000\""), "{m}");
     has(
         "exec_pool_sessions_parked_seconds_bucket{host=\"msi-ms7758\",agent=\"claude\",le=\"86400\"} 1",
     );
@@ -3191,4 +3196,26 @@ fn a_turn_whose_input_never_reached_the_agent_hands_it_to_the_next() {
         "the undelivered message is handed again: {}",
         next.input
     );
+}
+
+#[test]
+fn an_arm_is_two_bounded_labels_and_nothing_else() {
+    assert_eq!(
+        Arm::parse(r#"{"variant": "default", "shunt": "on"}"#).unwrap(),
+        Arm {
+            variant: "default".to_owned(),
+            shunt: "on".to_owned()
+        }
+    );
+    for bad in [
+        r#"{"variant": "", "shunt": "off"}"#,
+        r#"{"variant": "300\"} 1", "shunt": "off"}"#,
+        r#"{"variant": "Default", "shunt": "off"}"#,
+        r#"{"variant": "12345678901234567", "shunt": "off"}"#,
+        r#"{"variant": "default", "shunt": "yes"}"#,
+        r#"{"variant": "default", "shunt": "off", "slot": "pool2"}"#,
+        r#"{"variant": "default"}"#,
+    ] {
+        assert!(Arm::parse(bad).is_err(), "{bad}");
+    }
 }

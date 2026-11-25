@@ -26,7 +26,7 @@ pub const DOWN: &str = include_str!("../migrations/0001_queue.down.sql");
 /// From 7 each records its floor, the oldest VERSION whose reads and writes stay correct on it: an additive one keeps
 /// the previous floor, so a binary rolled back across it still serves; one an older binary would misread or break by
 /// its writes records its own version.
-const STEPS: [(i32, &str); 19] = [
+const STEPS: [(i32, &str); 20] = [
     (1, UP),
     (2, include_str!("../migrations/0002_submitter.up.sql")),
     (3, include_str!("../migrations/0003_result.up.sql")),
@@ -52,6 +52,7 @@ const STEPS: [(i32, &str); 19] = [
     (17, include_str!("../migrations/0017_transcript.up.sql")),
     (18, include_str!("../migrations/0018_undelivered.up.sql")),
     (19, include_str!("../migrations/0019_continue_due.up.sql")),
+    (20, include_str!("../migrations/0020_turn_arm.up.sql")),
 ];
 const DOWN_SUBMITTER: &str = include_str!("../migrations/0002_submitter.down.sql");
 const DOWN_RESULT: &str = include_str!("../migrations/0003_result.down.sql");
@@ -67,7 +68,8 @@ const DOWN_TURN_LOG: &str = include_str!("../migrations/0015_turn_log.down.sql")
 const DOWN_PRIORITY: &str = include_str!("../migrations/0016_priority.down.sql");
 const DOWN_TRANSCRIPT: &str = include_str!("../migrations/0017_transcript.down.sql");
 const DOWN_UNDELIVERED: &str = include_str!("../migrations/0018_undelivered.down.sql");
-const VERSION: i32 = 19;
+const DOWN_TURN_ARM: &str = include_str!("../migrations/0020_turn_arm.down.sql");
+const VERSION: i32 = 20;
 /// The fence's SQLSTATE, raised by `attempts_fence`.
 const FENCED: &str = "XP409";
 const LIVE: &str = "('leased', 'running', 'checkpointing')";
@@ -288,6 +290,41 @@ pub struct Park {
     /// The agent's transcript after the turn, replacing the session's; `None` keeps the one it has.
     #[serde(skip)]
     pub transcript: Option<Transcript>,
+    /// The slot's declared settings the turn ran under, recorded with its usage; `None`: not known.
+    #[serde(default)]
+    pub arm: Option<Arm>,
+}
+
+/// A slot's declared Claude settings, which the session metrics split usage by (#626): `variant` its compaction
+/// window in tokens or `default`, `shunt` `on` or `off`. Both are metric labels, so [`Arm::parse`] takes only those
+/// shapes, as the turns table's checks do.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Arm {
+    pub variant: String,
+    pub shunt: String,
+}
+
+impl Arm {
+    /// An arm from its JSON form, `{"variant": "300000", "shunt": "off"}`.
+    ///
+    /// # Errors
+    /// Not that JSON, a `variant` that is not 1 to 16 lowercase letters and digits, or a `shunt` other than on or off.
+    pub fn parse(s: &str) -> Result<Self, String> {
+        let arm: Self = serde_json::from_str(s).map_err(|e| e.to_string())?;
+        let label = (1..=16).contains(&arm.variant.len())
+            && arm
+                .variant
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit());
+        if !label {
+            return Err(format!("variant {:?}", arm.variant));
+        }
+        if !matches!(arm.shunt.as_str(), "on" | "off") {
+            return Err(format!("shunt {:?}", arm.shunt));
+        }
+        Ok(arm)
+    }
 }
 
 /// What a `continue` row reads as in a turn's input: a turn stopped before it ended.
@@ -781,7 +818,7 @@ impl Store {
             None => Err(QueueError::NotMigrated),
             Some(v) if v > VERSION => Err(QueueError::SchemaAhead(v)),
             Some(_) => Ok(tx.batch_execute(&format!(
-                "{DOWN_UNDELIVERED}{DOWN_TRANSCRIPT}{DOWN_PRIORITY}{DOWN_TURN_LOG}{DOWN_TIMER}{DOWN_DRAIN_REASON}{DOWN_CLAIM_HOST}{DOWN_SESSION_METRICS}{DOWN_SESSION}{DOWN_SLOTS}{DOWN_QUARANTINE}{DOWN_CANCEL}{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"
+                "{DOWN_TURN_ARM}{DOWN_UNDELIVERED}{DOWN_TRANSCRIPT}{DOWN_PRIORITY}{DOWN_TURN_LOG}{DOWN_TIMER}{DOWN_DRAIN_REASON}{DOWN_CLAIM_HOST}{DOWN_SESSION_METRICS}{DOWN_SESSION}{DOWN_SLOTS}{DOWN_QUARANTINE}{DOWN_CANCEL}{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"
             ))?),
         })
     }
@@ -1071,7 +1108,8 @@ impl Store {
             };
             tx.execute(
                 "INSERT INTO turns (attempt_id, lease_epoch, input_tokens, output_tokens, cache_read_tokens, \
-                 cache_creation_tokens, cost_usd, handed_back, delivered) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+                 cache_creation_tokens, cost_usd, handed_back, delivered, variant, shunt) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
                 &[
                     &attempt,
                     &epoch,
@@ -1082,6 +1120,8 @@ impl Store {
                     &usage.and_then(|u| u.cost_usd),
                     &park.result.handed_back,
                     &!park.undelivered,
+                    &park.arm.as_ref().map(|a| a.variant.as_str()),
+                    &park.arm.as_ref().map(|a| a.shunt.as_str()),
                 ],
             )?;
             mark_read(tx, (&task, attempt, epoch), park)?;
@@ -2159,86 +2199,88 @@ fn session_totals(
             "exec_pool_session_host_changes_total{{host=\"{host}\"}} {n}"
         );
     }
-    usage(tx, out)
+    usage(tx, out, hosts)
 }
 
-/// The tokens and cost session turns reported, by the host and slot (`worker`) each turn ran on and agent kind, and
-/// how many sessions reported a turn there: a slot's own settings (its compaction window) compare per turn and per
-/// session. A session that moved between slots counts once on each.
-fn usage(tx: &mut Transaction<'_>, out: &mut String) -> Result<(), QueueError> {
-    // a turn's host and slot are where its lease ran: the running event at the turn's epoch
+/// The tokens and cost session turns reported, by the host each turn ran on, the arm it ran under ([`Arm`],
+/// `unknown` when not recorded) and agent kind, and how many sessions reported a turn there: a slot's declared
+/// settings compare per turn and per session. A session whose turns ran under two arms counts once on each.
+fn usage(tx: &mut Transaction<'_>, out: &mut String, hosts: &[String]) -> Result<(), QueueError> {
+    // a turn's host is where its lease ran: the running event at the turn's epoch
     let rows = tx.query(
-        "SELECT coalesce(r.host, 'none'), coalesce(r.slot, 'none'), t.spec->'command'->>'agent', \
+        "SELECT coalesce((SELECT e.host FROM events e WHERE e.attempt_id = u.attempt_id \
+         AND e.lease_epoch = u.lease_epoch AND e.to_status = 'running' ORDER BY e.id DESC LIMIT 1), 'none'), \
+         coalesce(u.variant, 'unknown'), coalesce(u.shunt, 'unknown'), t.spec->'command'->>'agent', \
          count(u.input_tokens), coalesce(sum(u.input_tokens), 0)::bigint, \
          coalesce(sum(u.output_tokens), 0)::bigint, coalesce(sum(u.cache_read_tokens), 0)::bigint, \
          coalesce(sum(u.cache_creation_tokens), 0)::bigint, \
          count(DISTINCT t.id) FILTER (WHERE u.input_tokens IS NOT NULL), coalesce(sum(u.cost_usd), 0)::float8 \
-         FROM turns u JOIN attempts a ON a.id = u.attempt_id JOIN tasks t ON t.id = a.task_id \
-         LEFT JOIN LATERAL (SELECT e.host, e.slot FROM events e WHERE e.attempt_id = u.attempt_id \
-         AND e.lease_epoch = u.lease_epoch AND e.to_status = 'running' ORDER BY e.id DESC LIMIT 1) r ON true \
-         GROUP BY 1, 2, 3",
+         FROM turns u JOIN attempts a ON a.id = u.attempt_id JOIN tasks t ON t.id = a.task_id GROUP BY 1, 2, 3, 4",
         &[],
     )?;
-    let mut all: Vec<(String, String)> = tx
-        .query("SELECT host, id FROM slots", &[])?
+    // every slot host's default arm reads zero before its first turn; the rest only once they have one
+    let mut all: Vec<(String, String, String)> = hosts
         .iter()
-        .map(|r| Ok((r.try_get(0)?, r.try_get(1)?)))
-        .collect::<Result<_, QueueError>>()?;
+        .map(|h| (h.clone(), "default".to_owned(), "off".to_owned()))
+        .collect();
     for r in &rows {
-        all.push((r.try_get(0)?, r.try_get(1)?));
+        all.push((r.try_get(0)?, r.try_get(1)?, r.try_get(2)?));
     }
     all.sort();
     all.dedup();
     let heads = [
-        "# HELP exec_pool_session_turns_reported_total Session turns that reported their usage, by host, slot and agent kind.\n\
+        "# HELP exec_pool_session_turns_reported_total Session turns that reported their usage, by host, arm and agent kind.\n\
          # TYPE exec_pool_session_turns_reported_total counter\n",
-        "# HELP exec_pool_session_input_tokens_total Uncached input tokens session turns reported, by host, slot and agent kind.\n\
+        "# HELP exec_pool_session_input_tokens_total Uncached input tokens session turns reported, by host, arm and agent kind.\n\
          # TYPE exec_pool_session_input_tokens_total counter\n",
-        "# HELP exec_pool_session_output_tokens_total Output tokens session turns reported, by host, slot and agent kind.\n\
+        "# HELP exec_pool_session_output_tokens_total Output tokens session turns reported, by host, arm and agent kind.\n\
          # TYPE exec_pool_session_output_tokens_total counter\n",
-        "# HELP exec_pool_session_cache_read_tokens_total Input tokens read from the prompt cache, by host, slot and agent kind.\n\
+        "# HELP exec_pool_session_cache_read_tokens_total Input tokens read from the prompt cache, by host, arm and agent kind.\n\
          # TYPE exec_pool_session_cache_read_tokens_total counter\n",
-        "# HELP exec_pool_session_cache_creation_tokens_total Input tokens written to the prompt cache, by host, slot and agent kind.\n\
+        "# HELP exec_pool_session_cache_creation_tokens_total Input tokens written to the prompt cache, by host, arm and agent kind.\n\
          # TYPE exec_pool_session_cache_creation_tokens_total counter\n",
-        "# HELP exec_pool_sessions_reported_total Sessions with a turn that reported its usage on the slot, by host, slot and agent kind.\n\
+        "# HELP exec_pool_sessions_reported_total Sessions with a turn that reported its usage, by host, arm and agent kind.\n\
          # TYPE exec_pool_sessions_reported_total counter\n",
     ];
-    let row_of = |host: &str, slot: &str, agent: &str| {
+    let row_of = |(host, variant, shunt): &(String, String, String), agent: &str| {
         rows.iter().find(|r| {
             r.try_get::<_, &str>(0).ok() == Some(host)
-                && r.try_get::<_, &str>(1).ok() == Some(slot)
-                && r.try_get::<_, Option<&str>>(2).ok().flatten() == Some(agent)
+                && r.try_get::<_, &str>(1).ok() == Some(variant)
+                && r.try_get::<_, &str>(2).ok() == Some(shunt)
+                && r.try_get::<_, Option<&str>>(3).ok().flatten() == Some(agent)
         })
     };
     for (i, head) in heads.iter().enumerate() {
         out.push_str(head);
         let name = head.split_whitespace().nth(2).unwrap_or_default();
-        for (host, slot) in &all {
+        for arm in &all {
+            let (host, variant, shunt) = arm;
             for agent in AGENTS {
-                let n: i64 = row_of(host, slot, agent)
-                    .map(|r| r.try_get(i.saturating_add(3)))
+                let n: i64 = row_of(arm, agent)
+                    .map(|r| r.try_get(i.saturating_add(4)))
                     .transpose()?
                     .unwrap_or(0);
                 let _ = writeln!(
                     out,
-                    "{name}{{host=\"{host}\",worker=\"{slot}\",agent=\"{agent}\"}} {n}"
+                    "{name}{{host=\"{host}\",variant=\"{variant}\",shunt=\"{shunt}\",agent=\"{agent}\"}} {n}"
                 );
             }
         }
     }
     out.push_str(
-        "# HELP exec_pool_session_cost_usd_total The cost session turns reported, in US dollars, by host, slot and agent kind.\n\
+        "# HELP exec_pool_session_cost_usd_total The cost session turns reported, in US dollars, by host, arm and agent kind.\n\
          # TYPE exec_pool_session_cost_usd_total counter\n",
     );
-    for (host, slot) in &all {
+    for arm in &all {
+        let (host, variant, shunt) = arm;
         for agent in AGENTS {
-            let cost: f64 = row_of(host, slot, agent)
-                .map(|r| r.try_get(9))
+            let cost: f64 = row_of(arm, agent)
+                .map(|r| r.try_get(10))
                 .transpose()?
                 .unwrap_or(0.0);
             let _ = writeln!(
                 out,
-                "exec_pool_session_cost_usd_total{{host=\"{host}\",worker=\"{slot}\",agent=\"{agent}\"}} {cost}"
+                "exec_pool_session_cost_usd_total{{host=\"{host}\",variant=\"{variant}\",shunt=\"{shunt}\",agent=\"{agent}\"}} {cost}"
             );
         }
     }
