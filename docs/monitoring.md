@@ -98,7 +98,7 @@ See [the measured improvement cycle](monitoring-improvement-cycle.md) for the fl
   - BackupCollectorStale (warning, 15 m): the backup-metrics scan is over 900 s old, or acer or lenovo has no `backup.prom`.
   - OtlpWritesRejected (warning, 10 m): acer's alloy-otlp answered OTLP POSTs with 4xx/5xx in every 5 min window.
   - NodeTemperatureHigh (warning, 15 m): the Pi's `cpu-thermal` zone at 85 °C or more. x86 hosts page through NodeHwmonTemperatureHigh below.
-  - NodeHwmonTemperatureHigh (warning, 10 m): a host's hottest hwmon sensor above 92 °C.
+  - NodeHwmonTemperatureHigh (warning, 10 m): a host's hottest hwmon sensor above 92 °C, less sensors marked critical at 105 °C or more (msi).
   - NodeCpuThrottlingHigh (warning, 15 m): a host's core throttle rate above twice its 7 day mean plus 10/s.
   - NodeFanStuck (warning, 5 m): every fan of lenovo or msi at 0 rpm (65535 ignored) while it is above 80 °C.
   - GpuThermalThrottling (warning, 10 m): the GPU reports hardware thermal slowdown

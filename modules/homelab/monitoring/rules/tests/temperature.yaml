@@ -48,3 +48,6 @@ tests:
       - eval_time: 20m
         alertname: NodeTemperatureHigh
         exp_alerts: []
+      - eval_time: 20m
+        alertname: NodeHwmonTemperatureHigh
+        exp_alerts: []

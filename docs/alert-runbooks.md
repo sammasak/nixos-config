@@ -78,8 +78,8 @@ First: the Hosts dashboard's temperature panel; check the Pi's fan and airflow.
 
 ## NodeHwmonTemperatureHigh
 
-Fires: a host's hottest hwmon sensor (`homelab:node:hwmon_temp_max_celsius`) above 92 °C for 10 minutes. msi through
-a gate reads about 102 °C against its 105 °C mark, so it can fire there during a long gate.
+Fires: a host's hottest hwmon sensor above 92 °C for 10 minutes, leaving out a sensor whose own critical mark is
+105 °C or more (msi's, which reads about 102 °C through a gate; NodeCpuThrottlingHigh still covers it).
 First: the Hosts dashboard's heat row, temperature beside the running slots; `machinectl list` on the host.
 On acer with pool4 running: goals.md "Hosts and slots" says when to drop pool4.
 

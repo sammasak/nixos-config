@@ -7,6 +7,9 @@ tests:
     input_series:
       - series: 'node_hwmon_temp_celsius{job="node-exporter",node="acer-swift",chip="platform_coretemp_0",sensor="temp1"}'
         values: '66x5 94x30'
+      # acer's coretemp mark is 100 °C: under 105, so it counts
+      - series: 'node_hwmon_temp_crit_celsius{job="node-exporter",node="acer-swift",chip="platform_coretemp_0",sensor="temp1"}'
+        values: '100x35'
       - series: 'node_hwmon_temp_celsius{job="node-exporter",node="acer-swift",chip="nvme_nvme0",sensor="temp1"}'
         values: '45x35'
       - series: 'node_hwmon_temp_celsius{job="node-exporter",node="lenovo",chip="platform_coretemp_0",sensor="temp1"}'

@@ -132,8 +132,13 @@ groups:
 
       # The hosts' heat beside their slot count (the Hosts dashboard's heat row): acer has no fan sensor, so its
       # temperature and throttling are what an extra slot costs.
+      # a sensor marked critical at 105 °C or more is left out: msi's reads about 102 °C through every gate
       - alert: NodeHwmonTemperatureHigh
-        expr: homelab:node:hwmon_temp_max_celsius > 92
+        expr: |-
+          max by (node) (
+            node_hwmon_temp_celsius{job="node-exporter"} > 92
+            unless on (node, chip, sensor) node_hwmon_temp_crit_celsius{job="node-exporter"} >= 105
+          )
         for: 10m
         labels:
           severity: warning
