@@ -38,7 +38,7 @@ One definition for the whole queue, tracked by [#806](https://github.com/sammasa
 | # | Item | Outcome | Metric (25 Nov) | Alert or guard | Quality gate (minutes) |
 |---|------|---------|-----------------|----------------|------------------------|
 | 1 | Main is green ([#624](https://github.com/sammasak/nixos-config/issues/624) tail) | the scheduled gate on main passes, so a batch of merges is known good | `homelab_scheduled_gate_red` = 1 (step `nixos-flake-check`, head `24964ca3c669`, 17 failures of that step counted) | `ScheduledGateRed`, `RetroDueStepFailsRepeat` (both firing) | rerun the one red step on acer: `NIXOS_STEP=nixos-flake-check devenv tasks run nixos:step` |
-| 2 | Pi runs in a slot ([#620](https://github.com/sammasak/nixos-config/issues/620)) | `exec-pool submit --agent pi` completes a real two-line task | `exec_pool_attempts{agent="pi",state="succeeded"}` = 0; 2 failed in 5 s on 25 Nov before any model was reached | a runner test that the attempt's home holds Pi's config; the canary as a daily task once green | `just pool-merge-check BRANCH` (about 3 min), then the canary task on acer |
+| 2 | Pi runs in a slot ([#620](https://github.com/sammasak/nixos-config/issues/620)) | `exec-pool submit --agent pi` completes a real two-line task | `exec_pool_attempts{agent="pi",state="succeeded"}` = 0; 2 failed in 5 s on 25 Nov before any model was reached; fix in branch `pool/cli-1a738e569d50a1b3` (`PI_CODING_AGENT_DIR`; by hand in acer `pool3`: exit 0 on `homelab/auto`), needs a deploy of acer-swift | `nixos:workers-eval-test` checks that the step's env names the dir holding Pi's `models.json`; the canary as a daily task once green | `just pool-merge-check BRANCH` (about 3 min), then the canary task on acer |
 | 3 | A tool-capable local model on asus ([#494](https://github.com/sammasak/nixos-config/issues/494)) | the gateway routes Pi's tool loop to a model on the asus GPU | gateway requests served by asus, 7 d: 0 (`homelab.llmGateway.asus.enable` set on no host); project pi: 308 requests, all hosted free models | the gateway's provider health rule; `tool_capable` stays off for a model that fails the canary | the #620 canary on that model through the gateway; the catalog test |
 | 4 | Work-done ledger ([#806](https://github.com/sammasak/nixos-config/issues/806)) | the dashboard shows merged changes and cost per merged change by agent and model | the table above; the session report has no model; cost reported for 114 of 143 turns | `PoolCostPerMergedChangeHigh` (3 d mean above 8 USD, at least 10 merged) | exec-pool unit test in `just pool-merge-check`; one look at the table after deploy |
 | 5 | Local-model lane ([#807](https://github.com/sammasak/nixos-config/issues/807)) | small real tasks from any repository are finished by Pi on a local model and merged | local share 0 of 0; the 19 Nov pilot failed 1 of 1 | `LocalLaneRescueHigh` (share under 30 percent over 7 d, at least 10 tasks) | the task gate below, run on fixtures: one good and three bad results |
@@ -72,8 +72,9 @@ devenv-platform#141 and #129; pi-harness#26.
 ### What the slots showed on 25 Nov
 
 - Pi, one-shot on acer, no model: failed in 5 s, "No API key found for the selected model".
-- Pi with `--model homelab/auto`: failed in 6 s, model not found. Likely cause: the attempt's home has no Pi `models.json`
-  (the workers module copies it into the guest user's home at activation, not into the attempt workspace).
+- Pi with `--model homelab/auto`: failed in 6 s, model not found. Cause, confirmed in acer `pool3`: the attempt's home
+  has no Pi `models.json` (the workers module copies it into the guest user's home at activation, not into the attempt
+  workspace).
 - Codex: `submit` refused, no slot offers Codex. It needs an API key
   ([#808](https://github.com/sammasak/nixos-config/issues/808), `needs-owner`).
 - Claude: 55 sessions, 37 merged, the numbers in the table above.
@@ -126,6 +127,7 @@ Credential items moved to #653 (item 7).
 | [#645](https://github.com/sammasak/nixos-config/issues/645) | boot the gaming entry on asus once, at the machine and the TV |
 | [#601](https://github.com/sammasak/nixos-config/issues/601), PR #616 | a physical reboot of black-pi for the kernel fix |
 | [#474](https://github.com/sammasak/nixos-config/issues/474) | naked-pi: the step named on the issue, before its next deploy |
+| [#620](https://github.com/sammasak/nixos-config/issues/620), msi | Pi in msi slots: msi as a recipient of `claude/*.yaml` (the gateway key) and in the `gateway-api` listener's `from` |
 
 ## Hosts and slots
 
