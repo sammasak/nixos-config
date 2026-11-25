@@ -295,9 +295,10 @@ pub struct Park {
     pub arm: Option<Arm>,
 }
 
-/// A slot's declared Claude settings, which the session metrics split usage by (#626): `variant` its compaction
-/// window in tokens or `default`, `shunt` `on` or `off`. Both are metric labels, so [`Arm::parse`] takes only those
-/// shapes, as the turns table's checks do.
+/// A slot's declared Claude settings, which the session metrics split usage by (#626).
+///
+/// `variant` is its compaction window in tokens or `default`, `shunt` `on` or `off`. Both are metric labels, so
+/// [`Arm::parse`] takes only those shapes, as the turns table's checks do.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Arm {
