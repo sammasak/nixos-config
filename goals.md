@@ -151,7 +151,7 @@ benchmark requirements: #776; epic: #491).
 | 1 | Pool platform | the open findings above | a pool session for the top open finding |
 | 2 | Deploy | asus behind main | asus in its power window |
 | 3 | Alerts | 624-i fixes the alerts nobody could act on; not yet read live (pool slots reach neither Prometheus nor Alertmanager) | merge and deploy 624-i, then read the live list; a1's patch at `/var/lib/worker-archive/a1` on acer |
-| 4 | Gates | first scheduled gate red on `shunt-metrics-test` only, fixed since | read the next scheduled gate result |
+| 4 | Gates | scheduled gate red since 24 Nov on `checks.x86_64-linux.execution-pool-vm`, which failed to evaluate (slots' repos need `sam.workers.ghHostsFile`, the VM set none); fixed in branch `pool/cli-38a64f8b5b1d81f5` | merge, deploy acer (scheduled gate) and black-pi (rules), read the next scheduled gate result |
 | 5 | Live comparison | `ShuntCollectorStale` fires since the on side moved | read a day of Shunt on and off on 25 Nov, now on acer `pool1` |
 | 6 | Leftovers | one draft open | #616 (needs a physical reboot of black-pi) |
 
@@ -192,9 +192,7 @@ benchmark requirements: #776; epic: #491).
 | 624-i | Alerts red with nothing to do (25 Nov): DeployRolledBack per host until a good deploy of it; EscapeFound drops a reapplied revert (the live one, `78f4ee80`, reapplied as `ab8acd36`), one marked `Escape: no` and closed escape issues; the scheduled gate retries a red head once; RetroDueStepFailsRepeat clears on a scheduled green after the last failure; each text names its command | branch `pool/cli-273036d46c7d3230`; needs lenovo (collector) and acer (scheduled gate), rules on black-pi | |
 
 Open for #624, in pick-up order: after 624-i deploys, read the live list and confirm each alert cleared or names
-its command; the failing check behind the live ScheduledGateRed and RetroDueStepFailsRepeat (two series) is unknown
-from a pool slot, which reaches neither Prometheus nor Alertmanager: read it on acer (`journalctl -u scheduled-gate
--n 200`) and fix it in the repo; an intentional revert that is never reapplied still counts for 24 h (no after-the-fact
+its command; the failing check behind the live ScheduledGateRed and RetroDueStepFailsRepeat was `checks.x86_64-linux.execution-pool-vm` failing to evaluate, which wrote no check record (branch `pool/cli-38a64f8b5b1d81f5`: the VM fixed, an eval failure now records its check, the red series carries `check`, and both alerts name one rerun command, `nix build -L .#<check>` or `NIXOS_STEP=<step> devenv tasks run nixos:step`); an intentional revert that is never reapplied still counts for 24 h (no after-the-fact
 acknowledgement); `query` on TargetDown and the llm-gateway rules.
 
 ### #625 Shunt metrics
