@@ -135,7 +135,7 @@ origin/main, one nix process per host (all six in one process OOMed a slot's env
 (acer-swift 63 s, msi 42 s, asus 38 s, black-pi 19 s, lenovo 15 s, naked-pi 8 s; peak 4.2 GB), then builds the
 changed packages as before. lenovo's user.slice 8288M to 8032M, still above the 7782M the build-bounds test asserts
 (4.6 GiB idle sessions plus the largest 3.0 GiB unit): 259M of budget left instead of 3M; a new 128M unit evaluates.
-Open: the 4.6 GiB idle figure predates the named workers moving to pool slots; re-measure lenovo's user slice.
+Open: the 4.6 GiB idle figure predates the named workers moving to pool slots; re-measure lenovo's user slice. PR #799.
 
 **Open, in pick-up order**
 
