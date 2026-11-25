@@ -66,3 +66,24 @@ groups:
           description: "Shunt is declared on for {{ $labels.node }}{{ with $labels.worker }} worker {{ . }}{{ end }}, yet its agent ran Bash in the last hour with no Shunt hook record for 2 h, or a Shunt hook logged error or nostate in the last 24 h; the on/off comparison is then not measuring Shunt. A session started before Shunt was switched on keeps its old hooks until restarted. An error stays in the 24 h window, so it can stay firing up to 24 h after a fix."
           query: 'shunt_events{job="node-exporter",node="{{ $labels.node }}",worker="{{ $labels.worker }}",hook=~"shunt-.*"}'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#shuntsilent"
+
+      - alert: ShuntHookOverhead
+        # Shunt's own Bash hook time per Bash call (shunt-bash before, shunt-spill after), the cost it adds to every
+        # call; shunt-read runs per Read, not per Bash call, so it is not in it. The off side's comparable is
+        # validate-bash's time per call, which runs either way (Agent harnesses, On versus off). 250 ms and 50 calls
+        # are a starting bound, not a reading: revisit them with the first day's on and off values
+        expr: |
+          (
+            sum by (node, worker) (shunt_hook_time_ms{job="node-exporter",shunt="on",hook=~"shunt-bash|shunt-spill"})
+            / on (node, worker) max by (node, worker) (shunt_bash_calls{job="node-exporter",shunt="on"})
+          ) > 250
+          and on (node, worker) max by (node, worker) (shunt_bash_calls{job="node-exporter",shunt="on"}) >= 50
+        for: 1h
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "Shunt hooks on {{ $labels.node }}{{ with $labels.worker }} for worker {{ . }}{{ end }} add {{ $value | humanize }} ms per Bash call"
+          description: "Over the last 24 h, Shunt's own Bash hooks (shunt-bash, shunt-spill) on {{ $labels.node }}{{ with $labels.worker }} worker {{ . }}{{ end }} ran {{ $value | humanize }} ms per Bash call, over 250 ms and at least 50 calls; that is latency on every agent call. Compare the hooks' p95 in the query with validate-bash's time per call on an off worker. Rollback: set sam.claude.bulkReader.enable false for it and switch, or SHUNT_DISABLE=1 where its sessions start. The count is a 24 h window, so it can stay firing up to 24 h after a fix."
+          query: 'shunt_hook_duration_ms{job="node-exporter",node="{{ $labels.node }}",worker="{{ $labels.worker }}",quantile="0.95"}'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#shunthookoverhead"

@@ -91,7 +91,7 @@
     "DeployRolledBack": {
       "max": {
         "value": 0,
-        "tunedBy": "sum(shipping_deploy_rollbacks{window=\"24h\"})"
+        "tunedBy": "max(shipping_deploy_rollbacks_open{window=\"24h\"})"
       },
       "forMinutes": {
         "value": 0,

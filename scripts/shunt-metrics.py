@@ -45,6 +45,7 @@ METRICS = {
     "shunt_bash_calls": "validate-bash records in the window: the agent's Bash calls, logged with Shunt on or off. A 24 h rolling sum, refreshed every 15 min.",
     "shunt_bash_last_call_timestamp_seconds": "Unix time of the newest validate-bash record (the agent's last Bash call), carried over while the window holds none.",
     "shunt_hook_duration_ms": "A Shunt hook's own run time in the window, by quantile.",
+    "shunt_hook_time_ms": "A hook's run time summed over the window: the Shunt hooks, and validate-bash, which runs with Shunt on or off, so ms per Bash call compares the two. A 24 h rolling sum, refreshed every 15 min.",
     "shunt_last_record_timestamp_seconds": "Unix time of the hook's newest record, carried over while the window holds none.",
     "shunt_collector_lines": "Hook log lines in the window's files: shunt (a counted record), other (another hook or outside the window), malformed, overlong, partial (an unterminated last line) or over_cap.",
     "shunt_collector_files": "The window's day files: read, missing, refused (a link or not a regular file) or too_large.",
@@ -109,6 +110,7 @@ class Tally:
     cost: float = 0.0
     bash_calls: int = 0
     durations: dict[str, list[int]] = field(default_factory=dict)
+    hook_ms: dict[str, int] = field(default_factory=lambda: {BASH_HOOK: 0})
     last: dict[str, float] = field(default_factory=dict)
     lines: dict[str, int] = field(default_factory=lambda: dict.fromkeys(LINE_STATUS, 0))
     files: dict[str, int] = field(default_factory=lambda: dict.fromkeys(FILE_STATUS, 0))
@@ -146,8 +148,11 @@ def add_record(t: Tally, rec: object, since: float, now: float) -> str:
         return "malformed"
     if not since <= ts <= now:
         return "other"
+    d = rec.get("duration_ms")
+    ms = d if isinstance(d, int) and not isinstance(d, bool) and 0 <= d <= INT_MAX else None
     if hook == BASH_HOOK:
         t.bash_calls += 1
+        t.hook_ms[hook] += ms or 0
         t.last[hook] = max(t.last.get(hook, ts), ts)
         return "other"
     if hook not in RESULTS:
@@ -158,9 +163,9 @@ def add_record(t: Tally, rec: object, since: float, now: float) -> str:
     raw = rec.get("result")
     result = raw if isinstance(raw, str) and raw in RESULTS[hook] else "other"
     t.events[hook, result] = t.events.get((hook, result), 0) + 1
-    d = rec.get("duration_ms")
-    if isinstance(d, int) and not isinstance(d, bool) and 0 <= d <= INT_MAX:
-        t.durations.setdefault(hook, []).append(d)
+    if ms is not None:
+        t.durations.setdefault(hook, []).append(ms)
+        t.hook_ms[hook] = t.hook_ms.get(hook, 0) + ms
     t.last[hook] = max(t.last.get(hook, ts), ts)
     if hook in READ_HOOKS:
         tok = count(rec, "tokens")
@@ -317,6 +322,8 @@ def render(t: Tally | None, success: float | None, last: dict[str, float], **lab
         for hook, ds in sorted(t.durations.items()):
             for q in QUANTILES:
                 out.add("shunt_hook_duration_ms", quantile(ds, q), hook=hook, quantile=str(q))
+        for hook, ms in sorted(t.hook_ms.items()):
+            out.add("shunt_hook_time_ms", ms, hook=hook)
         last = {**last, **{h: max(ts, last.get(h, ts)) for h, ts in t.last.items()}}
     for hook, ts in sorted(last.items()):
         if hook == BASH_HOOK:
