@@ -5,9 +5,14 @@ decides. goals.md "Quality gate for a local-model task" is the contract; items 1
   gate --repo DIR --prepared SHA --head SHA (--check CMD --check-file PATH... | --check-script FILE)
        --scope PATH... --task TEXT --lint CMD|none [--reviewer CMD|none] [--check-timeout S]
       Items 1 to 5 on two commits of a local clone; prints one JSON line, exit 0 pass, 1 fail.
-  run  --repo URL --prepared SHA (the gate's flags but --head) [--model M] [--timeout S] [--key K]
-      Item 1 on the prepared commit, then `exec-pool submit --agent pi`, wait, the gate on its pushed
-      pool/<task> branch, one retry with the gate's output on a fail, and one `local-lane` platform record.
+  run  --repo URL --prepared SHA (the gate's flags but --head) [--model M] [--timeout S] [--key K] [--base B]
+       [--status-url URL|none]
+      First the gateway's /status must show a tool-capable tier 3 model ready, or it exits 3 with one
+      `result=skipped failed=no-local-model` record and submits nothing. Then item 1 on the prepared commit,
+      `exec-pool submit --agent pi`, wait, the gate on its pushed pool/<task> branch, `exec-pool cancel` of that
+      task (so it is not left at needs_review), one retry with the gate's output on a fail, and one `local-lane`
+      record. A pass opens a pull request of pool/<task> into B (main) on GitHub and merges it with a merge commit
+      (pr= in the record); a fail leaves the branch and prints why.
 
 The hosted agent's check either sits in the repository (the prepared commit is the base plus the check, and item 2
 holds the check files to it) or is a Python FILE outside it (scripts/lane-checks/), run from the tree's root: then the
@@ -28,9 +33,12 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.request
 
 MAX_LINES = 60
 REVIEWER = "claude -p --model haiku"
+# keyless on acer's admin listener (sam.fleet.listeners gateway-admin admits lenovo)
+STATUS = "http://acer-swift:9091/status"
 VERDICTS = ("ok", "unsafe", "does not fix the problem")
 TAIL = 3000
 # what the check and the lint, which can run model-written code, do not inherit
@@ -166,9 +174,49 @@ def record(fields):
     subprocess.run([exe, "local-lane", *(f"{k}={v}" for k, v in fields.items())], check=False)
 
 
+def local_up(url):
+    """None when the gateway can route a tool loop to a local model now, else why not."""
+    if url == "none":
+        return None
+    try:
+        with urllib.request.urlopen(url, timeout=10) as r:
+            models = json.load(r)["models"]
+    except (OSError, ValueError, KeyError) as e:
+        return f"gateway status {url} unreadable: {e}"
+    up = [m["model"] for m in models if m.get("tier") == 3 and m.get("tool_capable")
+          and (m.get("health") or {}).get("state") == "ready"]
+    return None if up else "no local model up: no tool-capable tier 3 model is ready at the gateway"
+
+
+def gh(*args):
+    out = subprocess.run(["gh", "api", *args], capture_output=True, text=True)
+    if out.returncode != 0:
+        raise PoolError(f"gh api {args[0]} exits {out.returncode}: {(out.stderr or out.stdout).strip()[-500:]}")
+    return out.stdout.strip()
+
+
+def land(url, base, task, a):
+    """The merged pull request's number for pool/<task>; raises PoolError with why it is not merged."""
+    slug = url.removeprefix("https://github.com/").removesuffix(".git")
+    body = (f"The local-model lane: Pi on a local model, task {task}, passed the lane gate (scripts/local-lane.py in "
+            f"nixos-config).\n\nTask:\n{a.task}\n")
+    pr = gh(f"repos/{slug}/pulls", "-f", f"head=pool/{task}", "-f", f"base={base}", "-f",
+            f"title=local lane: {a.task[:60]}", "-f", f"body={body}", "--jq", ".number")
+    if gh("-X", "PUT", f"repos/{slug}/pulls/{pr}/merge", "-f", "merge_method=merge", "--jq", ".merged") != "true":
+        raise PoolError(f"pull request {pr} opened but not merged")
+    return pr
+
+
 def cmd_run(a):
     started = time.monotonic()
     url = a.repo
+    down = local_up(a.status_url)
+    if down:
+        print(json.dumps({"result": "skipped", "failed": "no-local-model", "why": down}))
+        record({"model": a.model, "repo": url.removeprefix("https://github.com/").removesuffix(".git"),
+                "result": "skipped", "failed": "no-local-model", "attempts": 0, "lines": "unknown", "seconds": 0,
+                "task": "none"})
+        return 3
     with tempfile.TemporaryDirectory(prefix="local-lane-clone-") as tmp:
         a.repo = str(pathlib.Path(tmp) / "repo")
         subprocess.run(["git", "clone", "--quiet", "--filter=blob:none", url, a.repo], check=True)
@@ -201,15 +249,21 @@ def cmd_run(a):
             else:
                 verdict = gate(a, git(a.repo, "rev-parse", "FETCH_HEAD").strip())
             verdict.update(task=task, attempt=attempt)
-            print(json.dumps(verdict), flush=True)
+            subprocess.run(["exec-pool", "cancel", task], capture_output=True)
             if verdict["result"] == "passed":
+                try:
+                    verdict["pr"] = land(url, a.base, task, a)
+                except PoolError as e:
+                    verdict.update(result="failed", failed="land", why=str(e))
+                print(json.dumps(verdict), flush=True)
                 break
+            print(json.dumps(verdict), flush=True)
             prompt += (f"\n\nA first attempt failed the gate at {verdict['failed']}: {verdict['why']}."
                        f"\n{verdict.get('output', '')}")
     record({"model": a.model, "repo": url.removeprefix("https://github.com/").removesuffix(".git"),
             "result": verdict["result"], "failed": verdict["failed"], "attempts": verdict["attempt"],
             "lines": verdict["lines"] if verdict["lines"] is not None else "unknown",
-            "seconds": int(time.monotonic() - started), "task": task})
+            "seconds": int(time.monotonic() - started), "task": task, "pr": verdict.get("pr", "none")})
     return 0 if verdict["result"] == "passed" else 1
 
 
@@ -232,6 +286,8 @@ def main():
     sub.choices["run"].add_argument("--model", default="homelab/local")
     sub.choices["run"].add_argument("--timeout", type=int, default=3600)
     sub.choices["run"].add_argument("--key", help="a new one runs the same prepared task again")
+    sub.choices["run"].add_argument("--base", default="main", help="the branch a passed task merges into")
+    sub.choices["run"].add_argument("--status-url", default=os.environ.get("LOCAL_LANE_STATUS", STATUS))
     a = p.parse_args()
     if bool(a.check_script) == bool(a.check and a.check_file):
         p.error("give either --check with --check-file, or --check-script")

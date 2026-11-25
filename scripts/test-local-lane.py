@@ -2,7 +2,8 @@
 """scripts/local-lane.py's gate on fixtures (#807): one good result passes, and a weakened check, a file out of scope,
 a check still failing, a diff over 60 lines or with a binary file, a reviewer saying unsafe or something unclear or
 missing, and a check that already passes on the prepared commit each fail at their own item; `run` against a fake
-exec-pool retries once, keeps no credential in the lint's environment and writes one record."""
+exec-pool and gh retries once, keeps no credential in the lint's environment, cancels each task, opens and merges the
+pull request of a pass and writes one record; with no local model ready it submits nothing and records the skip."""
 import json
 import os
 import pathlib
@@ -19,6 +20,9 @@ WRITER = LANE.parents[1] / "pkgs/platform-record/platform_record.py"
 FAKE_POOL = """#!{python}
 import pathlib, subprocess, sys
 state = pathlib.Path({state!r})
+if sys.argv[1] == "cancel":
+    with open(state / "cancelled", "a") as f:
+        f.write(sys.argv[2] + "\\n")
 if sys.argv[1] == "submit":
     n = len(list(state.glob("prompt-*"))) + 1
     (state / f"prompt-{{n}}").write_text(sys.stdin.read())
@@ -31,6 +35,13 @@ if sys.argv[1] == "submit":
     run("-c", "user.name=pi", "-c", "user.email=pi@pi", "commit", "--quiet", "-am", "pi")
     run("push", "--quiet", "origin", f"HEAD:refs/heads/pool/t{{n}}")
     print(f"t{{n}}")
+"""
+# gh as the lane calls it: logs each call; opening a pull request prints 7, merging it true
+FAKE_GH = """#!{python}
+import pathlib, sys
+with open({log!r}, "a") as f:
+    f.write(" ".join(sys.argv[1:]) + "\\n")
+print("true" if "merge_method=merge" in sys.argv else "7")
 """
 CHECK = "import pathlib, sys\nsys.exit(pathlib.Path('a.txt').read_text() != 'new\\n')\n"
 
@@ -110,13 +121,28 @@ with tempfile.TemporaryDirectory() as tmp:
     fake = state / "bin/exec-pool"
     fake.write_text(FAKE_POOL.format(python=sys.executable, state=str(state), origin=origin))
     fake.chmod(0o755)
+    calls = state / "calls"
+    (state / "bin/gh").write_text(FAKE_GH.format(python=sys.executable, log=str(calls)))
+    (state / "bin/gh").chmod(0o755)
+    ready = pathlib.Path(tmp) / "status-ready.json"
+    ready.write_text(json.dumps({"models": [
+        {"model": "msi/llama3.1:8b", "tier": 3, "tool_capable": False, "health": {"state": "ready"}},
+        {"model": "asus-paddock/q", "tier": 3, "tool_capable": True, "health": {"state": "ready"}}]}))
+    down = pathlib.Path(tmp) / "status-down.json"
+    down.write_text(ready.read_text().replace('{"state": "ready"}}]', '{"state": "cooling"}}]'))
     spool = pathlib.Path(tmp) / "spool"
     env = {**os.environ, "PATH": f"{state / 'bin'}:{os.environ['PATH']}", "PLATFORM_RECORD": str(WRITER),
            "PLATFORM_RECORD_SPOOL": str(spool), "PLATFORM_RECORD_SHIPPER": "host", "PLATFORM_RECORD_STRICT": "1"}
-    out = subprocess.run([sys.executable, "-I", str(LANE), "run", "--repo", origin, "--prepared", base,
-                          "--check-script", str(script), "--scope", "a.txt", "--task", "Make a.txt say new.",
-                          "--lint", "test -z \"$CLAUDE_CODE_OAUTH_TOKEN\"", "--reviewer", "echo ok"],
-                         capture_output=True, text=True, env={**env, "CLAUDE_CODE_OAUTH_TOKEN": "planted"})
+    run = [sys.executable, "-I", str(LANE), "run", "--repo", origin, "--prepared", base, "--check-script",
+           str(script), "--scope", "a.txt", "--task", "Make a.txt say new.", "--lint",
+           "test -z \"$CLAUDE_CODE_OAUTH_TOKEN\"", "--reviewer", "echo ok"]
+    out = subprocess.run([*run, "--status-url", down.as_uri()], capture_output=True, text=True, env=env)
+    check(out.returncode == 3 and "no local model up" in out.stdout and not list(state.glob("prompt-*"))
+          and "result=skipped failed=no-local-model attempts=0" in spool.read_text(),
+          f"run with no local model ready submits nothing and records the skip ({out.returncode}, {out.stdout})")
+    spool.unlink()
+    out = subprocess.run([*run, "--status-url", ready.as_uri()], capture_output=True, text=True,
+                         env={**env, "CLAUDE_CODE_OAUTH_TOKEN": "planted"})
     lines = [json.loads(line) for line in out.stdout.splitlines()]
     check(out.returncode == 0 and [v["failed"] for v in lines] == ["check", "none"]
           and [v["task"] for v in lines] == ["t1", "t2"], f"run retries a failed result once and passes ({out.returncode}, {lines}, {out.stderr[-300:]})")
@@ -125,6 +151,12 @@ with tempfile.TemporaryDirectory() as tmp:
           "Pi gets the check's source, and the retry the first attempt's gate output")
     kept = spool.read_text() if spool.is_file() else ""
     check("local-lane model=homelab/local repo=" in kept and "result=passed failed=none attempts=2" in kept
-          and "task=t2" in kept, f"run keeps one local-lane record, the task id in the line only ({kept.strip()[-300:]})")
+          and "task=t2" in kept and "pr=7" in kept, f"run keeps one local-lane record, the task id in the line only ({kept.strip()[-300:]})")
+    made = calls.read_text() if calls.is_file() else ""
+    check(made.count("api ") == 2 and "-f head=pool/t2 -f base=main" in made
+          and "api -X PUT repos/" in made and "/pulls/7/merge -f merge_method=merge" in made,
+          f"a pass opens the pull request of pool/t2 into main and merges it with a merge commit ({made})")
+    cancels = (state / "cancelled").read_text().split() if (state / "cancelled").is_file() else []
+    check(cancels == ["t1", "t2"], f"each gated task is cancelled, so none is left at needs_review ({cancels})")
 
 finish()
