@@ -6,7 +6,8 @@ One section per alert in `modules/homelab/monitoring/rules/homelab.yaml`, `modul
 rules, `modules/homelab/monitoring/loki-rules/fake/homelab.yaml`; each alert's `runbook_url` points at its heading here.
 The shipping alerts point at [shipping.md](shipping.md#alerts). The kube-prometheus-stack rules (`general.yaml`,
 `node-exporter.yaml`, `alertmanager.yaml`, `prometheus.yaml` there) keep upstream's runbook,
-`https://runbooks.prometheus-operator.dev/runbooks/<area>/<alert in lower case>`, and their `query` is their `expr`.
+`https://runbooks.prometheus-operator.dev/runbooks/<area>/<alert in lower case>`, and their `query` is their `expr`;
+TargetDown, the one of them that fires with every outage, has its own section here.
 
 Every alert in a rule file black-pi's Prometheus loads, and every Loki-ruler alert, carries the same annotations, held
 by the `monitoring-alert-annotations` check (`flake-modules/monitoring-check.nix`, `scripts/check-alert-annotations.py`):
@@ -28,6 +29,15 @@ feeds the inhibit rules in `modules/homelab/monitoring/alertmanager.nix`. Target
 host through the same record, `homelab:node:off_as_planned`, so a planned power-off does not count as a target down.
 First: nothing to do. If the host should be on, check its power window in `modules/core/fleet.nix`.
 
+## TargetDown
+
+Fires: over 10 % of a job's scrape targets have not answered black-pi's Prometheus for 10 minutes, leaving out the
+targets of a host off as planned (`homelab:node:off_as_planned`). One page per job; a host down outside its plan also
+fires NodeChronicNotReady, which names it.
+First: the `query` lists the down targets; `http://192.168.10.137:9090/targets?search=<job>` shows each one's scrape
+error. A refused connection is the exporter's unit on that host (`systemctl status` it there), a timeout the host or
+the LAN.
+
 ## NodeChronicNotReady
 
 Fires: `up{job="node-exporter"}` is 0 for 15 minutes outside the host's planned power-off.
@@ -41,7 +51,8 @@ First: on the host, `systemctl status prometheus-nvidia-gpu-exporter` and `nvidi
 
 ## NodeOOMKill
 
-Fires: `node_vmstat_oom_kill` increased in the last 15 minutes.
+Fires: `node_vmstat_oom_kill` increased in the last 15 minutes, for 2 minutes. Inhibited while UnitOOMKilled fires
+for the same host, which names the unit; so it pages alone only for a kill whose journal line did not reach Loki.
 First: on the host, `journalctl -k --since -1h | grep -i 'killed process'` names the process and its cgroup.
 Do not: raise a `MemoryMax` before the journal shows which unit hit it.
 
@@ -49,7 +60,7 @@ Do not: raise a `MemoryMax` before the journal shows which unit hit it.
 
 Fires: systemd logged "A process of this unit has been killed by the OOM killer" for a system unit in the last 15
 minutes (Loki's ruler on black-pi; `run-*`, `session-*` and `systemd-coredump@*` fold as the journal collector folds them). It
-names the unit that NodeOOMKill only counts, so one kill pages both. Its `query` is LogQL, for Grafana's Explore.
+names the unit that NodeOOMKill only counts, and inhibits NodeOOMKill on the same host, so one kill pages once. Its `query` is LogQL, for Grafana's Explore.
 Not matched: kills by systemd-oomd, and user units (their journal is not shipped).
 First: on the host, `journalctl -u <unit> -b` and `systemctl show <unit> -p MemoryMax -p MemoryPeak`.
 Do not: raise the unit's `MemoryMax` before its journal shows what grew.
@@ -64,11 +75,6 @@ the cause is fixed.
 
 Fires: black-pi's `cpu-thermal` zone reads 85 °C or more for 15 minutes.
 First: the Hosts dashboard's temperature panel; check the Pi's fan and airflow.
-
-## NodeSensorNearCritical
-
-Fires: an hwmon sensor reads within 5 °C of its own critical mark for 15 minutes. `notify="none"`: alert list only.
-First: whether a build or gate runs on the host (expected on msi and lenovo); outside one, check fans and airflow.
 
 ## GpuThermalThrottling
 
@@ -227,16 +233,6 @@ LAN; on acer, `journalctl -u caddy --since -10m`.
 
 Fires: the certificate a public name serves expires in under 14 days, for an hour.
 First: on acer, `journalctl -u caddy | grep -i acme` for the renewal's error.
-
-## PrometheusTargetsMostlyDown
-
-Fires: under 70 % of scrape targets are up for 10 minutes: the monitoring signal itself is suspect.
-First: `http://192.168.10.137:9090/targets`; whether the down targets share a host, a job or the LAN.
-
-## HomelabHealthScoreLow
-
-Fires: `homelab:health:score` is below 70 for 15 minutes.
-First: the query lists each `homelab:health:*` KPI; follow the one that fails its threshold in the score's rule.
 
 ## ShuntCollectorStale
 

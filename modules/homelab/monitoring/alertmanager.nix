@@ -91,10 +91,9 @@ in
         routes = [
           {
             receiver = "null";
-            matchers = [ ''alertname =~ "Watchdog|InfoInhibitor|HostExpectedOff"'' ];
+            matchers = [ ''alertname =~ "Watchdog|HostExpectedOff"'' ];
           }
-          # a rule's notify="none" keeps it in the alert list and off the phone (NodeSensorNearCritical); so does
-          # severity="info" (NodeCPUHighUsage: every gate holds a builder above 90 % for longer than its 15 m)
+          # a rule's notify="none" keeps it in the alert list and off the phone; so does severity="info"
           {
             receiver = "null";
             matchers = [ ''notify = "none"'' ];
@@ -183,6 +182,13 @@ in
             ''job = "nvidia-gpu"''
           ];
         }
+        # 3) UnitOOMKilled (Loki's ruler) names the unit NodeOOMKill only counts; NodeOOMKill's for: gives the journal
+        #    line time to arrive, and it still pages when the journal path is down
+        {
+          source_matchers = [ "alertname = UnitOOMKilled" ];
+          target_matchers = [ "alertname = NodeOOMKill" ];
+          equal = [ "node" ];
+        }
       ];
     };
   };
@@ -195,7 +201,7 @@ in
   assertions = [
     {
       assertion = lib.elem "--cluster.listen-address=" config.services.prometheus.alertmanager.extraFlags;
-      message = "modules/homelab/monitoring/alertmanager.nix: Alertmanager runs unclustered; rules/alertmanager.yaml leaves out the cluster consistency alerts, so add them back with a second instance.";
+      message = "modules/homelab/monitoring/alertmanager.nix: Alertmanager runs unclustered; rules/alertmanager.yaml leaves out the cluster alerts, so add them back with a second instance.";
     }
   ];
 }
