@@ -154,7 +154,7 @@ with tempfile.TemporaryDirectory() as tmp:
           and "task=t2" in kept and "pr=7" in kept, f"run keeps one local-lane record, the task id in the line only ({kept.strip()[-300:]})")
     made = calls.read_text() if calls.is_file() else ""
     check(made.count("api ") == 2 and "-f head=pool/t2 -f base=main" in made
-          and "api -X PUT repos/" in made and "/pulls/7/merge -f merge_method=merge" in made,
+          and "api -X PUT repos/" in made and "/pulls/7/merge -f merge_method=merge -f sha=" in made,
           f"a pass opens the pull request of pool/t2 into main and merges it with a merge commit ({made})")
     cancels = (state / "cancelled").read_text().split() if (state / "cancelled").is_file() else []
     check(cancels == ["t1", "t2"], f"each gated task is cancelled, so none is left at needs_review ({cancels})")

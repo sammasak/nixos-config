@@ -195,14 +195,16 @@ def gh(*args):
     return out.stdout.strip()
 
 
-def land(url, base, task, a):
-    """The merged pull request's number for pool/<task>; raises PoolError with why it is not merged."""
+def land(url, base, task, head, a):
+    """The merged pull request's number for pool/<task> at head, the gated commit (GitHub refuses the merge once the
+    branch moved); raises PoolError with why it is not merged."""
     slug = url.removeprefix("https://github.com/").removesuffix(".git")
     body = (f"The local-model lane: Pi on a local model, task {task}, passed the lane gate (scripts/local-lane.py in "
             f"nixos-config).\n\nTask:\n{a.task}\n")
     pr = gh(f"repos/{slug}/pulls", "-f", f"head=pool/{task}", "-f", f"base={base}", "-f",
             f"title=local lane: {a.task[:60]}", "-f", f"body={body}", "--jq", ".number")
-    if gh("-X", "PUT", f"repos/{slug}/pulls/{pr}/merge", "-f", "merge_method=merge", "--jq", ".merged") != "true":
+    if gh("-X", "PUT", f"repos/{slug}/pulls/{pr}/merge", "-f", "merge_method=merge", "-f", f"sha={head}",
+          "--jq", ".merged") != "true":
         raise PoolError(f"pull request {pr} opened but not merged")
     return pr
 
@@ -241,7 +243,8 @@ def cmd_run(a):
                 verdict = {"result": "error", "failed": "submit", "why": str(e), "lines": None, "attempt": attempt}
                 print(json.dumps(verdict), flush=True)
                 break
-            subprocess.run(["exec-pool", "wait", task, "--timeout", str(a.timeout)], capture_output=True)
+            settled = subprocess.run(["exec-pool", "wait", task, "--timeout", str(a.timeout)],
+                                     capture_output=True).returncode == 0
             fetched = subprocess.run(["git", "-C", a.repo, "fetch", "--quiet", "origin", f"pool/{task}"],
                                      capture_output=True)
             if fetched.returncode != 0:
@@ -252,7 +255,9 @@ def cmd_run(a):
             subprocess.run(["exec-pool", "cancel", task], capture_output=True)
             if verdict["result"] == "passed":
                 try:
-                    verdict["pr"] = land(url, a.base, task, a)
+                    if not settled:
+                        raise PoolError("the task had not settled by --timeout, so its branch may still move")
+                    verdict["pr"] = land(url, a.base, task, verdict["head"], a)
                 except PoolError as e:
                     verdict.update(result="failed", failed="land", why=str(e))
                 print(json.dumps(verdict), flush=True)
