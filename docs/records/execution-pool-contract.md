@@ -193,7 +193,9 @@ puts in the inbox meanwhile (handed over in the turn hint `turn.json` beside the
 heartbeat; the helper prompts it, and the park marks it read), works on in the same turn. Once the grace runs out (at
 once when the agent called `pool-wait`) the helper closes Claude with ctrl+c twice and the turn parks as `turn_end`
 (`waiting_until` with a timer); its verdict is its transcript's last assistant message (`pane::verdict`). The time
-limit counts the agent's work since it was last idle, so a pause never times a turn out, and the helper's unit has no
+limit counts the agent's work since it last idled or wrote its transcript or a subagent's, so a pause never times a
+turn out and a working agent is cut only after the limit with no write, or four limits with no pause
+(`runner_main::limit`); the helper's unit has no
 start timeout of its own; a drain in the pause parks the turn as ended. A prompt that never reached the agent (no new
 transcript line), a pane that did not open or Herdr not running parks the session as `turn_error` (failed step
 `prompt`, `turn` or `herdr`) with its input **undelivered**: the park marks nothing read and a first turn stays first

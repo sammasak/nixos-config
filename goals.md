@@ -99,9 +99,14 @@ Prepared and proven passable on 25 Nov: `nixos-config-bench-qwen` (docs), `herma
 
 ## Open pool findings (item 8, in pick-up order)
 
-1. Sessions lost turns to the 30 minute limit on 24 Nov; re-check the limit now that turns are interactive and park
-   on idle.
-2. A runner restarted mid-turn takes its new start as the turn's, so a subagent from before the restart is not seen.
+1. ~~Sessions lost turns to the 30 minute limit~~: on 25 Nov Prometheus counted 51 `turn_timeout` parks against 68
+   `turn_end` (acer 34, msi 17), one session stalled after three in a row. A pane turn's limit now restarts on every
+   write to its transcript or a subagent's, bounded at four limits with no pause (`runner_main::limit`), so a cut
+   is a turn silent for 30 minutes or busy for two hours; a cut still continues by itself up to three in a row.
+   Live after deploys of acer and msi.
+2. ~~A runner restarted mid-turn takes its new start as the turn's~~: no longer holds. The turn's start and its
+   subagent check live in the helper (`exec-pool-exec@`, `restartIfChanged = false`), which a restarted runner
+   adopts and does not restart; a restarted helper refuses the run (its run directory exists).
 3. lenovo cannot push nixos-config (stale devenv gate); its root rebuild trigger needs a GitHub SSH key for root.
 4. Re-measure lenovo's user slice now that the named workers are pool slots.
 5. The v0.1 acceptance script in a VM (PASS, FAIL or UNTESTED per criterion) is not written.

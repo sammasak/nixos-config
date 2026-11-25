@@ -94,7 +94,7 @@ in
     timeoutSecs = mkOption {
       type = types.ints.positive;
       default = 1800;
-      description = "How long a task's command, or a session's agent since it was last idle, may run in its slot before it is stopped: a one-shot attempt then goes to needs_review, a session's turn parks as turn_timeout and continues in a new turn, up to three in a row with no message between.";
+      description = "How long a task's command, or a session's agent since it last idled or wrote its transcript (four times this since it last idled), may run in its slot before it is stopped: a one-shot attempt then goes to needs_review, a session's turn parks as turn_timeout and continues in a new turn, up to three in a row with no message between.";
     };
     sessionSurface = mkOption {
       type = types.enum [

@@ -909,7 +909,8 @@ impl Guest {
     }
 
     /// [`Guest::step`], keeping up to `keep` bytes of its stdout and asking `watch` on every poll whether to stop it,
-    /// which is neither a timeout nor a cancel, and whether its agent is idle, which restarts its time limit.
+    /// which is neither a timeout nor a cancel, and whether its agent is idle or progressing, which restarts its time
+    /// limit ([`limit`]).
     fn step_watched(
         &self,
         (unit, cancellable): (&str, bool),
@@ -965,7 +966,7 @@ impl Guest {
                 .map(|s| Self::capture(s, (err, CAPTURE_BYTES), log.cloned()))
                 .transpose()?,
         ];
-        let mut t = Instant::now();
+        let mut t = (Instant::now(), Instant::now());
         let mut stopped = false;
         let (mut timed_out, mut cancelled) = (false, false);
         let status = loop {
@@ -1500,17 +1501,37 @@ impl Herdr {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Watch {
     Busy,
+    /// Its agent wrote to its session's transcript since the last poll: its time limit starts again, within
+    /// [`PROGRESS_BOUND`].
+    Progress,
     /// Its agent waits for input: its time limit starts again.
     Idle,
     Stop,
 }
 
-/// A step's time limit after a poll at `now` found `watched`, from `since`: its new start and whether it ran out.
+/// How many time limits in a row an agent that keeps writing its transcript, never idle, works before it is cut.
+const PROGRESS_BOUND: u32 = 4;
+
+/// A step's time limit after a poll at `now` found `watched`, from `(idle, since)`, when it was last idle and last
+/// idle or progressing: their new values and whether it ran out.
 ///
-/// It counts the agent's work since it was last idle, not its pause, so an agent that never idles is cut at `timeout`.
-fn limit(since: Instant, watched: Watch, now: Instant, timeout: Duration) -> (Instant, bool) {
-    let since = if watched == Watch::Idle { now } else { since };
-    (since, now.saturating_duration_since(since) > timeout)
+/// It counts the agent's work since it last idled or wrote, not its pause, so an agent that writes nothing for
+/// `timeout` is cut then, and one that never idles at `timeout` times [`PROGRESS_BOUND`].
+fn limit(
+    (idle, since): (Instant, Instant),
+    watched: Watch,
+    now: Instant,
+    timeout: Duration,
+) -> ((Instant, Instant), bool) {
+    let idle = if watched == Watch::Idle { now } else { idle };
+    let since = if matches!(watched, Watch::Idle | Watch::Progress) {
+        now
+    } else {
+        since
+    };
+    let ran_out = now.saturating_duration_since(since) > timeout
+        || now.saturating_duration_since(idle) > timeout.saturating_mul(PROGRESS_BOUND);
+    ((idle, since), ran_out)
 }
 
 /// The watch of a step that only its time limit and the runner's marker stop.
@@ -1570,6 +1591,8 @@ struct PaneTurn<'a> {
     upto: i64,
     /// The agent was idle at the last poll.
     idle: bool,
+    /// The session's last write to its transcript or a subagent's the last poll found ([`written`]).
+    written: Option<SystemTime>,
     /// The agent was closed idle, its turn ended.
     ended: bool,
     /// Every workspace the turn opened, closed by id once it ends whatever its label shows by then.
@@ -1604,6 +1627,7 @@ impl<'a> PaneTurn<'a> {
             from: None,
             upto: m.session.as_ref().map_or(0, |s| s.upto),
             idle: false,
+            written: None,
             ended: false,
             opened: Vec::new(),
         }
@@ -1695,7 +1719,16 @@ impl<'a> PaneTurn<'a> {
                         .call(&["agent", "send-keys", &p, "ctrl+c"], Duration::ZERO);
                     self.phase = Phase::Close(Instant::now());
                 }
-                if self.idle { Watch::Idle } else { Watch::Busy }
+                let written = written(self.home, self.uuid);
+                let wrote = written > self.written;
+                self.written = written.max(self.written);
+                if self.idle {
+                    Watch::Idle
+                } else if wrote {
+                    Watch::Progress
+                } else {
+                    Watch::Busy
+                }
             }
             Phase::Close(since) if since.elapsed() > AGENT_CLOSE => Watch::Stop,
             Phase::Close(_) => Watch::Idle,
@@ -1853,6 +1886,23 @@ fn subagents(home: &Path, uuid: &str, since: SystemTime) -> bool {
                     .is_ok_and(|t| t >= since)
                 && read_regular(&p).is_ok_and(|m| pane::subagent_running(&m))
         })
+}
+
+/// The latest write to the session `uuid`'s transcript or one of its subagents' files under the docked tree's `home`.
+fn written(home: &Path, uuid: &str) -> Option<SystemTime> {
+    let modified = |p: &Path| p.symlink_metadata().and_then(|m| m.modified()).ok();
+    let main = transcript_of(home, uuid);
+    let subagents = main
+        .as_deref()
+        .and_then(|t| fs::read_dir(t.with_extension("").join("subagents")).ok())
+        .into_iter()
+        .flatten()
+        .filter_map(|e| modified(&e.ok()?.path()));
+    main.as_deref()
+        .and_then(modified)
+        .into_iter()
+        .chain(subagents)
+        .max()
 }
 
 /// The session's transcript in the docked tree's `home`, if Claude has written one.
@@ -2765,7 +2815,7 @@ mod tests {
         let run = |jobs: bool| {
             let mut w = pane::TurnWatch::new(1);
             let t0 = Instant::now();
-            let mut since = t0;
+            let mut since = (t0, t0);
             for ms in (0..=3_600_000_u64).step_by(2000) {
                 let idle = w.idle_ms(seen, jobs, ms);
                 if pane::parks(idle, GRACE_SECS, false) {
@@ -2791,6 +2841,59 @@ mod tests {
         };
         assert_eq!(run(false), ("parked", GRACE_SECS * 1000));
         assert_eq!(run(true), ("cut", limit_secs * 1000 + 2000));
+    }
+
+    #[test]
+    fn a_turn_that_keeps_writing_runs_past_its_limit_up_to_the_bound_and_one_that_stops_is_cut() {
+        let timeout = Duration::from_secs(1800);
+        let t0 = Instant::now();
+        // writes every `every` s from the start until `until` s, then nothing: the second it is cut at
+        let run = |every: u64, until: u64| {
+            let mut t = (t0, t0);
+            for s in 1..=4 * 3600_u64 {
+                let wrote = s <= until && s % every == 0;
+                let watched = if wrote { Watch::Progress } else { Watch::Busy };
+                let cut;
+                (t, cut) = limit(t, watched, t0 + Duration::from_secs(s), timeout);
+                if cut {
+                    return s;
+                }
+            }
+            0
+        };
+        assert_eq!(run(60, 0), 1801);
+        assert_eq!(run(60, 3000), 3000 + 1801);
+        assert_eq!(run(60, u64::MAX), 4 * 1800 + 1);
+        // an idle pause starts the bound again
+        let mut t = (t0, t0);
+        let cut;
+        (t, _) = limit(t, Watch::Idle, t0 + Duration::from_secs(7000), timeout);
+        (_, cut) = limit(t, Watch::Progress, t0 + Duration::from_secs(7300), timeout);
+        assert!(!cut);
+    }
+
+    #[test]
+    fn progress_is_the_latest_write_to_the_transcript_or_a_subagents_file() {
+        let home = std::env::temp_dir().join(format!("exec-pool-written-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&home);
+        let uuid = "c3d69fdc-2343-4532-a7dc-46ef64b5040a";
+        let project = home.join(".claude/projects/-session-cur-work");
+        fs::create_dir_all(project.join(uuid).join("subagents")).unwrap();
+        assert_eq!(written(&home, uuid), None);
+        let main = project.join(format!("{uuid}.jsonl"));
+        fs::write(&main, "{}\n").unwrap();
+        let first = written(&home, uuid).unwrap();
+        let sub = project.join(uuid).join("subagents").join("agent-a1.jsonl");
+        fs::write(&sub, "{}\n").unwrap();
+        let later = SystemTime::now() + Duration::from_secs(60);
+        fs::File::options()
+            .write(true)
+            .open(&sub)
+            .and_then(|f| f.set_modified(later))
+            .unwrap();
+        assert!(written(&home, uuid).unwrap() > first);
+        assert_eq!(written(&home, uuid), Some(later));
+        fs::remove_dir_all(&home).unwrap();
     }
 
     #[test]
