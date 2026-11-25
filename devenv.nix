@@ -169,7 +169,12 @@ let
         # an output that fails to evaluate or dry-run fails the step without a build record: this one names it, or
         # ScheduledGateRed and RetroDueStepFailsRepeat can name the step alone and rerun the whole gate
         cur=""
-        trap 'rc=$?; [ "$rc" -eq 0 ] || [ -z "$cur" ] || ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check="$cur" owner="$me" seconds=0 result=fail head="''${NIXOS_QA_HEAD:-}"' EXIT
+        failed_output() {
+          local rc=$?
+          [ "$rc" -eq 0 ] || [ -z "$cur" ] \
+            || ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check="$cur" owner="$me" seconds=0 result=fail head="''${NIXOS_QA_HEAD:-}"
+        }
+        trap failed_output EXIT
         cudahost=0
         if nix-store -qR /run/current-system 2>/dev/null | grep -qE -e "$heavy"; then cudahost=1; fi
         deferred=()
@@ -977,6 +982,25 @@ let
     workersEvalTest
     alloyOtlpTest
   ];
+  # one nixos:qa step by the name its gate-step record gives (NIXOS_STEP), the rerun ScheduledGateRed and
+  # RetroDueStepFailsRepeat name: about twenty steps have no task of their own, and the rest not always step's name
+  qaSteps =
+    lints
+    ++ [
+      fmtCheck
+      secretsVerify
+      probe
+    ]
+    ++ sideBySide
+    ++ tests;
+  stepRun = gate "nixos-step" [ ] ''
+    case ''${NIXOS_STEP:?set NIXOS_STEP to a nixos:qa step name, as its gate-step record or alert gives it} in
+    ${lib.concatMapStrings (g: "  ${g.name}) exec ${lib.getExe g} ;;\n") qaSteps}
+      *) echo "nixos-step: $NIXOS_STEP is no nixos:qa step: ${
+        toString (map (g: g.name) qaSteps)
+      }" >&2; exit 1 ;;
+    esac
+  '';
   # the run's own record is written on every exit, so a failed or interrupted gate still shows
   # what this shell's gates were built from. The pre-push hook and a long-lived shell run the gates evaluated at
   # devenv entry: after a merge that changed these files they would check the new tree with the old test list. devenv
@@ -1602,6 +1626,8 @@ in
       task "acer's ak: lifecycle/ak as authentik in the server unit's sandbox and environment, the env file by path" authentikAkTest;
     "nixos:switch-safety-test" = task "A switch survives a bad ~/.claude.json" switchSafetyTest;
     "nixos:qa" = task "Every gate above, in order" qa;
+    "nixos:step" =
+      task "One nixos:qa step by its recorded name, NIXOS_STEP=<step>: the rerun a red gate's alert names" stepRun;
     "platform:scorecard" = {
       description = "Every metric in metrics/targets.json read from Prometheus and Loki: reading, target and pass, fail, stale or unknown per area; exits 2 when a backend is unreachable (SCORECARD_PROMETHEUS_URL, SCORECARD_LOKI_URL override sam.fleet's)";
       exec = "${lib.getExe scorecard} \"$DEVENV_ROOT/metrics/targets.json\"";
