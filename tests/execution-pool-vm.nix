@@ -33,6 +33,8 @@ pkgs.testers.runNixOSTest {
           memory.reserved = "512M";
         };
         pool.memory = "3G";
+        # the slots' default homelab.execPool.repos need it: without one the VM fails its assertions
+        ghHostsFile = "/home/lukas/.config/gh/hosts.yml";
       };
       homelab.execPool = {
         enable = true;
@@ -49,6 +51,23 @@ pkgs.testers.runNixOSTest {
           install -d -m 0700 -o lukas -g users /home/lukas/.ssh
           [ -e /home/lukas/.ssh/id_ed25519 ] || ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -f /home/lukas/.ssh/id_ed25519
           chown lukas:users /home/lukas/.ssh/id_ed25519 /home/lukas/.ssh/id_ed25519.pub
+        '';
+      };
+      # nor a gh login: a stub token, which the proxy loads and the named guest binds (LoadCredential fails on none)
+      systemd.services.stub-gh-login = {
+        before = [
+          "dev-env-egress.service"
+          "container@t.service"
+        ];
+        requiredBy = [
+          "dev-env-egress.service"
+          "container@t.service"
+        ];
+        serviceConfig.Type = "oneshot";
+        script = ''
+          install -d -m 0700 -o lukas -g users /home/lukas/.config /home/lukas/.config/gh
+          printf 'github.com:\n    oauth_token: stub\n' > /home/lukas/.config/gh/hosts.yml
+          chown lukas:users /home/lukas/.config/gh/hosts.yml
         '';
       };
     };
