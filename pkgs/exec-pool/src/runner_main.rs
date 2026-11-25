@@ -1501,15 +1501,16 @@ impl Herdr {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Watch {
     Busy,
-    /// Its agent wrote to its session's transcript since the last poll: its time limit starts again, within
-    /// [`PROGRESS_BOUND`].
+    /// Its agent wrote to its session's transcript since the last poll, or waits on its own job or subagent: its time
+    /// limit starts again, within [`PROGRESS_BOUND`].
     Progress,
     /// Its agent waits for input: its time limit starts again.
     Idle,
     Stop,
 }
 
-/// How many time limits in a row an agent that keeps writing its transcript, never idle, works before it is cut.
+/// How many time limits in a row an agent that keeps progressing ([`Watch::Progress`]), never idle, works before it
+/// is cut.
 const PROGRESS_BOUND: u32 = 4;
 
 /// A step's time limit after a poll at `now` found `watched`, from `(idle, since)`, when it was last idle and last
@@ -1724,7 +1725,7 @@ impl<'a> PaneTurn<'a> {
                 self.written = written.max(self.written);
                 if self.idle {
                     Watch::Idle
-                } else if wrote {
+                } else if wrote || jobs {
                     Watch::Progress
                 } else {
                     Watch::Busy
@@ -2805,7 +2806,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_pane_waiting_on_its_background_command_is_not_parked_but_its_turn_limit_still_cuts() {
+    fn a_pane_waiting_on_its_background_command_is_not_parked_but_its_turn_bound_still_cuts() {
         let limit_secs = 1800;
         let seen = Some(pane::Seen {
             settled: true,
@@ -2816,15 +2817,15 @@ mod tests {
             let mut w = pane::TurnWatch::new(1);
             let t0 = Instant::now();
             let mut since = (t0, t0);
-            for ms in (0..=3_600_000_u64).step_by(2000) {
+            for ms in (0..=4 * 3_600_000_u64).step_by(2000) {
                 let idle = w.idle_ms(seen, jobs, ms);
                 if pane::parks(idle, GRACE_SECS, false) {
                     return ("parked", ms);
                 }
-                let watched = if idle.is_some() {
-                    Watch::Idle
-                } else {
-                    Watch::Busy
+                let watched = match (idle, jobs) {
+                    (Some(_), _) => Watch::Idle,
+                    (None, true) => Watch::Progress,
+                    (None, false) => Watch::Busy,
                 };
                 let cut;
                 (since, cut) = limit(
@@ -2840,7 +2841,10 @@ mod tests {
             ("running", 0)
         };
         assert_eq!(run(false), ("parked", GRACE_SECS * 1000));
-        assert_eq!(run(true), ("cut", limit_secs * 1000 + 2000));
+        assert_eq!(
+            run(true),
+            ("cut", u64::from(PROGRESS_BOUND) * limit_secs * 1000 + 2000)
+        );
     }
 
     #[test]

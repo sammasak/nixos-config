@@ -101,9 +101,9 @@ Prepared and proven passable on 25 Nov: `nixos-config-bench-qwen` (docs), `herma
 
 1. ~~Sessions lost turns to the 30 minute limit~~: on 25 Nov Prometheus counted 51 `turn_timeout` parks against 68
    `turn_end` (acer 34, msi 17), one session stalled after three in a row. A pane turn's limit now restarts on every
-   write to its transcript or a subagent's, bounded at four limits with no pause (`runner_main::limit`), so a cut
-   is a turn silent for 30 minutes or busy for two hours; a cut still continues by itself up to three in a row.
-   Live after deploys of acer and msi.
+   write to its transcript or a subagent's and while it waits on its own background job, bounded at four limits with
+   no pause (`runner_main::limit`): a cut is a turn silent for 30 minutes or busy for two hours, and still continues
+   by itself up to three in a row. Live after deploys of acer and msi.
 2. ~~A runner restarted mid-turn takes its new start as the turn's~~: no longer holds. The turn's start and its
    subagent check live in the helper (`exec-pool-exec@`, `restartIfChanged = false`), which a restarted runner
    adopts and does not restart; a restarted helper refuses the run (its run directory exists).
