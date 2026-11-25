@@ -6,7 +6,8 @@ anything else 403, signs an API-key login for api.openai.com instead, and answer
 token helper derives the files from auth.json, read as its owner, without printing them, waits out a half-written one
 and keeps the last ones through it; the refresh helper, Codex run as the owner on that same file, asks app-server for
 one refresh when half the token's life is gone, marks the attempt before it and never retries a failed or timed-out
-one until the login changes, and says so in its textfile; a runner offers codex only while the ready marker exists;
+one until the login changes, and says so in its textfile; the slot's Codex sends one plain POST through the proxy and
+retries no 429; a runner offers codex only while the ready marker exists;
 no slot's binds, units or environment name the login or the derived files."""
 import base64
 import http.server
@@ -374,9 +375,32 @@ def check_slots():
     leaks["exec-pool-exec@"] = [s for s in secret if s in json.dumps(P["exec"])]
     check(len(P["slots"]) == 3 and not any(leaks.values()), f"no slot's binds, container unit, guest environment or guest units, nor the exec helper, name the login or its tokens ({leaks})")
     cfg = P["slots"]["pool1"]["codexConfig"]
-    check(cfg.startswith('openai_base_url = "http://127.0.0.1:4103/v1"\nweb_search = "disabled"\n') and "\n[analytics]\nenabled = false\n" in cfg
+    check(cfg.startswith('model_provider = "host-proxy"\nweb_search = "disabled"\n') and '\nbase_url = "http://127.0.0.1:4103/v1"\n' in cfg
+          and "\nsupports_websockets = false\n" in cfg and "\n[analytics]\nenabled = false\n" in cfg
           and P["slots"]["pool1"]["variables"].get("CODEX_API_KEY") == "held-by-the-host",
-          "the slot's Codex holds a placeholder key and the proxy's base URL, with web search and analytics off")
+          "the slot's Codex holds a placeholder key and, in /etc, a provider on the proxy's base URL with no WebSocket, web search or analytics")
+    check_client(cfg)
+
+
+def check_client(cfg):
+    """The slot's Codex, its config read from an otherwise empty home as a pool attempt's, asks the proxy's port once."""
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Stub)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    Stub.seen.clear()
+    Stub.status, Stub.body = 429, b'{"error":{"type":"rate_limit_exceeded","message":"Slow down."}}'
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            pathlib.Path(d, "codex").mkdir()
+            pathlib.Path(d, "codex", "config.toml").write_text(cfg.replace(":4103/", f":{server.server_port}/"))
+            env = {"PATH": os.environ["PATH"], "HOME": d, "CODEX_HOME": f"{d}/codex", "CODEX_API_KEY": "held-by-the-host"}
+            out = subprocess.run([P["codex"], "exec", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check", "Reply ok"],
+                                 cwd=d, env=env, capture_output=True, text=True, timeout=120)
+    finally:
+        Stub.status, Stub.body = 200, b"data: ok\n\n"
+        server.shutdown()
+    asked = [(s["method"], s["path"], dict(s["headers"]).get("upgrade")) for s in Stub.seen]
+    check(out.returncode != 0 and asked == [("POST", "/v1/responses", None)],
+          f"Codex with the slot's config sends one POST /v1/responses to the proxy, no WebSocket, and a 429 is not retried ({out.returncode}, {asked})")
     check(not any("codex" in c for c in P["egress"]["LoadCredential"]) and P["egress"]["User"] == "lukas",
           f"the proxy loads no Codex credential: it reads the derived files per request ({P['egress']['LoadCredential']})")
     check(P["path"] == {"PathChanged": login["auth"]} and login["auth"] == "/home/lukas/.codex/auth.json" and P["failing"]["acer"] == []

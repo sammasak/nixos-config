@@ -1087,8 +1087,7 @@ in {
   sockets = builtins.filter (s: builtins.match ".*-egress" s != null) (builtins.attrNames g.systemd.sockets);
   binds = builtins.attrNames c.containers.pool1.bindMounts;
   codexKey = g.environment.variables.CODEX_API_KEY;
-  codexUrl = builtins.head (builtins.split "
-" g.home-manager.users.lukas.home.file.".codex/config.toml".text);
+  codexUrl = builtins.head (builtins.match ".*(base_url = [^\n]*).*" g.environment.etc."codex/config.toml".text);
   pi = builtins.any (p: (p.pname or "") == "pi-coding-agent") g.home-manager.users.lukas.home.packages;
   creds = c.systemd.services.dev-env-egress.serviceConfig.LoadCredential;
 }
@@ -1154,7 +1153,7 @@ def check_pool_compat():
     leaked = [b for b in a.get("binds", []) if b.startswith(("/run/secrets", "/run/user", "/run/credentials", "/var/lib/host-credentials/"))
               and not b.endswith(("/ssh_host_ed25519_key", ".pub"))]
     check(a.get("failing") == [] and a.get("sockets") == ["alertmanager-egress", "anthropic-egress", "github-egress", "llm-gateway-egress", "loki-egress", "openai-egress", "otlp-egress", "prometheus-egress"] and not leaked
-          and a.get("codexKey") == "held-by-the-host" and a.get("codexUrl") == 'openai_base_url = "http://127.0.0.1:4103/v1"' and a.get("pi") is True
+          and a.get("codexKey") == "held-by-the-host" and a.get("codexUrl") == 'base_url = "http://127.0.0.1:4103/v1"' and a.get("pi") is True
           and "llm_gateway_pi_key:/run/secrets/llm_gateway_pi_key" in a.get("creds", []) and not any("codex" in c for c in a.get("creds", [])),
           f"homelab.execPool.agents = [ \"claude\" \"codex\" \"pi\" ] on acer: pool1 gets the anthropic, github, openai, llm-gateway and OTLP proxies and the monitoring ones (homelab.execPool.monitoring), Codex and Pi pointed at them with placeholders, the keys only in the proxy's credentials and Codex's login in none ({a.get('error') or {**a, 'leaked': leaked} })")
     # POOL_CASES were prefetched; a whole msi per type error, one at a time

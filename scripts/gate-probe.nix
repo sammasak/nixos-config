@@ -459,6 +459,7 @@ let
           ownerHome = acer.users.users.${acer.services.devEnvironments.user}.home;
         };
         derive = svc.codex-egress-token.serviceConfig.ExecStart;
+        codex = lib.getExe acer.pkgs.codex;
         path = acer.systemd.paths.codex-egress-token.pathConfig;
         refresh = {
           inherit (svc.codex-egress-refresh) environment onSuccess;
@@ -480,7 +481,7 @@ let
             unit = svc."container@${n}".environment;
             inherit (g.environment) variables sessionVariables;
             services = lib.mapAttrs (_: u: u.environment) g.systemd.services;
-            codexConfig = (hm g).home.file.".codex/config.toml".text;
+            codexConfig = g.environment.etc."codex/config.toml".text;
           }
         );
         exec = svc."exec-pool-exec@".environment;
