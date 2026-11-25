@@ -82,8 +82,13 @@ with tempfile.TemporaryDirectory() as t:
 tree = pathlib.Path("/t")
 for kind, target in (("eval", "msi-ms7758"), ("build", "exec-pool"), ("check", "grafana-dashboards")):
     argv = pmc.command(pmc.Check(kind, target), tree)
-    locks = [argv[i + 2] for i, a in enumerate(argv) if a == "flock"]
-    check(locks == [str(pmc.LOCK), str(pmc.LIGHT)] and argv[argv.index("nix") + 1] == "eval",
+    if kind == "eval":
+        locks, evals_first = [argv[i + 2] for i, a in enumerate(argv) if a == "flock"], argv[argv.index("nix") + 1] == "eval"
+    else:
+        # bash -c BUILD $0 LIGHT ATTR: the light lock is the script's $1, taken inside the one heavy hold
+        locks = [argv[2], argv[-2]] if argv[3:5] == ["bash", "-c"] and argv[5] == pmc.BUILD else []
+        evals_first = pmc.BUILD.index('flock -o "$1" nix eval') < pmc.BUILD.index("nix build") and argv[-1].endswith(".drvPath")
+    check(locks == [str(pmc.LOCK), str(pmc.LIGHT)] and evals_first,
           f"{kind} {target}: evaluated under the heavy lock, then the light one ({argv})")
 check(pmc.LIGHT.name == "light-work.lock" and "light-work.lock" in (HERE.parent / "devenv.nix").read_text(),
       "the light lock is the one the push hook's nix flake show takes")

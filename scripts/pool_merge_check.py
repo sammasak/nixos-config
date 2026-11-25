@@ -142,16 +142,17 @@ def record(check: Check, seconds: int, result: str, sha: str, head: str) -> None
 HEAVY = ["flock", "-o", str(LOCK)]
 # heavy, then light: the push hook takes light alone, so the order never deadlocks
 EVAL = [*HEAVY, "flock", "-o", str(LIGHT), "nix", "eval", "--raw"]
+# one heavy hold over both steps: released between them, a long wait could let a GC delete the evaluated .drv
+BUILD = 'drv=$(flock -o "$1" nix eval --raw "$2") && nix build --no-link -L "$drv^*"'
 
 
 def command(check: Check, tree: pathlib.Path) -> list[str] | None:
-    """The evaluation (an eval) or the derivation's evaluation (a build or check: its drvPath, built by run)."""
+    """An eval's evaluation; a build's or check's drvPath evaluated under both locks, then built under the heavy one."""
     if check.kind == "eval":
         return [*EVAL, f"{tree}#nixosConfigurations.{check.target}.config.system.build.toplevel.drvPath"]
-    if check.kind == "build":
-        return [*EVAL, f"{tree}#pkgsDir.{check.target}.drvPath"]
-    if check.kind == "check":
-        return [*EVAL, f"{tree}#checks.{SYSTEM}.{check.target}.drvPath"]
+    if check.kind in ("build", "check"):
+        attr = f"pkgsDir.{check.target}" if check.kind == "build" else f"checks.{SYSTEM}.{check.target}"
+        return [*HEAVY, "bash", "-c", BUILD, "build", str(LIGHT), f"{tree}#{attr}.drvPath"]
     if check.kind == "script":
         return [sys.executable, check.target]
     return None
@@ -164,14 +165,10 @@ def run(check: Check, tree: pathlib.Path) -> bool:
         if problem:
             say(f"{check.target}: {problem}", err=True)
         return problem is None
-    out = subprocess.run(argv, cwd=tree, stdout=subprocess.PIPE if check.kind != "script" else None, text=True)
-    if out.returncode != 0 or check.kind == "script":
-        return out.returncode == 0
-    drv = out.stdout.strip()
-    if check.kind == "eval":
-        say(f"{check.target} evaluates to {drv}")
-        return True
-    return subprocess.run([*HEAVY, "nix", "build", "--no-link", "-L", f"{drv}^*"], cwd=tree).returncode == 0
+    out = subprocess.run(argv, cwd=tree, stdout=subprocess.PIPE if check.kind == "eval" else None, text=True)
+    if out.returncode == 0 and check.kind == "eval":
+        say(f"{check.target} evaluates to {out.stdout.strip()}")
+    return out.returncode == 0
 
 
 def main() -> int:
