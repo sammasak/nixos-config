@@ -47,7 +47,7 @@ let
         now=1
       else
         rm -f ${ready} ${cfg.tokens}/access-token ${cfg.tokens}/account-id
-        echo "codex-egress: no ChatGPT login in ${home}; codex is not offered. Sign in with: ${login}" >&2
+        echo ${lib.escapeShellArg "codex-egress: no ChatGPT login in ${home}; codex is not offered. Sign in with: ${login}"} >&2
         now=0
       fi
       # the runners advertise codex as of their start (exec-pool-runner.nix): only a change of the login restarts them,

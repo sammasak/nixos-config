@@ -675,6 +675,21 @@ let
         ${pkgs.python3}/bin/python scripts/test-caddy-edge.py
       '';
 
+  # acer's slots' Codex on the ChatGPT login: its Caddy route against a stub, the token and refresh helpers, from the probe
+  codexEgressTest =
+    gate "codex-egress-test"
+      (with pkgs; [
+        nix
+        python3
+        caddy
+        bash
+        coreutils
+        jq
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-codex-egress.py
+      '';
+
   # acer's ak wrapper, from the gate probe
   authentikAkTest =
     gate "authentik-ak-test"
@@ -931,6 +946,7 @@ let
     execPoolTest
     seventhHostTest
     caddyEdgeTest
+    codexEgressTest
     typedInterfacesTest
     systemChecksTest
     deployRecipesTest
@@ -1624,6 +1640,8 @@ in
       task "just deploy and dry-activate against stub nix/ssh/systemctl: a looping unit fails the post-deploy check, a failed dry activation or closure diff fails dry-activate though deploy-rs reports success" deployRecipesTest;
     "nixos:caddy-edge-test" =
       task "acer's Caddy edge, as caddy adapt reads it: admin off, every name routed, forward auth before chat and grafana, otlp allowlisted, llm-gateway /v1 only" caddyEdgeTest;
+    "nixos:codex-egress-test" =
+      task "acer's slots' Codex on the ChatGPT login: /v1/responses to the backend with the token and account id per request, client values replaced, nothing added, WebSocket 426, else 403; helpers print no secret and never retry a failed refresh; codex offered only with a login; no slot names the login" codexEgressTest;
     "nixos:authentik-ak-test" =
       task "acer's ak: lifecycle/ak as authentik in the server unit's sandbox and environment, the env file by path" authentikAkTest;
     "nixos:switch-safety-test" = task "A switch survives a bad ~/.claude.json" switchSafetyTest;

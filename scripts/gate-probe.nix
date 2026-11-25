@@ -443,6 +443,58 @@ let
     };
 
     # acer's Caddyfile as deployed (realised, so caddy fmt has run) and the Caddy that runs it
+    # acer's slots' Codex on the owner's ChatGPT login (modules/workers/codex-login.nix): the proxy's route, the helpers
+    # the test runs against stubs, and every place a slot's environment could name the login
+    codex-egress =
+      let
+        svc = acer.systemd.services;
+        slots = lib.filter (lib.hasPrefix "pool") (builtins.attrNames acer.containers);
+      in
+      {
+        caddyfile = lib.last (lib.splitString " " svc.dev-env-egress.serviceConfig.ExecStart);
+        egress = { inherit (svc.dev-env-egress.serviceConfig) User LoadCredential; };
+        login = {
+          inherit (acer.sam.workers.codexLogin)
+            enable
+            home
+            tokens
+            loginCommand
+            ;
+        };
+        derive = svc.codex-egress-token.serviceConfig.ExecStart;
+        path = acer.systemd.paths.codex-egress-token.pathConfig;
+        refresh = {
+          inherit (svc.codex-egress-refresh) environment;
+          inherit (svc.codex-egress-refresh.serviceConfig) ExecStart;
+          timer = acer.systemd.timers.codex-egress-refresh.timerConfig;
+        };
+        runner = {
+          inherit (svc.exec-pool-runner-pool1.serviceConfig) ExecStart;
+          inherit (svc.exec-pool-runner-pool1.environment) EXEC_POOL_SLOT;
+        };
+        inherit (acer.homelab.execPool) agents;
+        slots = lib.genAttrs slots (
+          n:
+          let
+            g = acer.containers.${n}.config;
+          in
+          {
+            binds = acer.containers.${n}.bindMounts;
+            unit = svc."container@${n}".environment;
+            inherit (g.environment) variables sessionVariables;
+            services = lib.mapAttrs (_: u: u.environment) g.systemd.services;
+            codexConfig = (hm g).home.file.".codex/config.toml".text;
+          }
+        );
+        exec = svc."exec-pool-exec@".environment;
+        failing = {
+          acer = failing acer;
+          withKey = failing (
+            extend "acer-swift" [ { sam.workers.codexAuthFile = "/home/lukas/.codex/auth.json"; } ]
+          );
+        };
+      };
+
     caddy-edge = {
       caddy = lib.getExe acer.services.caddy.package;
       inherit (acer.services.caddy) configFile enableReload;

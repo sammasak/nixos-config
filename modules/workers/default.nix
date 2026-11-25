@@ -191,7 +191,16 @@ let
   codexLogin = cfg.codexLogin;
   # The ChatGPT backend for the slots' Codex (codex-login.nix): the token and account id read per request, the
   # client's own values of both replaced, and no header added that the slot did not send.
+  # The built-in provider cannot turn its WebSocket off: 426 sends Codex to HTTP at once (codex-rs core/src/client.rs,
+  # UPGRADE_REQUIRED), where any other refusal costs it five retries first. It fetches no model list with a base_url.
   chatgptSite = ''
+    @websocket {
+      path /v1/responses
+      header Upgrade *
+    }
+    handle @websocket {
+      respond 426
+    }
     @responses {
       path /v1/responses
       method POST
@@ -211,6 +220,7 @@ let
         header_up -X-Forwarded-For
         header_up -X-Forwarded-Proto
         header_up -X-Forwarded-Host
+        header_up -Via
         transport http {
           compression off
         }
@@ -693,10 +703,25 @@ in
           missing = "sam.workers: a codex instance's calls are signed with the ChatGPT login of sam.workers.codexLogin or the API key in sam.workers.codexAuthFile, and this host sets neither.";
           prepare = lib.optional (!codexLogin.enable) (lib.getExe openaiKeyFromAuth);
           guest.env.CODEX_API_KEY = "held-by-the-host";
-          # mkBefore: a top-level key, so ahead of the file's first table
-          guest.config.home-manager.users.${user}.home.file.".codex/config.toml".text = lib.mkBefore ''
-            openai_base_url = "http://127.0.0.1:${toString dev.egress.openai.port}/v1"
-          '';
+          # mkBefore: top-level keys, so ahead of the file's first table. On the ChatGPT route the web search tool
+          # (/v1/alpha/search) has no route, and analytics would go to chatgpt.com unsigned.
+          guest.config.home-manager.users.${user}.home.file.".codex/config.toml".text = lib.mkMerge [
+            (lib.mkBefore (
+              ''
+                openai_base_url = "http://127.0.0.1:${toString dev.egress.openai.port}/v1"
+              ''
+              + lib.optionalString codexLogin.enable ''
+                web_search = "disabled"
+              ''
+            ))
+            (lib.mkIf codexLogin.enable (
+              lib.mkAfter ''
+
+                [analytics]
+                enabled = false
+              ''
+            ))
+          ];
         };
         # Pi's own route: the gateway holds the provider keys, the proxy the host's project key.
         llm-gateway = {

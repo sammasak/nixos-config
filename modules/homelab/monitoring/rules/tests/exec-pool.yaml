@@ -455,3 +455,52 @@ tests:
       - eval_time: 25h
         alertname: ExecPoolCompactionWindowCostlier
         exp_alerts: []
+
+  # a refresh fails at 10m: firing 5m later; a login with a day left and none failing never fires
+  - interval: 1m
+    input_series:
+      - series: 'codex_egress_refresh_failed{job="node-exporter",node="acer-swift"}'
+        values: '0x10 1x20'
+      - series: 'codex_egress_login_present{job="node-exporter",node="acer-swift"}'
+        values: '1x30'
+      - series: 'codex_egress_access_token_expiry_timestamp_seconds{job="node-exporter",node="acer-swift"}'
+        values: '86400x30'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: CodexLoginRefreshFailed
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: CodexLoginRefreshFailed
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: acer-swift}
+            exp_annotations:
+              summary: "The pool's Codex login on acer-swift failed to refresh"
+              description: 'The ChatGPT login the egress proxy signs the slots'' Codex calls with on acer-swift failed or timed out on its refresh, or its access token expires within the hour, and nothing retries it: Codex tasks there will fail with 401. Sign in again on acer-swift in a real terminal: cd / && sudo -u codex-egress env HOME=/var/lib/codex-egress CODEX_HOME=/var/lib/codex-egress /run/current-system/sw/bin/codex login --device-auth -c ''cli_auth_credentials_store="file"'' (runbook).'
+              query: 'codex_egress_refresh_failed{job="node-exporter",node="acer-swift"} or codex_egress_access_token_expiry_timestamp_seconds{job="node-exporter",node="acer-swift"} - time()'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#codexloginrefreshfailed"
+
+  # a token that expires at 60m while no refresh is recorded failing: firing within its last hour, not with no login
+  - interval: 1m
+    input_series:
+      - series: 'codex_egress_refresh_failed{job="node-exporter",node="acer-swift"}'
+        values: '0x60'
+      - series: 'codex_egress_login_present{job="node-exporter",node="acer-swift"}'
+        values: '1x60'
+      - series: 'codex_egress_access_token_expiry_timestamp_seconds{job="node-exporter",node="acer-swift"}'
+        values: '3600x60'
+      - series: 'codex_egress_refresh_failed{job="node-exporter",node="msi-ms7758"}'
+        values: '0x60'
+      - series: 'codex_egress_login_present{job="node-exporter",node="msi-ms7758"}'
+        values: '0x60'
+      - series: 'codex_egress_access_token_expiry_timestamp_seconds{job="node-exporter",node="msi-ms7758"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: CodexLoginRefreshFailed
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: acer-swift}
+            exp_annotations:
+              summary: "The pool's Codex login on acer-swift failed to refresh"
+              description: 'The ChatGPT login the egress proxy signs the slots'' Codex calls with on acer-swift failed or timed out on its refresh, or its access token expires within the hour, and nothing retries it: Codex tasks there will fail with 401. Sign in again on acer-swift in a real terminal: cd / && sudo -u codex-egress env HOME=/var/lib/codex-egress CODEX_HOME=/var/lib/codex-egress /run/current-system/sw/bin/codex login --device-auth -c ''cli_auth_credentials_store="file"'' (runbook).'
+              query: 'codex_egress_refresh_failed{job="node-exporter",node="acer-swift"} or codex_egress_access_token_expiry_timestamp_seconds{job="node-exporter",node="acer-swift"} - time()'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#codexloginrefreshfailed"
