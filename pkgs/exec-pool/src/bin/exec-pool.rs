@@ -833,8 +833,16 @@ mod tests {
             json!({"number": 788, "state": "merged", "merged_at": "2026-11-25T06:40:00Z", "url": "https://github.com/o/r/pull/788", "head": "1f2e"})
         );
         let pr = pull_of(&listed).unwrap();
-        assert_eq!(rescued(&pr, &json!("1f2e")), json!(false), "the task's own commit merged");
-        assert_eq!(rescued(&pr, &json!("0a0a")), json!(true), "another commit merged");
+        assert_eq!(
+            rescued(&pr, &json!("1f2e")),
+            json!(false),
+            "the task's own commit merged"
+        );
+        assert_eq!(
+            rescued(&pr, &json!("0a0a")),
+            json!(true),
+            "another commit merged"
+        );
         assert_eq!(rescued(&pr, &Value::Null), Value::Null, "no head recorded");
         let open = pull_of(&json!([listed[1]])).unwrap();
         assert_eq!(rescued(&open, &json!("1f2e")), Value::Null, "not merged");
