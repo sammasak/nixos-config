@@ -64,7 +64,7 @@ covers 21:00 to 08:30 Stockholm in both seasons, and mutes one hour more: 20:00 
 | DeployRolledBack | Per host, rollbacks in the last 24 h with no good deploy of that host since (`shipping_deploy_rollbacks_open`) exceed `max`. Fix: what the deploy's output names, then `just deploy <host>` from lenovo; the good deploy clears it |
 | EscapeFound | Escapes in the last 24 h exceed `max`: a revert on a default branch, unless a later commit of its repo reapplied it (git's `Reapply "X"`, or `Revert "Revert "X""`; an edited subject pairs with the newest earlier revert, over 30 d) or its message has an `Escape: no` line (reverted on purpose), and open issues labelled `escape` (closing one is it handled) |
 | RetroDueGateSlower | Per host: its median full gate (`shipping_gate_seconds{quantile="0.5"}`) is over `factor` times its own 7-d average and its gate fail ratio is above its own 7-d average, for `forMinutes`, once its series is at least 5 d old (`offset 5d`): slower alone is no retro, a bigger change gates longer, and a new host (a guest) slow from the start fires nothing and moves no other host's median |
-| RetroDueStepFailsRepeat | One full-gate step, or one check inside the flake check, failed on at least `minFailures` distinct heads in 7 d (`shipping_gate_step_failures`) over a full sample of `lastRuns` full gates, for `forMinutes`. One bad change that fails on a second host makes 2, so 3 is a pattern; it names the step. It clears when a scheduled full gate on main that started after that unit's last failure passes (`homelab_scheduled_gate_green_timestamp_seconds`), unless that gate deferred the check to its owner host (`homelab_scheduled_gate_green_deferred`), and `newFailureHours` after that unit's last failure (`shipping_gate_step_last_failure_timestamp_seconds`) unless its count rose since (a failure Loki received late), so a handled pattern stops paging within a day instead of a week, and fires again on its next failure while the count holds; the window outlasts the quiet hours (asserted), so a night's failure still pages in the morning |
+| RetroDueStepFailsRepeat | One full-gate step, or one check inside the flake check, failed on at least `minFailures` distinct heads in 7 d (`shipping_gate_step_failures`) over a full sample of `lastRuns` full gates, for `forMinutes`. One bad change that fails on a second host makes 2, so 3 is a pattern; it names the step and the command that reruns it alone (as ScheduledGateRed, [below](#scheduledgatered)). It clears when a scheduled full gate on main that started after that unit's last failure passes (`homelab_scheduled_gate_green_timestamp_seconds`), unless that gate deferred the check to its owner host (`homelab_scheduled_gate_green_deferred`), and `newFailureHours` after that unit's last failure (`shipping_gate_step_last_failure_timestamp_seconds`) unless its count rose since (a failure Loki received late), so a handled pattern stops paging within a day instead of a week, and fires again on its next failure while the count holds; the window outlasts the quiet hours (asserted), so a night's failure still pages in the morning |
 | ShippingCollectorStale | A section has not succeeded for `maxHours`, or failed two runs in a row, or the collector ran without the owner's gh login (`shipping_collector_authenticated` under `minAuthenticated`: public repos only), unless lenovo itself is down |
 
 ## The scheduled full gate
@@ -81,12 +81,15 @@ more on the next timer, so a failure outside the tree clears itself; red again, 
 
 ### ScheduledGateRed
 
-Fires: the last finished scheduled gate failed. The summary names the head, the first failed step (for the flake
-check, the check inside it) and `green..head`, the commits since the last green scheduled run; `unrecorded` means
-nixos:qa failed before its first step record (devenv's evaluation, the devenv-fresh guard).
-First: on acer, `journalctl -u scheduled-gate -n 200`, and `git log --oneline <green>..<head>` for the suspects.
-Reproduce on one commit with `just full-gate <sha>`. The alert clears when a later scheduled run on main passes, the
-retry of the same head included.
+Fires: the last finished scheduled gate failed. The summary names the head, the first failed step (`step`; for the
+flake check, the check inside it, `check`, whether it failed to build, evaluate or dry-run) and `green..head`, the
+commits since the last green scheduled run; `unrecorded` means nixos:qa failed before its first step record (devenv's
+evaluation, the devenv-fresh guard).
+First: rerun that step alone in a checkout of the head, with the command the summary names: `nix build -L .#<check>`
+for a flake check's check, `NIXOS_STEP=<step> devenv tasks run nixos:step` for any other step, `devenv tasks run
+nixos:qa` for `unrecorded`. RetroDueStepFailsRepeat names the same command. On acer, `journalctl -u scheduled-gate -n
+200` has the run's log, and `git log --oneline <green>..<head>` lists the suspects. The alert clears when a later
+scheduled run on main passes, the retry of the same head included.
 Do not: edit `state.json` to clear it; a fix merged to main is what clears it.
 
 ### ScheduledGateOverdue
