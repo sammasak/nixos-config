@@ -4,8 +4,8 @@
 #   timex collectors' names from their source and flags (systemd.prom); the repo's textfile writers (writers.prom),
 #   the names scripts/shipping-metrics.py, scripts/nav-metrics.py, scripts/shunt-metrics.py, scripts/guest-records.py
 #   and pkgs/scheduled-gate and pkgs/alert-investigations print with --list (shipping.prom, nav.prom, shunt.prom,
-#   guest-records.prom, scheduled-gate.prom, alert-investigations.prom), the series exec-pool's renderer types and its
-#   slot helper counters (exec-pool.prom) and the codex-egress refresh's gauges (codex-egress.prom);
+#   guest-records.prom, scheduled-gate.prom, alert-investigations.prom) and the series exec-pool's renderer types
+#   (exec-pool.prom) and acer's Codex login script (codex-egress.prom);
 # - the monitoring stack's own /metrics, run here (scripts/monitoring-exposition.sh: Prometheus, Alertmanager, Alloy);
 # - name literals and registrations in the source each host runs: Loki, Alloy, Caddy and blackbox (`sources` below),
 #   llm-gateway, Authentik; AdGuard's (dns.prom); the GPU exporter's (the gpu-telemetry-exporter check's output);
@@ -543,17 +543,17 @@ in
             # acer's scheduled full gate textfile (modules/homelab/scheduled-gate.nix)
             python3 -I ${../pkgs/scheduled-gate/scheduled_gate.py} --list > scheduled-gate.prom
             # acer's execution pool textfile (modules/homelab/exec-pool.nix): every series its renderer types, a
-            # histogram's with its _bucket, _sum and _count, and each slot helper counter, a (name, help) constant
-            # textfile::bump types as a counter with no literal TYPE line
-            { rg --no-filename -o '# TYPE exec_pool_[a-z_]+ [a-z]+' ${../pkgs/exec-pool/src}
-              rg -U --no-filename -o -r '# TYPE $1 counter' '\(&str, &str\) = \(\s*"(exec_pool_[a-z_]+)"' ${../pkgs/exec-pool/src}; } \
+            # histogram's with its _bucket, _sum and _count
+            rg --no-filename -o '# TYPE exec_pool_[a-z_]+ [a-z]+' ${../pkgs/exec-pool/src} \
               | awk '{ print $3 } $4 == "histogram" { print $3 "_bucket"; print $3 "_sum"; print $3 "_count" }' \
-              | sort -u > exec-pool.prom
-            grep -qx exec_pool_queue_up exec-pool.prom
+              > exec-pool.prom
+            # and the slot counters textfile::bump types from runner.rs's (name, help) pairs, with no TYPE literal
+            rg --no-filename -o '^ +"exec_pool_[a-z_]+_total",$' ${../pkgs/exec-pool/src/runner.rs} | tr -d ' ",' >> exec-pool.prom
+            sort -u -o exec-pool.prom exec-pool.prom
             grep -qx exec_pool_memory_kills_total exec-pool.prom
-            # the Codex slot hosts' login textfile, the gauges modules/workers/codex-auth.nix's refresh types
-            rg --no-filename -o '# TYPE codex_egress_[a-z_]+ [a-z]+' ${../modules/workers/codex-auth.nix} \
-              | awk '{ print $3 }' | sort -u > codex-egress.prom
+            grep -qx exec_pool_queue_up exec-pool.prom
+            # acer's Codex login textfile, written by the inline script in modules/workers/codex-auth.nix
+            rg --no-filename -o 'f"codex_egress_[a-z_]+ ' ${../modules/workers/codex-auth.nix} | sed 's/^f"//; s/ $//' | sort -u > codex-egress.prom
             grep -qx codex_egress_login_present codex-egress.prom
             # Authentik's names from the Python package and the Go server acer runs
             python3 -I ${../scripts/authentik-metric-names.py} ${acer.systemd.services.authentik-worker.environment.PYTHONPATH} \
