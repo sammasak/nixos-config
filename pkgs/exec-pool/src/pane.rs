@@ -22,9 +22,10 @@ pub const INPUT_FILE: &str = "/session/cur/home/.exec-pool-input.md";
 pub const READY_TEXT: &str = "bypass permissions on";
 /// How long the agent must stay settled after the prompt before it counts as idle.
 pub const SETTLE_MS: u64 = 5000;
-/// What each of Claude's Bash tool commands runs as: `bash -c 'source ~/.claude/shell-snapshots/snapshot-… && eval
-/// …'`, a shell that lives as long as its command. A background one outlives the agent's turn, which Herdr then shows
-/// idle while the agent waits on it.
+/// What each of Claude's Bash tool commands runs under: `bash -c 'source ~/.claude/shell-snapshots/snapshot-…'`.
+///
+/// The shell lives as long as its command. A background one outlives the agent's turn, which Herdr then shows idle
+/// while the agent waits on it.
 pub const TOOL_SHELL: &[u8] = b"/.claude/shell-snapshots/snapshot-";
 
 /// The agent's name in Herdr: the task id as Herdr takes a name (`[a-z][a-z0-9_-]{0,31}`), so `agent list` names

@@ -1486,8 +1486,9 @@ enum Watch {
     Stop,
 }
 
-/// A step's time limit after a poll at `now` found `watched`, from `since`: its new start and whether it ran out. It
-/// counts the agent's work since it was last idle, not its pause, so an agent that never idles is cut at `timeout`.
+/// A step's time limit after a poll at `now` found `watched`, from `since`: its new start and whether it ran out.
+///
+/// It counts the agent's work since it was last idle, not its pause, so an agent that never idles is cut at `timeout`.
 fn limit(since: Instant, watched: Watch, now: Instant, timeout: Duration) -> (Instant, bool) {
     let since = if watched == Watch::Idle { now } else { since };
     (since, now.saturating_duration_since(since) > timeout)
