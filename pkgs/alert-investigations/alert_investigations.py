@@ -10,8 +10,8 @@ the unit's journal. Its first turn's final message is the report, which this run
 that alert name (found by its title, else created; one per name, never one per firing). A session that pushed a branch,
 failed, ended without a report or outlived --turn-timeout fails its investigation (one cancelled after its turn
 ended keeps that turn's report), and every investigation counts in the textfile by outcome. A name reported less than
---quiet-after seconds ago starts none. The session is read-only by its prompt (the slots' GitHub proxy would let it push), so a
-pushed branch is checked for and counts as failed.
+--quiet-after seconds ago starts none. The session is read-only by its prompt (the slots' GitHub proxy would let it
+push), so a pushed branch is checked for and counts as failed.
 """
 
 from __future__ import annotations
