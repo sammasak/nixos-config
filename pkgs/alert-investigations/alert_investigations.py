@@ -218,14 +218,15 @@ class State:
             "starts": self.starts,
             "last_success": self.last_success,
         }
-        write_atomic(self.path, json.dumps(data, indent=1, sort_keys=True))
+        # 0600: an unknown start keeps its prompt here, which holds journal lines
+        write_atomic(self.path, json.dumps(data, indent=1, sort_keys=True), 0o600)
 
 
-def write_atomic(path: str, text: str) -> None:
+def write_atomic(path: str, text: str, mode: int = 0o644) -> None:
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", prefix=".tmp-")
     with os.fdopen(fd, "w") as f:
         f.write(text)
-    os.chmod(tmp, 0o644)
+    os.chmod(tmp, mode)
     os.replace(tmp, path)
 
 
@@ -424,7 +425,9 @@ def tick(cfg: argparse.Namespace, tools: Tools, state: State, now: float) -> lis
         try:
             finish(cfg, tools, state, name, state.open[name], now, log)
         except Exception as e:
-            log.append(f"{name}: not settled, retried next run: {type(e).__name__}: {e}")
+            log.append(f"{name}: not settled: {type(e).__name__}: {e}")
+            if name in state.open and now - state.open[name]["started"] > cfg.turn_timeout:
+                settle(state, name, state.open[name], "timed_out", log)
     active = tools.alerts()
     for name in cfg.alerts:
         mine = [

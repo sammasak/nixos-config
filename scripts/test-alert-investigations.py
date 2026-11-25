@@ -300,5 +300,18 @@ w5.alerts = [alert(NAME, "bb02", T0 + 20000)]
 tick(w5, argv5, T0 + 21000)
 check(failed(out5, "start_failed") == 2, "a refused start (exit 1) fails at once")
 
+check(oct(Path(argv5[argv5.index("--state") + 1]).stat().st_mode & 0o777) == "0o600", "the state file is 0600")
+w5.start_rc = 0
+w5.alerts = [alert(NAME, "cc03", T0 + 30000)]
+tick(w5, argv5, T0 + 31000)
+w5.sessions["cli-0000000000000000"].update(status="waiting", parked="turn_end", result={"output": "r", "branch": None})
+real_gh = w5.gh
+w5.gh = lambda args, stdin: (0, "not json", "")  # type: ignore[method-assign]
+tick(w5, argv5, T0 + 31100)
+check(failed(out5, "timed_out") == 0, "an unparsable answer before the timeout waits")
+tick(w5, argv5, T0 + 31000 + 10801)
+check(failed(out5, "timed_out") == 1, "past the timeout any error settles it")
+w5.gh = real_gh  # type: ignore[method-assign]
+
 print(f"{failures} failure(s)")
 sys.exit(1 if failures else 0)
