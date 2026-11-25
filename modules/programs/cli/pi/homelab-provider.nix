@@ -21,7 +21,8 @@
     {
       id = "local";
       name = "homelab local";
-      contextWindow = 131072;
+      # asus's OLLAMA_CONTEXT_LENGTH: a tool loop on `local` reaches only asus, and Ollama truncates past it silently
+      contextWindow = 32768;
       maxTokens = 8192;
     }
   ];
