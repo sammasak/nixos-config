@@ -151,7 +151,7 @@ per-slot MemoryMax or MemoryHigh: the slice's own comment records why (it killed
 for). Also `ownRefsOnly` on for msi; acer's push filter journal (a push `passed`, one `refused`) was not readable
 from a slot: the coordinator glances at it before the msi deploy.
 Open: a kill that leaves the agent running is counted but not told to it beyond its command's exit; the slots still
-share one limit, so four heavy evaluations at once still kill one of them.
+share one limit, so four heavy evaluations at once still kill one of them. PR #805.
 
 **25 Nov, branch `pool/cli-6a8cf03c11ffa376`** (no deploy: the skills store path and every toplevel drvPath are
 unchanged): the skills input is `git+ssh` like the other six private inputs (devenv-platform, factum, herman,
