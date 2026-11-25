@@ -143,7 +143,7 @@ groups:
           severity: critical
       - alert: NodeFilesystemAlmostOutOfSpace
         annotations:
-          description: 'Filesystem on {{ $labels.device }}, mounted on {{ $labels.mountpoint }}, at {{ $labels.instance }} has only {{ printf "%.2f" $value }}% available space left. Run df -h {{ $labels.mountpoint }} and du -xsh {{ $labels.mountpoint }}/* 2>/dev/null | sort -h | tail on {{ $labels.node }}; for /boot, du -sh /boot/*/nixos/* shows the kernels old generations keep (nix-env --list-generations -p /nix/var/nix/profiles/system as root lists them; remove one only on purpose).'
+          description: 'Filesystem on {{ $labels.device }}, mounted on {{ $labels.mountpoint }}, at {{ $labels.instance }} has only {{ printf "%.2f" $value }}% available space left. Run df -h {{ $labels.mountpoint }} and du -xsh {{ $labels.mountpoint }}/* 2>/dev/null | sort -h | tail on {{ $labels.node }}; for /boot (or /boot-nix on the dual-boot hosts), du -sh /boot/*/nixos/* /boot-nix/* 2>/dev/null shows the kernels old generations keep (nix-env --list-generations -p /nix/var/nix/profiles/system as root lists them; remove one only on purpose).'
           query: |-
             (
               node_filesystem_avail_bytes{job="node-exporter",fstype!="",mountpoint!=""} / node_filesystem_size_bytes{job="node-exporter",fstype!="",mountpoint!=""} * 100 < 5
@@ -163,7 +163,7 @@ groups:
           severity: warning
       - alert: NodeFilesystemAlmostOutOfSpace
         annotations:
-          description: 'Filesystem on {{ $labels.device }}, mounted on {{ $labels.mountpoint }}, at {{ $labels.instance }} has only {{ printf "%.2f" $value }}% available space left. Run df -h {{ $labels.mountpoint }} and du -xsh {{ $labels.mountpoint }}/* 2>/dev/null | sort -h | tail on {{ $labels.node }}; for /boot, du -sh /boot/*/nixos/* shows the kernels old generations keep (nix-env --list-generations -p /nix/var/nix/profiles/system as root lists them; remove one only on purpose).'
+          description: 'Filesystem on {{ $labels.device }}, mounted on {{ $labels.mountpoint }}, at {{ $labels.instance }} has only {{ printf "%.2f" $value }}% available space left. Run df -h {{ $labels.mountpoint }} and du -xsh {{ $labels.mountpoint }}/* 2>/dev/null | sort -h | tail on {{ $labels.node }}; for /boot (or /boot-nix on the dual-boot hosts), du -sh /boot/*/nixos/* /boot-nix/* 2>/dev/null shows the kernels old generations keep (nix-env --list-generations -p /nix/var/nix/profiles/system as root lists them; remove one only on purpose).'
           query: |-
             (
               node_filesystem_avail_bytes{job="node-exporter",fstype!="",mountpoint!=""} / node_filesystem_size_bytes{job="node-exporter",fstype!="",mountpoint!=""} * 100 < 3
