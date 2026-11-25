@@ -349,7 +349,7 @@ Rollback: none; the increase ages out of the hour once prepares succeed.
 
 ## ExecPoolSessionStalled
 
-Fires: a session last run on `host` has waited for 10 minutes after a turn that parked as `reason` (`turn_error` or
+Fires: a session last run on `host` has waited for 5 minutes after a turn that parked as `reason` (`turn_error` or
 `turn_timeout`) with no automatic continue left and nothing in its inbox (`exec_pool_sessions_stalled`, the queue's
 textfile on acer). A turn that ends in an error gets up to three continues in a row, due 10, 30 and 90 minutes after
 it (a rate limit is not met again at once); one stopped at its time limit up to two at once, the third waits. Each
