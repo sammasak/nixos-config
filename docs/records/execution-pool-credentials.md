@@ -18,6 +18,7 @@ slice 1. "Home" is the session home, `/session/cur/home`, which a park then copi
 | Claude OAuth token (sops `claude_oauth_token`) | host, `dev-env-egress` LoadCredential | `anthropic.sock`; the guest has `CLAUDE_CODE_OAUTH_TOKEN=held-by-the-host` | no | sidecar |
 | Pi project key (sops `llm_gateway_pi_key`, acer) | host, proxy credential | `llm-gateway.sock`; Pi's `models.json` holds a placeholder | no | sidecar |
 | OpenAI key (`sam.workers.codexAuthFile`) | host, proxy credential | `openai.sock`; no pool host sets it, so no slot has the route | no | sidecar (unused) |
+| Owner's ChatGPT login (`sam.workers.codexLogin`, acer) | `/var/lib/codex-egress` (user `codex-egress`, 0700); the access token and account id derived into `/run/codex-egress/tokens` (the proxy's user, 0400) | `openai.sock`; the guest has `CODEX_API_KEY=held-by-the-host` and the proxy's base URL | no | sidecar |
 | OTLP token (sops `native_otlp_auth`) | host relay | none: slots have `telemetry = false` | no | sidecar (unused) |
 | Owner's GitHub SSH key (host user's `~/.ssh/id_ed25519`, a key of the GitHub account) | bound read-only at `/var/lib/host-credentials/id_ed25519`, mode 0600 owned by the guest user, linked as the guest home's `~/.ssh/id_ed25519` | `git push` to the clone's ssh `pushurl`, and nix's fetch of the `git+ssh` inputs (factum, nix-audit, llm-gateway, rf-proto, herman, devenv-platform). It pushes to any branch of any repository of the account | **yes**: any process in the slot reads it and can write a copy into the home or the work tree | bind into guest (acer and msi slots) |
 | gh token (acer user's `~/.config/gh/hosts.yml`) | host; pool slots do not get it (`credentials = [ "id_ed25519" ]`); no named worker remains (a1 retired) | none in a slot | no | not in slots |
@@ -73,6 +74,55 @@ widest: the whole account, every branch.
    Rulesets on GitHub are later and not part of this plan, as they change the GitHub account.
 4. **Short-lived tokens.** A GitHub App installation token minted on the host per task (one hour, listed repositories,
    contents write) in place of the owner's gh token in the sidecar (credentials-and-tenancy.md, phase 4).
+
+## Codex on the owner's ChatGPT login (#808)
+
+`sam.workers.codexLogin.enable` (on for acer) signs the slots' Codex with one ChatGPT login instead of an API key
+(`modules/workers/codex-login.nix`). Upstream facts are in #808's research comment; the code reads codex-rs at
+rust-v0.172.0, and the fleet's Codex is 0.162.1, whose refresh and fallback paths are the same.
+
+- The login is one `CODEX_HOME`, `/var/lib/codex-egress`, of the system user `codex-egress`, file store. Its only
+  writer is `codex-egress-refresh.timer` (every 15 minutes): once half the access token's life is gone it starts
+  `codex app-server` and asks `account/read` with `refreshToken: true`, upstream's forced refresh, which calls no
+  model (`codex login status` reads and never refreshes; `codex exec` refreshes only within 5 minutes of expiry and
+  spends a turn). Success is `auth.json`'s `last_refresh` moving. A refresh that fails or does not answer in 120 s is
+  never retried for that login: `codex_egress_refresh_failed` goes 1 and `CodexLoginRefreshFailed` fires with the
+  sign-in command. Metrics carry no id label.
+- `codex-egress-token.path` watches `auth.json`; `codex-egress-token.service` (root, no network) writes
+  `access-token` and `account-id`, 0400 the proxy's user, and `/run/codex-egress/ready`, printing neither. A half
+  written `auth.json` keeps the last files; a missing login removes them. When the login comes or goes it restarts
+  the runners, which offer codex only while `ready` exists (`homelab.execPool.agentMarkers`), so with no login
+  `exec-pool submit --agent codex` is refused (no slot offers it) and Claude and Pi run as before.
+- The proxy's `openai` site, per slot: `POST /v1/responses` goes to `https://chatgpt.com/backend-api/codex/responses`
+  with `Authorization` and `ChatGPT-Account-ID` read from those files per request (a refreshed token needs no
+  restart), replacing whatever the slot sent; `Cookie`, `X-Forwarded-*` and `Via` are dropped and nothing is added.
+  No token file: 503. A WebSocket upgrade of `/v1/responses` is answered 426: the built-in provider cannot turn its
+  WebSocket off, and 426 sends Codex to HTTP at once (any other refusal costs five retries). Everything else is
+  403. With a base URL Codex fetches no model list; remote compaction goes over `/responses`. The slot's
+  `config.toml` adds `web_search = "disabled"` (its `/alpha/search` has no route) and `[analytics] enabled = false`
+  (it would post to chatgpt.com directly).
+- msi: `sam.fleet.listeners.codex-egress` (acer, port 4191, from msi) is the same route for msi's slots, as
+  `github-egress` is for GitHub. Off: acer serves it only with `sam.workers.codexLogin.serveFleet`, and msi's pool
+  agents do not name codex. msi's runners cannot see acer's `ready`, so once on, a missing login fails msi's Codex
+  tasks with 503 rather than refusing them at submit.
+- Unverified until the owner signs in: that the backend takes the body Codex sends in API-key mode (it lacks
+  ChatGPT mode's `x-codex-routing-hint` and `request_country`), and the access token's lifetime.
+
+The owner's one step, after enabling device code login in ChatGPT's security settings, on acer in a real terminal as
+`lukas` (sudo asks for the password; nothing else in the environment matters):
+
+```
+cd / && sudo -u codex-egress env HOME=/var/lib/codex-egress CODEX_HOME=/var/lib/codex-egress /run/current-system/sw/bin/codex login --device-auth -c 'cli_auth_credentials_store="file"'
+```
+
+Then, for the coordinator: `ls -l /run/codex-egress/ready` and `journalctl -u codex-egress-token.service -n 5` on acer
+(the runners restarted; neither prints a token); one small Codex task on acer,
+`exec-pool submit --agent codex --repo https://github.com/sammasak/nixos-config.git --rev main --workdir . --prompt 'Reply with the word ok and change nothing.'`,
+then `exec-pool status ID` and `exec-pool result ID`;
+`journalctl -u dev-env-egress -g openai-pool` shows the slot's calls and their status (200, or 401 or 400 from the
+backend, the first thing to read if the task fails). The refresh: `systemctl list-timers codex-egress-refresh.timer`,
+`journalctl -u codex-egress-refresh.service` (`refreshed`, or why not), and
+`cat /run/node-exporter-textfile/codex-egress.prom`.
 
 ## The login net
 

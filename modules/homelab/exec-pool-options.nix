@@ -78,7 +78,7 @@ in
       );
       default = [ ];
       example = [ "claude" ];
-      description = "Agents a task may run in a slot, each through its egress proxy with no credential in the guest (anthropic; openai with sam.workers.codexAuthFile; llm-gateway with the host's Pi key). Sessions run claude only. The CLIs are the workers' guest packages (modules/workers/default.nix).";
+      description = "Agents a task may run in a slot, each through its egress proxy with no credential in the guest (anthropic; openai with sam.workers.codexLogin or codexAuthFile; llm-gateway with the host's Pi key). Sessions run claude only. The CLIs are the workers' guest packages (modules/workers/default.nix).";
     };
     agentMarkers = mkOption {
       type = types.attrsOf types.str;
