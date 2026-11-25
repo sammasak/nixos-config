@@ -72,12 +72,16 @@ retire. Changing `slots` is a reviewed deploy; a task is released with `dev-env-
 | `credentials` | `[ ]` | which host credentials a slot may hold; never `id_ed25519` (asserted) |
 | `github.repos` | sammasak's repositories tasks hand back to, and nixos-config's private inputs | each slot's `egress.github.repos`: git and gh to these repositories through the host's GitHub proxy, no credential in the slot; a host in `sam.fleet.listeners.github-egress`'s `from` (msi) forwards to that listener's host (acer), which applies its own list ([execution-pool-credentials.md](records/execution-pool-credentials.md)) |
 | `agents` | `[ ]` | agents a task may run in a slot (`claude`): each slot's `headlessAgents`, the egress route a named worker of that agent has (the anthropic proxy, no credential in the guest), while its `agent` stays `none` and no session starts |
-| `slot.privateUsers` | `false` | each slot's `rootInGuest` without its sudo: its own 65536 uids, so guest root is an unprivileged host uid, with its own sshd key and fetcher cache (emptied by every reset, so a turn's first `devenv shell` fetches its inputs again). A slot whose home was made in the other block resets it at its next start instead of refusing (`dev-env-fresh-on-toggle`), so flipping it is one deploy: the slots' binds move, so the switch restarts each slot (a deploy drains the pool first) rather than reloading it. Off everywhere; not yet booted in a VM or on a host |
+| `slot.privateUsers` | `false` | each slot's `rootInGuest` without its sudo: its own 65536 uids, so guest root is an unprivileged host uid, with its own sshd key. A slot whose home was made in the other block resets it at its next start instead of refusing (`dev-env-fresh-on-toggle`), so flipping it is one deploy: the slots' binds move, so the switch restarts each slot (a deploy drains the pool first) rather than reloading it. The store and nix db are bound id-mapped, which needs a store on a filesystem that takes idmapped mounts (ext4, btrfs, erofs; not 9p or overlayfs). On on msi-ms7758 (`hosts/msi-ms7758/exec-pool.nix`), off on acer-swift (the same line there turns it on); `nix build .#execution-pool-vm` boots it |
 
 Evaluation fails when a slot's name is also declared in `sam.workers.instances` or `retired`, or when the slots and
 the named instances reserve more than `pool.memory`. `worker-pool-inventory` prints one JSON line per slot from its
 units: `slot`, `state`, `sub`, `closure`, `memory.min`/`.low`, `cpu.weight`, `slice`. `nix build .#execution-pool-vm`
 (msi) boots two slots beside a named instance, reuses one across a reset and restarts it alone.
+
+Every slot has `ownNixCache` (an instance option, off for named workers, always on under `rootInGuest`): its own Nix
+fetcher and tarball cache under its state dir instead of the host's shared `.nix-cache`, so no task reads an entry an
+earlier one planted; every reset empties it, so a turn's first `devenv shell` fetches its inputs again (about 25 s).
 
 Every slot has `sessionDock` (an instance option, off for named workers): `/session` is bound read-write from
 `<stateDir>/.sessions/dock/<slot>`, root's 0755 under `.sessions/dock` (0755) and `.sessions` (0711). The exec helper
@@ -325,7 +329,7 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
   passwordless sudo on every host, accepted from lenovo's address, which a
   guest's traffic leaves by). Its user is also a trusted Nix user.
 - `~/.cache/nix` (Nix's fetcher and tarball caches) is one directory per host,
-  bound writable into every environment: the first `devenv shell` in a new
+  bound writable into every named environment (a pool slot has its own): the first `devenv shell` in a new
   environment took 5.9 s on acer with it, 28 to 31 s without, for a repo the
   host had seen. A revision the host has not seen still builds once (238 s on
   acer). The price: environments of one host are not isolated from each other
