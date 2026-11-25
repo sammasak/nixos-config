@@ -227,6 +227,7 @@ in
 {
   options.sam.workers.codexLogin = {
     enable = lib.mkEnableOption "the slots' Codex on the owner's ChatGPT login in home, which the egress proxy signs their calls with, instead of an API key (sam.workers.codexAuthFile)";
+    serveFleet = lib.mkEnableOption "the login's route for the slots of sam.fleet.listeners.codex-egress's from hosts, served on its port";
     home = lib.mkOption {
       type = lib.types.str;
       default = "/var/lib/codex-egress";

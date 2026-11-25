@@ -487,10 +487,42 @@ let
           }
         );
         exec = svc."exec-pool-exec@".environment;
+        # turned on: acer serves the listener, msi's slots offer codex
+        fleet =
+          let
+            a = extend "acer-swift" [ { sam.workers.codexLogin.serveFleet = true; } ];
+            m = extend "msi-ms7758" [ { homelab.execPool.agents = [ "codex" ]; } ];
+            caddy = c: lib.last (lib.splitString " " c.systemd.services.dev-env-egress.serviceConfig.ExecStart);
+          in
+          {
+            listener = { inherit (m.sam.fleet.listeners.codex-egress) host port url; };
+            acer = caddy a;
+            msi = caddy m;
+            msiAddress = a.sam.fleet.hosts.msi-ms7758.address;
+            msiCreds = m.systemd.services.dev-env-egress.serviceConfig.LoadCredential;
+            failing = {
+              acer = failing a;
+              msi = failing m;
+            };
+          };
+        offCaddy = lib.last (
+          lib.splitString " " msi.systemd.services.dev-env-egress.serviceConfig.ExecStart
+        );
         failing = {
           acer = failing acer;
           withKey = failing (
             extend "acer-swift" [ { sam.workers.codexAuthFile = "/home/lukas/.codex/auth.json"; } ]
+          );
+          serveWithout = failing (
+            extend "acer-swift" [
+              (
+                { lib, ... }:
+                {
+                  sam.workers.codexLogin.enable = lib.mkForce false;
+                  sam.workers.codexLogin.serveFleet = true;
+                }
+              )
+            ]
           );
         };
       };

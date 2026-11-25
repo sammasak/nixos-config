@@ -320,8 +320,25 @@ def check_slots():
     check(not any("codex" in c for c in P["egress"]["LoadCredential"]) and P["egress"]["User"] == "lukas",
           f"the proxy loads no Codex credential: it reads the derived files per request ({P['egress']['LoadCredential']})")
     check(P["path"] == {"PathChanged": login["home"] + "/auth.json"} and P["failing"]["acer"] == []
-          and any("not both" in m for m in P["failing"]["withKey"]),
-          f"the path unit watches the login, acer evaluates, and an API key beside the login fails ({P['failing']})")
+          and any("not both" in m for m in P["failing"]["withKey"]) and any("serveFleet" in m for m in P["failing"]["serveWithout"]),
+          f"the path unit watches the login, acer evaluates, and an API key beside the login, or serveFleet without it, fails ({P['failing']})")
+
+
+def check_fleet():
+    f = P["fleet"]
+    l = f["listener"]
+    acer = pathlib.Path(f["acer"]).read_text()
+    site = next((b for b in acer.split("\nhttp://:")[1:] if b.startswith(f"{l['port']} {{")), "")
+    msi = site_of(f["msi"], "pool1", "openai")
+    check(f["failing"] == {"acer": [], "msi": []} and l["host"] == "acer-swift", f"turned on (serveFleet, codex on msi): acer and msi evaluate ({f['failing']})")
+    check(f"@outside not remote_ip {f['msiAddress']}\n" in site and "https://chatgpt.com" in site and login["tokens"] in site,
+          f"acer serves :{l['port']} to msi's address alone, with its own ChatGPT route ({site[:200]!r})")
+    check(f"reverse_proxy {l['url']} {{" in msi and "header_up -Authorization" in msi and "chatgpt.com" not in msi and "/run/codex-egress" not in msi
+          and not any("codex" in c for c in f["msiCreds"]),
+          f"msi's slots forward Codex to acer's {l['url']} and msi holds no login or credential ({msi[:200]!r})")
+    off = pathlib.Path(P["offCaddy"]).read_text()
+    check(f":{l['port']} {{" not in acer.split("\nhttp://:", 1)[0] and "codex-fleet" not in pathlib.Path(P["caddyfile"]).read_text() and "4103" not in off,
+          "as committed, acer serves no fleet Codex route (serveFleet off) and msi's slots have none (no codex agent)")
 
 
 def check_alert():
@@ -336,5 +353,6 @@ check_derive()
 check_refresh()
 check_runner()
 check_slots()
+check_fleet()
 check_alert()
 finish()

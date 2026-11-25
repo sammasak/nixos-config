@@ -51,6 +51,17 @@ let
   hostName = config.networking.hostName;
   ghForward = ghFleet.host != hostName && lib.elem hostName ghFleet.from;
   ghServes = ghFleet.host == hostName;
+  # msi's slots' Codex through acer's ChatGPT route (sam.fleet.listeners.codex-egress): this host holds no login
+  codexFleet = config.sam.fleet.listeners.codex-egress;
+  codexForward = codexFleet.host != hostName && lib.elem hostName codexFleet.from;
+  codexServes = codexFleet.host == hostName && cfg.codexLogin.serveFleet;
+  fleetFrom =
+    l:
+    toString (
+      lib.concatMap (
+        h: [ config.sam.fleet.hosts.${h}.address ] ++ config.sam.fleet.hosts.${h}.extraAddresses
+      ) l.from
+    );
   forwardSite = ''
     reverse_proxy ${ghFleet.url} {
       header_up Host {upstream_hostport}
@@ -611,13 +622,7 @@ in
         + lib.optionalString ghServes ''
           http://:${toString ghFleet.port} {
             log github-fleet
-            @outside not remote_ip ${
-              toString (
-                lib.concatMap (
-                  h: [ config.sam.fleet.hosts.${h}.address ] ++ config.sam.fleet.hosts.${h}.extraAddresses
-                ) ghFleet.from
-              )
-            }
+            @outside not remote_ip ${fleetFrom ghFleet}
             handle @outside {
               respond 403
             }
@@ -627,6 +632,16 @@ in
                 graphql = false;
               };
             }}
+          }
+        ''
+        + lib.optionalString codexServes ''
+          http://:${toString codexFleet.port} {
+            log codex-fleet
+            @outside not remote_ip ${fleetFrom codexFleet}
+            handle @outside {
+              respond 403
+            }
+            ${chatgptSite}
           }
         '';
       egress = {
@@ -692,6 +707,14 @@ in
             _:
             if codexLogin.enable then
               chatgptSite
+            else if codexForward then
+              ''
+                reverse_proxy ${codexFleet.url} {
+                  header_up Host {upstream_hostport}
+                  header_up -Authorization
+                  flush_interval -1
+                }
+              ''
             else
               ''
                 @other not path /v1/*
@@ -699,9 +722,11 @@ in
                 ${upstream "https://api.openai.com" "Bearer {file.${openaiKey}}"}
               '';
           port = 4103;
-          secrets = lib.optionalAttrs (!codexLogin.enable) { "codex-auth.json" = cfg.codexAuthFile; };
+          secrets = lib.optionalAttrs (!codexLogin.enable && !codexForward) {
+            "codex-auth.json" = cfg.codexAuthFile;
+          };
           missing = "sam.workers: a codex instance's calls are signed with the ChatGPT login of sam.workers.codexLogin or the API key in sam.workers.codexAuthFile, and this host sets neither.";
-          prepare = lib.optional (!codexLogin.enable) (lib.getExe openaiKeyFromAuth);
+          prepare = lib.optional (!codexLogin.enable && !codexForward) (lib.getExe openaiKeyFromAuth);
           guest.env.CODEX_API_KEY = "held-by-the-host";
           # mkBefore: top-level keys, so ahead of the file's first table. On the ChatGPT route the web search tool
           # (/v1/alpha/search) has no route, and analytics would go to chatgpt.com unsigned.
@@ -710,11 +735,11 @@ in
               ''
                 openai_base_url = "http://127.0.0.1:${toString dev.egress.openai.port}/v1"
               ''
-              + lib.optionalString codexLogin.enable ''
+              + lib.optionalString (codexLogin.enable || codexForward) ''
                 web_search = "disabled"
               ''
             ))
-            (lib.mkIf codexLogin.enable (
+            (lib.mkIf (codexLogin.enable || codexForward) (
               lib.mkAfter ''
 
                 [analytics]
@@ -910,6 +935,10 @@ in
       {
         assertion = lib.all onGithub refsHeld;
         message = "sam.workers: an instance with egress.github.ownRefs pushes through the GitHub proxy, which it reaches only with egress.github.repos.";
+      }
+      {
+        assertion = cfg.codexLogin.serveFleet -> codexLogin.enable && codexFleet.host == hostName;
+        message = "sam.workers.codexLogin.serveFleet: this host serves sam.fleet.listeners.codex-egress with its own ChatGPT login, so it needs codexLogin.enable and to be the listener's host.";
       }
       {
         assertion = ghServes -> lib.any onGithub (lib.attrValues dev.instances);
