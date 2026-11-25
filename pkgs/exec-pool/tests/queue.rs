@@ -239,12 +239,12 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
         .query_one("SELECT max(version) FROM schema_migrations", &[])
         .unwrap()
         .get(0);
-    assert_eq!(version, 18);
+    assert_eq!(version, 19);
     submit(&mut s, &task("t-1", 1));
     // a newer binary's additive migration keeps the floor: this one still serves the database, as after a rollback
     pg.sql()
         .execute(
-            "INSERT INTO schema_migrations (version, floor) VALUES (19, 18)",
+            "INSERT INTO schema_migrations (version, floor) VALUES (20, 19)",
             &[],
         )
         .unwrap();
@@ -252,17 +252,17 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
     assert!(s.claim(&slot("s0"), 60).unwrap().is_some());
     // one this binary would misread, or one that names no floor, is refused
     pg.sql()
-        .execute("INSERT INTO schema_migrations (version) VALUES (20)", &[])
+        .execute("INSERT INTO schema_migrations (version) VALUES (21)", &[])
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(20))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(21))));
     pg.sql()
         .execute(
-            "UPDATE schema_migrations SET floor = 20 WHERE version = 20",
+            "UPDATE schema_migrations SET floor = 21 WHERE version = 21",
             &[],
         )
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(20))));
-    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(20))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(21))));
+    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(21))));
 }
 
 #[test]
@@ -2120,6 +2120,187 @@ fn a_timed_out_turn_continues_and_the_third_in_a_row_waits() {
     assert!(
         metrics.contains("reason=\"turn_timeout\"} 3"),
         "every timed-out park counts in exec_pool_transitions_total"
+    );
+    assert!(
+        metrics
+            .lines()
+            .any(|l| l
+                == "exec_pool_sessions_stalled{host=\"msi-ms7758\",reason=\"turn_timeout\"} 1"),
+        "{metrics}"
+    );
+}
+
+#[test]
+fn a_turn_error_continues_after_a_growing_delay_and_past_the_bound_counts_as_stalled() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let mut runner = runner(&pg);
+    let stalled = |m: &str, n: u8| {
+        m.lines().any(|l| {
+            l == format!(
+                "exec_pool_sessions_stalled{{host=\"msi-ms7758\",reason=\"turn_error\"}} {n}"
+            )
+        })
+    };
+    for (n, secs) in exec_pool::queue::ERROR_BACKOFF_SECS.iter().enumerate() {
+        let (a, epoch, turn) = started(&mut runner);
+        if n > 0 {
+            assert!(
+                turn.input.starts_with("Your last turn ended in an error"),
+                "a new turn told what happened, not a replay: {}",
+                turn.input
+            );
+        }
+        let (_, changes) = runner
+            .park(&a, epoch, &park(ParkReason::TurnError, turn.upto))
+            .unwrap();
+        assert_eq!(
+            moves(&changes),
+            [(Status::Waiting, "turn_error")],
+            "error {n}"
+        );
+        let due: i64 = pg
+            .sql()
+            .query_one(
+                "SELECT extract(epoch FROM due_at - now())::int8 FROM inbox \
+                 WHERE kind = 'continue' AND consumed_epoch IS NULL",
+                &[],
+            )
+            .unwrap()
+            .get(0);
+        assert!(
+            (i64::from(*secs) - 60..=i64::from(*secs)).contains(&due),
+            "error {n}: continue due in {due} s, not {secs}"
+        );
+        assert!(
+            runner.claim(&claude_slot(), 60).unwrap().is_none(),
+            "not before it is due"
+        );
+        assert!(owner.reconcile().unwrap().is_empty());
+        assert!(
+            stalled(&owner.metrics().unwrap(), 0),
+            "a continue is still to come"
+        );
+        pg.sql()
+            .execute(
+                "UPDATE inbox SET due_at = now() - interval '1 second' WHERE consumed_epoch IS NULL",
+                &[],
+            )
+            .unwrap();
+        assert_eq!(
+            moves(&owner.reconcile().unwrap()),
+            [(Status::Queued, "wake")]
+        );
+    }
+    let (a, epoch, turn) = started(&mut runner);
+    runner
+        .park(&a, epoch, &park(ParkReason::TurnError, turn.upto))
+        .unwrap();
+    let unread: i64 = pg
+        .sql()
+        .query_one(
+            "SELECT count(*) FROM inbox WHERE consumed_epoch IS NULL",
+            &[],
+        )
+        .unwrap()
+        .get(0);
+    assert_eq!(unread, 0, "the bound is spent: no continue");
+    let metrics = owner.metrics().unwrap();
+    assert!(stalled(&metrics, 1), "{metrics}");
+    assert!(
+        metrics
+            .lines()
+            .any(|l| l
+                == "exec_pool_sessions_stalled{host=\"msi-ms7758\",reason=\"turn_timeout\"} 0"),
+        "{metrics}"
+    );
+    s.send(&id, "go on").unwrap();
+    assert!(stalled(&owner.metrics().unwrap(), 0), "a message moves it");
+    let (a, epoch, turn) = started(&mut runner);
+    assert_eq!(turn.input, "go on");
+    let (_, changes) = runner
+        .park(&a, epoch, &park(ParkReason::TurnError, turn.upto))
+        .unwrap();
+    assert_eq!(moves(&changes), [(Status::Waiting, "turn_error")]);
+    let pending: i64 = pg
+        .sql()
+        .query_one(
+            "SELECT count(*) FROM inbox WHERE kind = 'continue' AND consumed_epoch IS NULL",
+            &[],
+        )
+        .unwrap()
+        .get(0);
+    assert_eq!(pending, 1, "the message's turn is the first of a new run");
+}
+
+/// Parks the next turn as a `turn_error`: its input and the changes its park made.
+fn error_out(runner: &mut Store) -> (String, Vec<(Status, &'static str)>) {
+    let (a, epoch, turn) = started(runner);
+    let (_, changes) = runner
+        .park(&a, epoch, &park(ParkReason::TurnError, turn.upto))
+        .unwrap();
+    (turn.input, moves(&changes))
+}
+
+/// Makes every unread inbox row due now and runs a reconcile: the changes it made.
+fn all_due(pg: &Pg, owner: &mut Store) -> Vec<(Status, &'static str)> {
+    pg.sql()
+        .execute(
+            "UPDATE inbox SET due_at = now() - interval '1 second' WHERE consumed_epoch IS NULL",
+            &[],
+        )
+        .unwrap();
+    moves(&owner.reconcile().unwrap())
+}
+
+#[test]
+fn a_backoff_continue_overtaken_by_a_message_never_wakes_the_session_later() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let mut runner = runner(&pg);
+    assert_eq!(error_out(&mut runner).1, [(Status::Waiting, "turn_error")]);
+    s.send(&id, "here is what went wrong").unwrap();
+    let (a, epoch, turn) = started(&mut runner);
+    assert_eq!(turn.input, "here is what went wrong");
+    runner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, turn.upto))
+        .unwrap();
+    assert_eq!(
+        all_due(&pg, &mut owner),
+        [],
+        "the error's continue went with the turn the message started"
+    );
+    assert_eq!(status(&pg, &a).0, "waiting");
+}
+
+#[test]
+fn errors_and_timeouts_in_turn_share_one_bound() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (_s, _id) = session(&pg);
+    let mut runner = runner(&pg);
+    assert_eq!(error_out(&mut runner).1, [(Status::Waiting, "turn_error")]);
+    assert_eq!(all_due(&pg, &mut owner), [(Status::Queued, "wake")]);
+    let (_, changes) = time_out(&mut runner);
+    assert_eq!(changes, CONTINUED, "the second of the run");
+    assert_eq!(error_out(&mut runner).1, [(Status::Waiting, "turn_error")]);
+    assert_eq!(all_due(&pg, &mut owner), [(Status::Queued, "wake")]);
+    let (_, changes) = time_out(&mut runner);
+    assert_eq!(
+        changes,
+        [(Status::Waiting, "turn_timeout")],
+        "the fourth: no continue"
+    );
+    assert_eq!(all_due(&pg, &mut owner), []);
+    let metrics = owner.metrics().unwrap();
+    assert!(
+        metrics
+            .lines()
+            .any(|l| l
+                == "exec_pool_sessions_stalled{host=\"msi-ms7758\",reason=\"turn_timeout\"} 1"),
+        "{metrics}"
     );
 }
 

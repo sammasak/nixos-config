@@ -206,6 +206,30 @@ fn a_session_turn_runs_interactive_claude_as_a_named_worker_did_and_resumes_it()
 }
 
 #[test]
+fn an_agent_on_github_is_told_the_rest_calls_for_its_own_pull_request() {
+    let mut t = task("claude", &["go"]);
+    t.source.repo = "https://github.com/sammasak/nixos-config.git".to_owned();
+    let prompt = argv(&t).unwrap().pop().unwrap();
+    for call in [
+        "gh api repos/sammasak/nixos-config/pulls -f head=pool/t-655 -f base=BASE",
+        "gh api repos/sammasak/nixos-config/issues/NUMBER/comments -F body=@FILE",
+    ] {
+        assert!(prompt.contains(call), "{call}: {prompt}");
+    }
+    assert!(prompt.ends_with("The task:\n\ngo"), "{prompt}");
+    assert!(!prompt.contains("{repo}") && !prompt.contains("{branch}"));
+    let session = turn_input(&t, "go", Turn::Start).unwrap();
+    assert!(session.contains("repos/sammasak/nixos-config/pulls") && session.contains("pool-wait"));
+    assert!(
+        !argv(&task("claude", &["go"]))
+            .unwrap()
+            .concat()
+            .contains("gh api"),
+        "a repository not on GitHub is told nothing of it"
+    );
+}
+
+#[test]
 fn a_session_turn_is_told_the_prefix_when_it_starts_and_its_input_alone_after() {
     let t = task("claude", &["fix the lint", "opus"]);
     assert_eq!(
