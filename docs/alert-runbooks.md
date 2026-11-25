@@ -420,9 +420,11 @@ Fires: on the host that runs `alert-investigations` (`modules/homelab/alert-inve
 names in `modules/homelab/alert-investigations.json`, whose pages also link that alert's issue), an investigation it started in the last 6 h failed, or for 15 minutes
 it has not read Alertmanager. An investigation is one read-only incident-investigator pool session per firing that
 lasted 15 minutes, its report a comment on the issue titled `Alert: <name>` (label `alert-investigation`); it fails
-when `exec-pool start` refuses it, the session ends `failed`, `cancelled` or `needs_review`, its first turn ends
+when `exec-pool start` refuses it, the session ends `failed`, or `cancelled` or `needs_review` before its turn ended
+(after it, the turn's report is posted and counts as reported), its first turn ends
 without a report, the session pushed `pool/<task id>` (it is read-only), no report came within 3 h (it is cancelled),
-or the report could not be posted. The issue is public: a posted text has secret-shaped values
+or the report could not be posted. A name reported less than 6 h ago starts no new investigation; a firing still
+active after that starts one. The issue is public: a posted text has secret-shaped values
 (tokens, keys, `password=`) replaced by `[redacted]`, and the session is told to quote none. With `alertname`, an investigation of that alert failed; without it, the trigger
 is blind.
 First: on lenovo, `journalctl -u alert-investigations.service` names the session and the reason;
@@ -443,6 +445,24 @@ First: `systemctl status alert-investigations.timer alert-investigations.service
 alert-investigations.service` there. A run waits up to 120 s per command (ssh to the pool host, gh).
 Do not: write the textfile by hand.
 Rollback: as AlertInvestigationFailed's.
+
+## Reading an alert from a slot
+
+What an investigation session (the prompt `alert-investigations` writes) may read beyond its evidence, GET only, through
+the slot's egress proxy (`modules/workers/default.nix` `monitoring`; any other path is refused with 403):
+
+| what | route |
+|---|---|
+| a unit's journal | Loki `$LOKI_ADDR/loki/api/v1/query_range`, `{job="host-journal",host="<host>",unit="<unit>"}` (e.g. `unit="scheduled-gate.service"`, host `acer-swift`, for ScheduledGateRed) |
+| gate records, one per step | Loki `{job="platform",kind="gate-step"} \| logfmt`, by `check`, `result` and `head` (`kind="gate"` for the run) |
+| the rules Prometheus loaded, their state and last evaluation | `$PROMETHEUS_URL/api/v1/rules`, and `/api/v1/alerts` |
+| a series | `$PROMETHEUS_URL/api/v1/query` or `query_range` |
+| what Alertmanager holds | `$ALERTMANAGER_URL/api/v2/alerts` |
+| a pool session | `exec-pool status ID` and `exec-pool result ID` are read verbs on the pool host only: no slot has the command, so the report names them under Not checked with the id |
+
+A cause already fixed on main: `git log origin/main` in the checkout (fetch first) and the merged pull requests touching
+the alert's module name it; the report says it is fixed on main, names the pull request and whether the host runs it
+(`homelab_nixos_info`).
 
 ## ExecPoolSessionsLarge
 
