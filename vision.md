@@ -57,3 +57,9 @@ around the clock while the owner sets direction and looks in when they want.
   whether it helped.
 - A session that waits a day for input costs nothing while it waits and continues where it left off.
 - The pool module and the Paddock work are things others can use.
+
+## Horizon (not scheduled)
+
+- The execution pool works on repositories outside our own, supports guest users and becomes a coding platform.
+- Until then we only avoid assuming one repository, one owner or one credential, and fix a single-repository limit
+  when we meet it.

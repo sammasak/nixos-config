@@ -21,14 +21,20 @@ groups:
         expr: |
           @PLANNED_OFF_EXPR@
 
+      # A node whose node-exporter does not answer inside its planned power-off.
+      # TargetDown (general.yaml) leaves its targets out, so a host that is up
+      # keeps every target counted, and one off outside its plan is counted too.
+      - record: homelab:node:off_as_planned
+        expr: max by (node) (up{job="node-exporter"} == 0) and on (node) homelab:node:planned_off
+
       - alert: HostExpectedOff
         # The one signal for "this host is off and that is planned", per node.
         # Never notifies (null route); the Alertmanager inhibit rules keyed
         # on it silence what the powered-off host causes (../alertmanager.nix).
         # Fails open: it does not fire while any host is down outside its
-        # plan, so those cases still notify (TargetDown included).
+        # plan, so those cases still notify.
         expr: |
-          max by (node) (up{job="node-exporter"} == 0) and on (node) homelab:node:planned_off
+          homelab:node:off_as_planned
           unless on () (
             count(max by (node) (up{job="node-exporter"} == 0) unless on (node) homelab:node:planned_off) > 0
           )
@@ -59,8 +65,8 @@ groups:
         # A GPU host that is up (its node-exporter answers) while its GPU
         # exporter does not: the driver or the exporter failed. Off, it says
         # nothing. It carries node, so another host's planned power-off does
-        # not inhibit it, as it does TargetDown{job="nvidia-gpu"}.
-        # for: under TargetDown's 10m, so inhibit rule 3 (../alertmanager.nix) mutes it before it notifies
+        # not inhibit it.
+        # for: under TargetDown's 10m, so inhibit rule 2 (../alertmanager.nix) mutes it before it notifies
         expr: max by (node) (up{job="nvidia-gpu"} == 0) and on (node) max by (node) (up{job="node-exporter"} == 1)
         for: 5m
         labels:

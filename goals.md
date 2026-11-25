@@ -67,6 +67,10 @@ pool3 and msi's pool3 and pool4 by #759. Brief 656 (explicit pause and resume) i
 Current batch, 20:32: pool metrics and alerts (#768), turn timeout (#765, #770), Shunt alerts (#771), priority and
 logs (#772) and deploy drain (#773) are merged and deployed; lenovo deployed #774 at 20:32. Only asus is behind.
 
+State at 25 Nov 02:30: interactive panes for pool sessions are live on acer (#780); msi follows after 08:30. Git-backed
+session state is in flight (branch `pool/cli-fd59cf28cf1b122c`). Night: a cheaper agent drives the live checks and
+merges from a runbook; the coordinator wakes on finish events and after two quiet hours.
+
 ### Pool platform: how we iterate
 
 Owner, 24 Nov 20:40: "ensure that we iterate on this platform so that we can improve this". The list lives on
@@ -89,7 +93,7 @@ lost when the queue restarts (#773), no claim priority (#772).
 **Open, in pick-up order**
 
 1. Session turns are headless; the owner wants the same interactive Herdr panes the named workers had, with an idle
-   grace period, park, resume into a pane and `attach` (session in flight).
+   grace period, park, resume into a pane and `attach`: live on acer (#780), msi after 08:30.
 2. Two PRs that each built alone broke main together (#765 with #768). Build the merge result of a pool crate PR
    before merging it: `just pool-merge-check BRANCH` on acer, before each pool crate merge.
 3. Three sessions lost a turn to the 30 minute limit today. Re-check the limit once turns are interactive and park on
@@ -103,6 +107,10 @@ lost when the queue restarts (#773), no claim priority (#772).
 9. lenovo cannot push nixos-config (stale devenv gate) or fetch a new private skills pin as a user.
 10. Cost: about 45 USD of session cost on 24 Nov; track cost per merged PR.
 11. Store follow-ups in #754; credential slices 3 and 4.
+12. Session state lives in git, not a copied directory (session in flight, branch `pool/cli-fd59cf28cf1b122c`).
+13. A turn that ends in an error parks silently: nothing wakes the session or alerts.
+14. A session stops continuing after three timeouts in a row, and nothing alerts.
+15. The slot's GitHub proxy refuses a git dependency outside the allowed list (truespar/scriptor, 403).
 
 ### Paddock SSD-backed MoE expert streaming
 
@@ -114,6 +122,8 @@ benchmark requirements: #776; epic: #491).
 - Isolated behind a narrow abstraction, the existing fast path kept, fork maintenance kept small.
 - Decisions, progress, acceptance criteria and follow-ups live in those issues and PRs.
 - Small reviewed changes with measured results on asus (asus is off 21:00 to 08:30).
+- 25 Nov 02:30: steps 1 to 4 done on the CPU side in draft [paddock#3](https://github.com/sammasak/paddock/pull/3);
+  the first asus runs follow after 08:30, per the run list on #508.
 - Aim: a polished upstream contribution.
 
 ### Waiting, in pick-up order
