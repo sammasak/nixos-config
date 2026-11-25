@@ -134,7 +134,12 @@ let
   c = (flake.nixosConfigurations.asus-b460m.extendModules { modules = [ ({ lib, ... }: {
     sam.workers = {
       ghHostsFile = "/home/lukas/hosts.yml";
-      instances = lib.mkForce { gh.egress.github.repos = [ "o/r.s" ]; gh2.egress.github.repos = [ "x/y" ]; plain = { }; };
+      # 1G each: with Paddock on, asus's pool.memory is 4G
+      instances = lib.mkForce (lib.mapAttrs (_: i: i // { memory.reserved = "1G"; }) {
+        gh.egress.github.repos = [ "o/r.s" ];
+        gh2.egress.github.repos = [ "x/y" ];
+        plain = { };
+      });
     };
   }) ]; }).config;
   config = flake.inputs.nixpkgs.lib.last (flake.inputs.nixpkgs.lib.splitString " " c.systemd.services.dev-env-egress.serviceConfig.ExecStart);
@@ -435,7 +440,10 @@ in {
   acer = { caddy = caddy acer; repos = acer.homelab.execPool.repos; msiAddress = acer.sam.fleet.hosts.msi-ms7758.address;
            filter = let sc = acer.systemd.services.exec-pool-push-filter.serviceConfig; in {
              inherit (sc) User PrivateNetwork RestrictAddressFamilies;
-             slots = builtins.fromJSON (builtins.readFile (flake.inputs.nixpkgs.lib.last (flake.inputs.nixpkgs.lib.splitString " " sc.ExecStart)));
+             slots = builtins.fromJSON (builtins.readFile (builtins.elemAt (flake.inputs.nixpkgs.lib.splitString " " sc.ExecStart) 3));
+             textfile = flake.inputs.nixpkgs.lib.last (flake.inputs.nixpkgs.lib.splitString " " sc.ExecStart);
+             inherit (sc) ReadWritePaths;
+             exporter = acer.services.prometheus.exporters.node.extraFlags;
            };
            egressUser = acer.systemd.services.dev-env-egress.serviceConfig.User; };
 }
@@ -477,6 +485,10 @@ def check_push_filter(acer, msi):
           and f.get("User") == acer.get("egressUser") and f.get("PrivateNetwork") is True and f.get("RestrictAddressFamilies") == ["AF_UNIX"]
           and msi.get("filtered") is True,
           f"acer's filter reads each slot's runner manifest, as the proxy's user with no network; msi runs one too ({f})")
+    d = "/run/exec-pool-push-filter-metrics"
+    check(f.get("textfile") == f"{d}/push-filter.prom" and f.get("ReadWritePaths") == [d]
+          and f"--collector.textfile.directory={d}" in f.get("exporter", []),
+          f"acer's filter counts its pushes in a textfile of its own directory, which node-exporter reads ({ {k: f.get(k) for k in ('textfile', 'ReadWritePaths')} })")
     sites = {b.split("\n", 2)[1].strip(): b for b in acer.get("caddy", "").split("http:// {")[1:]}
     for n in slots:
         site = sites.get(f"bind unix//run/dev-env-egress/{n}/github.sock", "")
