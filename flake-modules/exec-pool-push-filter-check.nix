@@ -16,10 +16,9 @@
               ];
             }
             ''
-              mkdir lib
-              cp ${../scripts/gate_probe.py} lib/gate_probe.py
+              cp ${../scripts/gate_probe.py} gate_probe.py
               export HOME=$TMPDIR
-              PYTHONPATH=lib python3 ${../scripts/test-exec-pool-push-filter.py} ${
+              PYTHONPATH=$PWD python3 ${../scripts/test-exec-pool-push-filter.py} ${
                 lib.getExe (pkgs.callPackage ../pkgs/exec-pool-push-filter/package.nix { })
               } > $out
               cat $out
