@@ -156,9 +156,18 @@ failure retried by hand today (the record says `failed=land`).
    pool/cli-f562005cb177dad6: pool-merge-check evaluates under the heavy lock and then the light one, and builds under
    the heavy one alone (live on merge, no deploy). acer-swift's deploy adds `homelab_guest_memory_bytes{worker}`,
    `_peak_bytes` and the slice's current and limit, every minute; the runbook has the slot's Loki query. Signal:
-   `exec_pool_memory_kills_total` flat on acer over a day of merges. Follow-ups: evaluations outside both locks still
-   share the slice (a devenv shell's evaluation, an agent's own `nix eval` or `nix build` of a host or check; the
-   prompt or a wrapper could send them through the light lock); acer's 7G stays (15 GiB, ollama 4G).
+   `exec_pool_memory_kills_total` flat on acer over a day of merges. Fixed on pool/cli-406f00699b51d8ad (live after
+   acer's deploy): in a slot `nix eval`, `path-info`, `derivation` and `flake show|metadata|info` run under the light
+   lock, and `nix build` of flake attributes evaluates each `.drvPath` under it and builds `drv^*` outside; `devenv`
+   runs its eval, info, search and direnv-export under it, and before shell, tasks, test, up, processes and build
+   warms its eval cache with `shell -- true` under it (85 s and 1.2 GiB cold, 1 s warm), so no compile and no task
+   that may take heavy holds light; pool-merge-check and the push evaluation set `WORK_LOCKS_HELD=1` so their nix
+   skips it. Reading, 25 Nov 21:27Z, before that deploy: kills over 24 h pool1 5, pool2 1, pool3 2 (pool1's last
+   about 21:17Z, after PR #830's merge), msi 0; `max_over_time(homelab_guest_memory_peak_bytes[1d])` pool1 5.3 GiB,
+   pool2 1.8, pool3 5.4. Signal: the counter flat on acer for a day after the deploy. Follow-ups, still unlocked:
+   `nix flake check`, `nix build` with another option or a non-flake installable, `nix-build`, `nix-instantiate`, a
+   global option before the subcommand, and a devenv evaluation a warm `shell` does not cache (another `-O` option);
+   acer's 7G stays (15 GiB, ollama 4G).
 7. msi's `ownRefsOnly` push filter (PR #805) is live only after the msi deploy; read acer's push filter journal (one
    `passed`, one `refused`) before it.
 

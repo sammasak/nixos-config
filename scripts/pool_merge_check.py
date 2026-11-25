@@ -140,10 +140,11 @@ def record(check: Check, seconds: int, result: str, sha: str, head: str) -> None
 
 
 HEAVY = ["flock", "-o", str(LOCK)]
-# heavy, then light: the push hook takes light alone, so the order never deadlocks
-EVAL = [*HEAVY, "flock", "-o", str(LIGHT), "nix", "eval", "--raw"]
+# heavy, then light: the push hook takes light alone, so the order never deadlocks. WORK_LOCKS_HELD: a pool slot's nix
+# (modules/workers/execution-pool.nix) would otherwise wait on this light hold, and take light for the build.
+EVAL = [*HEAVY, "flock", "-o", str(LIGHT), "env", "WORK_LOCKS_HELD=1", "nix", "eval", "--raw"]
 # one heavy hold over both steps: released between them, a long wait could let a GC delete the evaluated .drv
-BUILD = 'drv=$(flock -o "$1" nix eval --raw "$2") && nix build --no-link -L "$drv^*"'
+BUILD = 'export WORK_LOCKS_HELD=1; drv=$(flock -o "$1" nix eval --raw "$2") && nix build --no-link -L "$drv^*"'
 
 
 def command(check: Check, tree: pathlib.Path) -> list[str] | None:
