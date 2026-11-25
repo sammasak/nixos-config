@@ -2234,6 +2234,76 @@ fn a_turn_error_continues_after_a_growing_delay_and_past_the_bound_counts_as_sta
     assert_eq!(pending, 1, "the message's turn is the first of a new run");
 }
 
+/// Parks the next turn as a `turn_error`: its input and the changes its park made.
+fn error_out(runner: &mut Store) -> (String, Vec<(Status, &'static str)>) {
+    let (a, epoch, turn) = started(runner);
+    let (_, changes) = runner
+        .park(&a, epoch, &park(ParkReason::TurnError, turn.upto))
+        .unwrap();
+    (turn.input, moves(&changes))
+}
+
+/// Makes every unread inbox row due now and runs a reconcile: the changes it made.
+fn all_due(pg: &Pg, owner: &mut Store) -> Vec<(Status, &'static str)> {
+    pg.sql()
+        .execute(
+            "UPDATE inbox SET due_at = now() - interval '1 second' WHERE consumed_epoch IS NULL",
+            &[],
+        )
+        .unwrap();
+    moves(&owner.reconcile().unwrap())
+}
+
+#[test]
+fn a_backoff_continue_overtaken_by_a_message_never_wakes_the_session_later() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let mut runner = runner(&pg);
+    assert_eq!(error_out(&mut runner).1, [(Status::Waiting, "turn_error")]);
+    s.send(&id, "here is what went wrong").unwrap();
+    let (a, epoch, turn) = started(&mut runner);
+    assert_eq!(turn.input, "here is what went wrong");
+    runner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, turn.upto))
+        .unwrap();
+    assert_eq!(
+        all_due(&pg, &mut owner),
+        [],
+        "the error's continue went with the turn the message started"
+    );
+    assert_eq!(status(&pg, &a).0, "waiting");
+}
+
+#[test]
+fn errors_and_timeouts_in_turn_share_one_bound() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (_s, _id) = session(&pg);
+    let mut runner = runner(&pg);
+    assert_eq!(error_out(&mut runner).1, [(Status::Waiting, "turn_error")]);
+    assert_eq!(all_due(&pg, &mut owner), [(Status::Queued, "wake")]);
+    let (_, changes) = time_out(&mut runner);
+    assert_eq!(changes, CONTINUED, "the second of the run");
+    assert_eq!(error_out(&mut runner).1, [(Status::Waiting, "turn_error")]);
+    assert_eq!(all_due(&pg, &mut owner), [(Status::Queued, "wake")]);
+    let (_, changes) = time_out(&mut runner);
+    assert_eq!(
+        changes,
+        [(Status::Waiting, "turn_timeout")],
+        "the fourth: no continue"
+    );
+    assert_eq!(all_due(&pg, &mut owner), []);
+    let metrics = owner.metrics().unwrap();
+    assert!(
+        metrics
+            .lines()
+            .any(|l| l
+                == "exec_pool_sessions_stalled{host=\"msi-ms7758\",reason=\"turn_timeout\"} 1"),
+        "{metrics}"
+    );
+}
+
 #[test]
 fn a_message_starts_the_count_of_timeouts_in_a_row_again() {
     let pg = Pg::new();

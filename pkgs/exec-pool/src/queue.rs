@@ -311,25 +311,25 @@ const ERRORED: &str = "Your last turn ended in an error (the agent failed or exi
 /// they are spent, the session waits for a message (`exec_pool_sessions_stalled`).
 pub const ERROR_BACKOFF_SECS: [u32; 3] = [600, 1800, 5400];
 
-/// How many of `attempt`'s last turns, the one just parked included, parked for `reason` with no message read since
-/// the first of them (at most `limit`); a turn that read a message is the first of a run.
-fn in_a_row(
+/// How many of `attempt`'s last turns, the one just parked included, ended in an error or a timeout with no message
+/// read since the first of them; a park for a preemption or a drain between them is passed over, any other park and a
+/// turn that read a message start a run.
+fn unattended(
     tx: &mut Transaction<'_>,
     (task, attempt): (&str, &str),
-    reason: ParkReason,
-    limit: usize,
 ) -> Result<usize, QueueError> {
     let mut n: usize = 0;
     for r in tx.query(
-        &format!(
-            "SELECT e.reason, EXISTS (SELECT FROM inbox i WHERE i.task_id = $1 AND i.kind = 'message' \
-             AND i.consumed_epoch = e.lease_epoch) FROM events e WHERE e.attempt_id = $2 \
-             AND e.to_status = 'waiting' ORDER BY e.id DESC LIMIT {limit}"
-        ),
+        "SELECT e.reason, EXISTS (SELECT FROM inbox i WHERE i.task_id = $1 AND i.kind = 'message' \
+         AND i.consumed_epoch = e.lease_epoch) FROM events e WHERE e.attempt_id = $2 \
+         AND e.to_status = 'waiting' ORDER BY e.id DESC LIMIT 64",
         &[&task, &attempt],
     )? {
         let (why, told): (&str, bool) = (r.try_get(0)?, r.try_get(1)?);
-        if why != reason.as_str() {
+        if why == ParkReason::Preempted.as_str() || why == ParkReason::HostDraining.as_str() {
+            continue;
+        }
+        if why != ParkReason::TurnError.as_str() && why != ParkReason::TurnTimeout.as_str() {
             break;
         }
         n = n.saturating_add(1);
@@ -340,30 +340,26 @@ fn in_a_row(
     Ok(n)
 }
 
-/// The `continue` row a park for `reason` leaves, if any: at once after a preemption or a drain, and after a timeout
-/// short of [`TIMEOUTS_IN_A_ROW`]; after an error, due once its [`ERROR_BACKOFF_SECS`] delay has passed, while any is
-/// left.
+/// The `continue` row a park for `reason` at `epoch` leaves, if any, after it retires any earlier one still unread (a
+/// backoff's, overtaken by a message or a timer), so a park sets at most one. At once after a preemption or a drain.
+/// After errors and timeouts in a row ([`unattended`], mixed or not): a timeout continues while the run is short of
+/// [`TIMEOUTS_IN_A_ROW`]; an error up to [`ERROR_BACKOFF_SECS`]'s length, due after that run's delay.
 fn leave_continue(
     tx: &mut Transaction<'_>,
-    (task, attempt): (&str, &str),
+    (task, attempt, epoch): (&str, &str, i64),
     reason: ParkReason,
 ) -> Result<(), QueueError> {
+    tx.execute(
+        "UPDATE inbox SET consumed_epoch = $2 WHERE task_id = $1 AND kind = 'continue' AND consumed_epoch IS NULL",
+        &[&task, &epoch],
+    )?;
     let delay = match reason {
         ParkReason::Preempted | ParkReason::HostDraining => Some(0),
-        ParkReason::TurnTimeout => (in_a_row(
-            tx,
-            (task, attempt),
-            ParkReason::TurnTimeout,
-            TIMEOUTS_IN_A_ROW,
-        )? < TIMEOUTS_IN_A_ROW)
-            .then_some(0),
+        ParkReason::TurnTimeout => {
+            (unattended(tx, (task, attempt))? < TIMEOUTS_IN_A_ROW).then_some(0)
+        }
         ParkReason::TurnError => {
-            let n = in_a_row(
-                tx,
-                (task, attempt),
-                ParkReason::TurnError,
-                ERROR_BACKOFF_SECS.len().saturating_add(1),
-            )?;
+            let n = unattended(tx, (task, attempt))?;
             ERROR_BACKOFF_SECS.get(n.saturating_sub(1)).copied()
         }
         _ => None,
@@ -1089,7 +1085,7 @@ impl Store {
                 ],
             )?;
             mark_read(tx, (&task, attempt, epoch), park)?;
-            leave_continue(tx, (&task, attempt), park.reason)?;
+            leave_continue(tx, (&task, attempt, epoch), park.reason)?;
             if let Some(w) = &wake {
                 tx.execute(
                     "SELECT wake_at($1, $2::text::timestamptz, $3)",
@@ -2070,7 +2066,8 @@ fn session_durations(
         &BUCKETS.map(u64::from),
         "SELECT s.host, i.kind, extract(epoch FROM s.at - greatest(i.created_at, coalesce(i.due_at, i.created_at)))::float8 \
          FROM inbox i JOIN attempts a ON a.task_id = i.task_id JOIN events s ON s.attempt_id = a.id \
-         AND s.lease_epoch = i.consumed_epoch AND s.to_status = 'running'",
+         AND s.lease_epoch = i.consumed_epoch AND s.to_status = 'running' \
+         AND (i.due_at IS NULL OR i.due_at <= s.at)",
         hosts,
     )?;
     let closed = "FROM attempts a JOIN tasks t ON t.id = a.task_id \
