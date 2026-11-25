@@ -239,12 +239,12 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
         .query_one("SELECT max(version) FROM schema_migrations", &[])
         .unwrap()
         .get(0);
-    assert_eq!(version, 17);
+    assert_eq!(version, 18);
     submit(&mut s, &task("t-1", 1));
     // a newer binary's additive migration keeps the floor: this one still serves the database, as after a rollback
     pg.sql()
         .execute(
-            "INSERT INTO schema_migrations (version, floor) VALUES (18, 17)",
+            "INSERT INTO schema_migrations (version, floor) VALUES (19, 18)",
             &[],
         )
         .unwrap();
@@ -252,17 +252,17 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
     assert!(s.claim(&slot("s0"), 60).unwrap().is_some());
     // one this binary would misread, or one that names no floor, is refused
     pg.sql()
-        .execute("INSERT INTO schema_migrations (version) VALUES (19)", &[])
+        .execute("INSERT INTO schema_migrations (version) VALUES (20)", &[])
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(19))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(20))));
     pg.sql()
         .execute(
-            "UPDATE schema_migrations SET floor = 19 WHERE version = 19",
+            "UPDATE schema_migrations SET floor = 20 WHERE version = 20",
             &[],
         )
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(19))));
-    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(19))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(20))));
+    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(20))));
 }
 
 #[test]
@@ -2453,6 +2453,8 @@ fn the_runner_runs_a_turn_and_neither_role_writes_or_reads_what_it_may_not() {
             format!("SELECT start_session('{}')", agent_task()),
             "DELETE FROM inbox".to_owned(),
             "UPDATE inbox SET body = 'x'".to_owned(),
+            "SELECT cost_usd FROM turns".to_owned(),
+            "UPDATE turns SET delivered = false".to_owned(),
             format!("INSERT INTO inbox (task_id, kind, body) VALUES ('{id}', 'message', 'x')"),
             format!("SELECT send_timer('{id}', 'x', now())"),
         ],
