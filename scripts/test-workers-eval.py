@@ -486,7 +486,7 @@ def check_push_filter(acer, msi):
           and msi.get("filtered") is True,
           f"acer's filter reads each slot's runner manifest, as the proxy's user with no network; msi runs one too ({f})")
     d = "/run/exec-pool-push-filter-metrics"
-    check(f.get("textfile") == f"{d}/push-filter.prom" and f.get("ReadWritePaths") == [d]
+    check(f.get("textfile") == f"{d}/push-filter.prom" and f.get("ReadWritePaths") == [f"-{d}"]
           and f"--collector.textfile.directory={d}" in f.get("exporter", []),
           f"acer's filter counts its pushes in a textfile of its own directory, which node-exporter reads ({ {k: f.get(k) for k in ('textfile', 'ReadWritePaths')} })")
     sites = {b.split("\n", 2)[1].strip(): b for b in acer.get("caddy", "").split("http:// {")[1:]}

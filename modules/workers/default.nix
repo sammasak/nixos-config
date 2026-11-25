@@ -954,6 +954,7 @@ in
           description = "Holds the instances' git pushes to their own task's refs";
           wantedBy = [ "multi-user.target" ];
           before = [ "dev-env-egress.service" ];
+          after = [ "systemd-tmpfiles-resetup.service" ];
           onFailure = lib.optional (dev.alert != null) "dev-env-alert@%n.service";
           serviceConfig = {
             ExecStart = "${
@@ -968,7 +969,8 @@ in
             # the proxy's user: each connects to the other's socket, which only its owner may
             User = user;
             RuntimeDirectory = baseNameOf (dirOf filterSocket);
-            ReadWritePaths = [ filterMetrics ];
+            # "-": a missing directory loses the count, never the filter and so every slot's push
+            ReadWritePaths = [ "-${filterMetrics}" ];
             Restart = "always";
             RestartSec = 2;
             # unix sockets on the file system only: no network of its own
