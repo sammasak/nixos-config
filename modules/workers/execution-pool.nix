@@ -63,6 +63,7 @@ in
       telemetry = config.sam.profile.nativeOtel && cfg.agents != [ ];
       headlessAgents = cfg.agents;
       egress.github.repos = cfg.repos;
+      egress.monitoring = cfg.monitoring;
       sessionDock = true;
       rootInGuest = cfg.slot.privateUsers;
       # a task's fetches never read entries an earlier task in any slot planted

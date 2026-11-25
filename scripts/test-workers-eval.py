@@ -489,6 +489,82 @@ class GitHubRecorder(http.server.BaseHTTPRequestHandler):
         pass
 
 
+# acer's slots query black-pi's monitoring read only (homelab.execPool.monitoring); msi's switch is off
+MONITORING = r"""
+let
+  flake = builtins.getFlake (toString %(root)s);
+  caddy = c: builtins.readFile (flake.inputs.nixpkgs.lib.last (flake.inputs.nixpkgs.lib.splitString " " c.systemd.services.dev-env-egress.serviceConfig.ExecStart));
+  env = c: c.containers.pool1.config.environment.variables;
+  acer = flake.nixosConfigurations.acer-swift.config;
+  msi = flake.nixosConfigurations.msi-ms7758.config;
+in {
+  acer = { caddy = caddy acer; env = env acer; };
+  msi = { caddy = caddy msi; env = env msi; };
+  urls = builtins.mapAttrs (n: _: acer.sam.fleet.listeners.${n}.url) { prometheus = 0; alertmanager = 0; loki = 0; };
+}
+"""
+READ = ("GET", "POST")
+MONITORING_CASES = {
+    "prometheus": [
+        *[(m, p, True) for m in READ for p in ("/api/v1/query?query=up", "/api/v1/query_range?query=up&start=0&end=1&step=1",
+                                                "/api/v1/series?match[]=up", "/api/v1/labels", "/api/v1/label/job/values")],
+        ("GET", "/api/v1/rules", True), ("GET", "/api/v1/alerts", True),
+        ("GET", "/api/v1/query?query=sum(rate(x%7Ba%3D%22b%2Fc%22%7D%5B5m%5D))", True),
+        ("POST", "/api/v1/admin/tsdb/delete_series?match[]=up", False), ("POST", "/api/v1/admin/tsdb/snapshot", False),
+        ("PUT", "/api/v1/admin/tsdb/clean_tombstones", False), ("POST", "/api/v1/write", False), ("POST", "/api/v1/otlp/v1/metrics", False),
+        ("POST", "/-/reload", False), ("PUT", "/-/quit", False), ("POST", "/api/v1/rules", False), ("POST", "/api/v1/alerts", False),
+        ("GET", "/api/v1/status/config", False), ("GET", "/api/v1/targets", False), ("DELETE", "/api/v1/query", False), ("PUT", "/api/v1/query", False),
+        ("GET", "/api/v1/admin/../query", False), ("GET", "/api/v1//query", False), ("GET", "/api/v1/%71uery", False),
+        ("POST", "/api/v1/query/../admin/tsdb/snapshot", False), ("POST", "/api/v1/query%2F..%2Fadmin%2Ftsdb%2Fsnapshot", False),
+        ("GET", "/api/v1/label/../../admin/values", False), ("GET", "/api/v1/query/", False), ("GET", "/", False),
+        ("POST", "/api/v1/query", 413, {}, (1 << 20) + 1),
+    ],
+    "alertmanager": [
+        ("GET", "/api/v2/alerts", True), ("GET", "/api/v2/alerts?filter=alertname%3D%22X%22&active=true", True),
+        ("POST", "/api/v2/alerts", False), ("GET", "/api/v2/silences", False), ("POST", "/api/v2/silences", False),
+        ("DELETE", "/api/v2/silence/abc", False), ("POST", "/-/reload", False), ("GET", "/api/v2/status", False),
+        ("POST", "/api/v1/alerts", False), ("GET", "/api/v2/alerts/groups", False), ("GET", "/api/v2//alerts", False),
+    ],
+    "loki": [
+        *[(m, p, True) for m in READ for p in ('/loki/api/v1/query_range?query=%7Bjob%3D%22x%22%7D', "/loki/api/v1/series?match[]=%7Bjob%3D%22x%22%7D",
+                                                '/loki/api/v1/query?query=%7Bjob%3D%22x%22%7D')],
+        ("GET", "/loki/api/v1/labels", True), ("GET", "/loki/api/v1/label/job/values", True),
+        ("POST", "/loki/api/v1/push", False), ("POST", "/api/prom/push", False), ("POST", "/otlp/v1/logs", False),
+        ("POST", "/loki/api/v1/delete?query=x", False), ("DELETE", "/loki/api/v1/delete", False), ("GET", "/loki/api/v1/tail", False),
+        ("POST", "/flush", False), ("GET", "/config", False), ("POST", "/loki/api/v1/rules/ns", False), ("POST", "/loki/api/v1/labels", False),
+        ("GET", "/loki/api/v1/push/../labels", False), ("POST", "/loki/api/v1/query", 413, {}, (1 << 20) + 1),
+    ],
+}
+MONITORING_ENV = {"PROMETHEUS_URL": "http://127.0.0.1:4105", "ALERTMANAGER_URL": "http://127.0.0.1:4106", "LOKI_ADDR": "http://127.0.0.1:4107"}
+
+
+def check_monitoring():
+    out = run_eval(MONITORING % {"root": json.dumps(ROOT)})
+    got = json.loads(out.stdout) if out.returncode == 0 else {}
+    acer, msi, urls = got.get("acer", {}), got.get("msi", {}), got.get("urls", {})
+    sites = {b.split("\n", 2)[1].strip(): b for b in acer.get("caddy", "").split("http:// {")[1:]}
+    check({k: acer.get("env", {}).get(k) for k in MONITORING_ENV} == MONITORING_ENV
+          and not any(k in msi.get("env", {}) for k in MONITORING_ENV) and not any(f"/{n}.sock" in msi.get("caddy", "") for n in MONITORING_CASES),
+          f"acer's slots get PROMETHEUS_URL, ALERTMANAGER_URL and LOKI_ADDR on their loopback; msi's, its switch off, no route ({out.stderr.strip()[-300:]})")
+    for name, cases in MONITORING_CASES.items():
+        site = sites.get(f"bind unix//run/dev-env-egress/pool1/{name}.sock", "")
+        GitHubRecorder.seen = []
+        upstream = http.server.ThreadingHTTPServer(("127.0.0.1", 0), GitHubRecorder)
+        threading.Thread(target=upstream.serve_forever, daemon=True).start()
+        try:
+            # each request carries a login of the guest's own, which must not reach the upstream
+            signed = [(m, p, a, *(more or [{"Authorization": "Bearer guest", "Cookie": "c=1"}, 2])) for m, p, a, *more in cases]
+            wrong = site_wrong(site, re.escape(urls.get(name, "-")), signed, f"http://127.0.0.1:{upstream.server_port}") if site and name in urls else ["no site or listener"]
+        finally:
+            upstream.shutdown()
+        check(wrong == [], f"the {name} site passes its query endpoints and refuses admin, write, silence, lifecycle and odd paths ({'no caddy on PATH' if wrong is None else wrong})")
+        seen = GitHubRecorder.seen
+        # the oversized body's request is on an allowed path and reaches it cut short
+        allowed = {p for _, p, a, *_ in cases if a is True or a == 413}
+        check(wrong is None or ({p for p, _ in seen} == allowed and not any(auth for _, auth in seen)),
+              f"what reaches {name} is the allowed paths alone, with the guest's Authorization dropped ({seen})")
+
+
 OTLP_CASES = [("POST", "/v1/metrics", True), ("POST", "/v1/logs", True), ("GET", "/v1/metrics", False), ("POST", "/v1/traces", False),
               ("POST", "/v1/metrics/x", False), ("POST", "/", False), ("PUT", "/v1/logs", False), ("HEAD", "/v1/metrics", False),
               ("OPTIONS", "/v1/logs", False), ("POST", "/V1/METRICS", False), ("POST", "/v1//logs", False), ("POST", "/v1/metrics/../logs", False),
@@ -1536,7 +1612,7 @@ def main():
         *[(BLOCKED_CASE % v6, BLOCKED_WHAT) for v6, _ in BLOCKED], *[(case, OWN) for _, case, _ in ASSERTED]]])
     prefetch([fleet("{ }"), fleet(FLEET_INSTANCE, FLEET_FACTS), *[fleet(c[1], host=fleet_host(c)) for c in FLEET_CASES], fleet(USER_SECRET[1]),
               NO_OTEL % {"root": json.dumps(ROOT)}, GITHUB % {"root": json.dumps(ROOT)}, TELEMETRY % {"root": json.dumps(ROOT)},
-              SCRIPTS % {"root": json.dumps(ROOT)}, host_network_expr(),
+              SCRIPTS % {"root": json.dumps(ROOT)}, MONITORING % {"root": json.dumps(ROOT)}, host_network_expr(),
               *[fleet(case) for _, case, _ in POOL_CASES]])
     out = nix_eval("{ }")
     check(out.returncode == 0 and json.loads(out.stdout) == [], f"a valid host fails no assertion ({out.stdout.strip() or out.stderr.strip()[-600:]})")
@@ -1692,6 +1768,7 @@ def main():
           f"no GitHub site for an instance without repos, no GraphQL unless asked for ({sorted(sites)})")
     check_github_proxy(gh)
     check_github_forward()
+    check_monitoring()
     check(got.get("config", "").startswith("/nix/store/") and "/run/secrets" not in caddy,
           f"the proxy's Caddyfile ({got.get('config')}) names no path under /run/secrets")
     out = run_eval(TELEMETRY % {"root": json.dumps(ROOT)})
