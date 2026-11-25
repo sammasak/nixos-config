@@ -1101,10 +1101,10 @@ def check_pool_compat():
     # acer's pool1 pushes through the GitHub proxy (check_runner) and holds nothing of the host's
     leaked = [b for b in a.get("binds", []) if b.startswith(("/run/secrets", "/run/user", "/run/credentials", "/var/lib/host-credentials/"))
               and not b.endswith(("/ssh_host_ed25519_key", ".pub"))]
-    check(a.get("failing") == [] and a.get("sockets") == ["anthropic-egress", "github-egress", "llm-gateway-egress", "openai-egress", "otlp-egress"] and not leaked
+    check(a.get("failing") == [] and a.get("sockets") == ["alertmanager-egress", "anthropic-egress", "github-egress", "llm-gateway-egress", "loki-egress", "openai-egress", "otlp-egress", "prometheus-egress"] and not leaked
           and a.get("codexKey") == "held-by-the-host" and a.get("codexUrl") == 'openai_base_url = "http://127.0.0.1:4103/v1"' and a.get("pi") is True
           and {"llm_gateway_pi_key:/run/secrets/llm_gateway_pi_key", "codex-auth.json:/home/lukas/.codex/auth.json"} <= set(a.get("creds", [])),
-          f"homelab.execPool.agents = [ \"claude\" \"codex\" \"pi\" ] on acer: pool1 gets the anthropic, github, openai, llm-gateway and OTLP proxies, Codex and Pi pointed at them with placeholders, and the keys only in the proxy's credentials ({a.get('error') or {**a, 'leaked': leaked} })")
+          f"homelab.execPool.agents = [ \"claude\" \"codex\" \"pi\" ] on acer: pool1 gets the anthropic, github, openai, llm-gateway and OTLP proxies and the monitoring ones (homelab.execPool.monitoring), Codex and Pi pointed at them with placeholders, and the keys only in the proxy's credentials ({a.get('error') or {**a, 'leaked': leaked} })")
     # POOL_CASES were prefetched; a whole msi per type error, one at a time
     outs = [run_eval(fleet(c[1])) for c in POOL_CASES]
     typed = [subprocess.run(["nix", "eval", "--impure", "--json", "--expr", POOL_THROW % {"root": json.dumps(ROOT), "case": c[1]}], capture_output=True, text=True)
