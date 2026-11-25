@@ -305,6 +305,8 @@ let
                 cur=""
                 ;;
               nodeless)
+                # a refusal, not this check failing: a fail record would name a rerun that builds and passes
+                cur=""
                 echo "nixos-flake-check: $c would compile against CUDA on $me, whose system has none, and names no deploy node to defer to: name it deploy-*-<node> or run this gate on a CUDA host" >&2
                 exit 1
                 ;;

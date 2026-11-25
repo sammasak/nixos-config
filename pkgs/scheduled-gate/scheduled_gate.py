@@ -71,9 +71,14 @@ def git(*args: str, cwd: pathlib.Path) -> str:
 def load(path: pathlib.Path) -> State:
     try:
         raw = json.loads(path.read_text())
-        return State(**{k: raw[k] for k in asdict(State()) if k in raw})
+        st = State(**{k: raw[k] for k in asdict(State()) if k in raw})
     except (OSError, ValueError, TypeError):
         return State()
+    # an older run wrote "step (check)" in step: published as is, the alerts' rerun command would not parse
+    if not st.check and st.step.endswith(")") and " (" in st.step:
+        st.step, _, rest = st.step.partition(" (")
+        st.check = rest[:-1]
+    return st
 
 
 def save(path: pathlib.Path, st: State) -> None:

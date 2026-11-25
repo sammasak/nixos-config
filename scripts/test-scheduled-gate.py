@@ -148,5 +148,16 @@ esac
     exposed = {re.split(r"[{ ]", line)[0] for line in prom.read_text().splitlines() if not line.startswith("#")}
     check(exposed == set(listed), f"a red textfile has a sample of every listed series ({sorted(exposed)})")
 
+# a state.json from before the check label: its combined "step (check)" is split on load
+sys.path.insert(0, str(GATE.parent))
+import scheduled_gate  # noqa: E402
+
+with tempfile.TemporaryDirectory() as t:
+    old = pathlib.Path(t) / "state.json"
+    old.write_text(json.dumps({"head": "a" * 40, "result": "fail", "step": "nixos-flake-check (checks.x86_64-linux.foo)"}))
+    st = scheduled_gate.load(old)
+    check(st.step == "nixos-flake-check" and st.check == "checks.x86_64-linux.foo",
+          f"an older state's combined step is read as step and check ({st.step!r}, {st.check!r})")
+
 print(f"{failed} failed" if failed else "all passed")
 sys.exit(1 if failed else 0)
