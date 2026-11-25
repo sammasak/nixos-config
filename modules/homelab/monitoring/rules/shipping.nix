@@ -110,7 +110,7 @@ in
         (lib.recursiveUpdate
           (alert "ScheduledGateRed"
             ''max by (node, head, step, green) (homelab_scheduled_gate_red{job="node-exporter"}) == 1''
-            "The scheduled full gate failed on main at {{ $labels.head }}, first failed step {{ $labels.step }}; {{ if eq $labels.green \"none\" }}no scheduled run has passed yet, so the range starts at the first scheduled run{{ else }}the commits since the last green run are {{ $labels.green }}..{{ $labels.head }}{{ end }}."
+            "The scheduled full gate failed on main at {{ $labels.head }}, first failed step {{ $labels.step }}; {{ if eq $labels.green \"none\" }}no scheduled run has passed yet, so the range starts at the first scheduled run{{ else }}the commits since the last green run are {{ $labels.green }}..{{ $labels.head }}{{ end }}. A red head runs once more by itself; red again, read it on acer with journalctl -u scheduled-gate -n 200 and reproduce with just full-gate {{ $labels.head }}. A later scheduled run that passes clears this."
             { }
           )
           {
@@ -140,13 +140,14 @@ in
           "{{ $labels.node }} runs a deploy {{ $value | humanize }} h behind main."
           { "for" = "${toString a.HostBehindMain.upHours.value}h"; }
         )
+        # per host, and only until a good deploy of it: a rollback the retry fixed is handled
         (alert "DeployRolledBack"
-          ''sum(shipping_deploy_rollbacks{window="24h"}) > ${toString a.DeployRolledBack.max.value}''
-          "{{ $value }} deploy(s) rolled back in the last 24 h."
+          ''max by (host, node) (shipping_deploy_rollbacks_open{window="24h"}) > ${toString a.DeployRolledBack.max.value}''
+          "{{ $value }} deploy(s) of {{ $labels.host }} rolled back in the last 24 h and none has succeeded since. Fix what its deploy output names, then from lenovo: just deploy {{ $labels.host }}; a good deploy clears this."
           { }
         )
         (alert "EscapeFound" ''sum(shipping_escapes{window="24h"}) > ${toString a.EscapeFound.max.value}''
-          "{{ $value }} escape(s) in the last 24 h: a revert on a default branch or an issue labelled escape."
+          "{{ $value }} escape(s) in the last 24 h: a revert on a default branch not reapplied since, or an open issue labelled escape. List the reverts with gh search commits --owner sammasak --committer-date \">=$(date -u -d -1day +%FT%TZ)\" Revert. Reapplying the change clears its revert (a revert made on purpose says Escape: no in its message); closing the escape issue clears it."
           { }
         )
         # per host, against its own past: a host joining (a guest) moves no other median. offset 5d: on a younger series
@@ -161,7 +162,7 @@ in
         # makes 2, so 3 is a pattern; the flake check's own count covers only failures no inner check explains. It
         # clears newFailureHours after the unit's last failure unless its count rose since (a failure Loki received
         # late, under its old time), and fires again on the next; with no timestamp (an older collector) the count
-        # alone decides
+        # alone decides. A scheduled full gate on main that passed after the last failure is the pattern handled
         (alert "RetroDueStepFailsRepeat"
           (
             let
@@ -172,9 +173,9 @@ in
               }";
               rose = "${fails} > ${before} or ${fails} unless on (step, check) ${before}";
             in
-            "${fails} >= ${toString a.RetroDueStepFailsRepeat.minFailures.value} unless on (step, check) (${stale} unless on (step, check) (${rose})) and on () ${gateRuns} >= ${toString a.RetroDueStepFailsRepeat.lastRuns.value}"
+            "${fails} >= ${toString a.RetroDueStepFailsRepeat.minFailures.value} unless on (step, check) (${stale} unless on (step, check) (${rose})) and on () ${gateRuns} >= ${toString a.RetroDueStepFailsRepeat.lastRuns.value} unless on (step, check) (max by (step, check) (shipping_gate_step_last_failure_timestamp_seconds) < on () group_left max(homelab_scheduled_gate_green_timestamp_seconds{job=\"node-exporter\"}))"
           )
-          "Gate step {{ $labels.step }}{{ if $labels.check }}, check {{ $labels.check }},{{ end }} failed on {{ $value }} heads in 7 d: a retro is due (Shipping dashboard: failed gate steps; Platform health for the runs)."
+          "Gate step {{ $labels.step }}{{ if $labels.check }}, check {{ $labels.check }},{{ end }} failed on {{ $value }} heads in 7 d: a retro is due (Shipping dashboard: failed gate steps; Platform health for the runs). Reproduce on main with {{ if $labels.check }}nix build -L .#{{ $labels.check }}{{ else }}devenv tasks run nixos:qa{{ end }}; a scheduled full gate on main that passes after the last failure clears this, as does ${toString newFailureHours} h with no new one."
           { }
         )
         # min_over_time over 45 m spans two runs (every 30 min): one failed run that the next one fixes stays quiet
