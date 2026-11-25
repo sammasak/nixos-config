@@ -2958,6 +2958,83 @@ fn a_session_summary_splits_its_time_by_state_and_park_reason_and_sums_its_usage
 }
 
 #[test]
+fn the_sessions_cli_finds_the_pull_request_and_reports_a_merged_session_once() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (_, id) = session(&pg);
+    let dir = std::env::temp_dir().join(format!("exec-pool-sessions-{id}"));
+    std::fs::create_dir_all(&dir).unwrap();
+    let gh = dir.join("gh");
+    std::fs::write(
+        &gh,
+        format!(
+            "#!/bin/sh\necho \"$@\" >> {}/argv\necho '[{{\"number\":7,\"state\":\"closed\",\"merged_at\":\"2026-11-25T06:40:00Z\",\"html_url\":\"u\"}}]'\n",
+            dir.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let run = |path: &std::path::Path, args: &[&str]| {
+        let out = Command::new(env!("CARGO_BIN_EXE_exec-pool"))
+            .args(args)
+            .env("PATH", path)
+            .env(
+                "EXEC_POOL_DB",
+                pg.conninfo()
+                    .replace("user=exec_pool ", "user=exec_pool_submit "),
+            )
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+        String::from_utf8(out.stdout)
+            .unwrap()
+            .lines()
+            .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap())
+            .collect::<Vec<_>>()
+    };
+    let report = dir.join("reported");
+    let report_arg = report.to_str().unwrap();
+    // queued: not yet reported, whatever its pull request
+    assert!(run(&dir, &["sessions", "--report", report_arg]).is_empty());
+    let (a, epoch, _) = started(&mut owner);
+    owner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, 0))
+        .unwrap();
+    let listed = run(&dir, &["sessions"]);
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0]["task"], id.as_str());
+    assert_eq!(listed[0]["pr"]["number"], 7);
+    assert_eq!(listed[0]["pr"]["state"], "merged");
+    let argv = std::fs::read_to_string(dir.join("argv")).unwrap();
+    assert!(
+        argv.contains(&format!(
+            "repos/sammasak/nixos-config/pulls -f head=sammasak:pool/{id} -f state=all"
+        )),
+        "{argv}"
+    );
+    assert_eq!(run(&dir, &["sessions", "--merged", &id]).len(), 1);
+    let reported = run(&dir, &["sessions", "--report", report_arg]);
+    assert_eq!(reported.len(), 1);
+    assert_eq!(std::fs::read_to_string(&report).unwrap(), format!("{id}\n"));
+    assert!(
+        run(&dir, &["sessions", "--report", report_arg]).is_empty(),
+        "once"
+    );
+    // no gh: the summary still, its pull request unknown and why
+    let empty = dir.join("empty");
+    std::fs::create_dir_all(&empty).unwrap();
+    let bare = run(&empty, &["sessions"]);
+    assert_eq!(bare[0]["pr"], serde_json::Value::Null);
+    assert!(
+        bare[0]["pr_error"].as_str().unwrap().starts_with("gh: "),
+        "{bare:?}"
+    );
+    assert!(run(&empty, &["sessions", "--merged"]).is_empty());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn a_turns_log_is_read_by_the_submitter_while_it_runs_and_after() {
     let pg = Pg::new();
     let mut owner = pg.migrated();

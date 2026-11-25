@@ -48,6 +48,13 @@ const USAGE: &str = "usage: exec-pool COMMAND
   wait ID [--timeout SECS]
                     blocks until the task settles (succeeded, failed, needs_review or cancelled) or, a session,
                     parks waiting, then prints its result
+  sessions [ID] [--limit N] [--merged] [--report FILE]
+                    where each session's time and money went, one JSON object per line, newest first (N, 20): turns,
+                    wall, running, queued, review and waiting seconds (waiting_by_reason: by why its turns parked),
+                    the tokens and cost its turns reported, and pr: the pull request of its branch pool/<task> on
+                    GitHub as gh finds it ({number, state open|closed|merged, merged_at, url}; null with none, and
+                    pr_error when gh could not tell). --merged: only those whose pull request merged. --report FILE:
+                    only those merged, out of a slot and the queue, that FILE does not list yet, each then added to it
   cancel ID         cancels a task you submitted: a queued one at once; a running one is stopped by its runner within
                     seconds and settles cancelled (follow it with wait). Prints the attempt and its status after";
 /// What `attach` tells the session it wakes.
@@ -55,7 +62,7 @@ const ATTACH_PROMPT: &str = "The owner opened this session in its pane to work w
 are, then wait for their input.";
 const ATTACH_TIMEOUT: Duration = Duration::from_secs(600);
 /// Flags that take no value.
-const SWITCHES: [&str; 1] = ["follow"];
+const SWITCHES: [&str; 2] = ["follow", "merged"];
 /// How often `logs -f` reads the queue.
 const FOLLOW_POLL: Duration = Duration::from_secs(2);
 /// How often `wait` reads the queue, and how long it waits after the settle for the runner to record the result.
@@ -323,6 +330,10 @@ fn run(cmd: &str, args: &Args, store: &mut Store) -> Result<(), Fail> {
             store.send(id(args)?, ATTACH_PROMPT)?;
             println!("{}", attached(store, id(args)?, timeout)?);
         }
+        "sessions" => {
+            args.only("sessions", &["limit", "merged", "report"], 1)?;
+            sessions(store, args)?;
+        }
         "cancel" => {
             args.only("cancel", &[], 1)?;
             let (attempt, status) = store.cancel(id(args)?)?;
@@ -331,6 +342,136 @@ fn run(cmd: &str, args: &Args, store: &mut Store) -> Result<(), Fail> {
         other => return Err(Fail::Usage(format!("unknown command {other:?}"))),
     }
     Ok(())
+}
+
+/// `sessions`: the queue's summaries, each with its pull request, filtered and recorded as its flags ask.
+fn sessions(store: &mut Store, args: &Args) -> Result<(), Fail> {
+    let limit = args.opt("limit").map_or(Ok(20), |n| {
+        n.parse::<i64>()
+            .ok()
+            .filter(|n| *n > 0)
+            .ok_or_else(|| Fail::Usage("--limit must be a positive number".to_owned()))
+    })?;
+    let report = args.opt("report").map(std::path::Path::new);
+    let reported: BTreeSet<String> = match report {
+        None => BTreeSet::new(),
+        Some(f) => match std::fs::read_to_string(f) {
+            Ok(s) => s.lines().map(str::to_owned).collect(),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => BTreeSet::new(),
+            Err(e) => return Err(Fail::Usage(format!("--report {}: {e}", f.display()))),
+        },
+    };
+    for summary in store.session_summaries(args.positional.first().map(String::as_str), limit)? {
+        let task = summary["task"].as_str().unwrap_or_default().to_owned();
+        if report.is_some() && (reported.contains(&task) || !out_of_the_pool(&summary)) {
+            continue;
+        }
+        let summary = with_pull(summary);
+        if (args.opt("merged").is_some() || report.is_some()) && !merged(&summary) {
+            continue;
+        }
+        println!("{summary}");
+        if let Some(f) = report {
+            use std::io::Write as _;
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(f)
+                .and_then(|mut f| writeln!(f, "{task}"))
+                .map_err(|e| Fail::Usage(format!("--report {}: {e}", f.display())))?;
+        }
+    }
+    Ok(())
+}
+
+/// Whether a session's summary shows it neither in a slot nor queued for one: what it cost is what it will have
+/// cost unless it is woken again.
+fn out_of_the_pool(summary: &Value) -> bool {
+    !matches!(
+        summary["state"].as_str(),
+        Some("queued" | "leased" | "running" | "checkpointing") | None
+    )
+}
+
+fn merged(summary: &Value) -> bool {
+    summary["pr"]["state"] == "merged"
+}
+
+/// `(owner, name)` of a GitHub repository as `submit --repo` names it; `None` for any other host or shape.
+fn github_repo(url: &str) -> Option<(&str, &str)> {
+    let path = [
+        "https://github.com/",
+        "ssh://git@github.com/",
+        "git@github.com:",
+    ]
+    .iter()
+    .find_map(|p| url.strip_prefix(p))?;
+    let path = path.trim_end_matches('/');
+    let path = path.strip_suffix(".git").unwrap_or(path);
+    let (owner, name) = path.split_once('/')?;
+    let ok = |s: &str| {
+        !s.is_empty()
+            && !s.starts_with('.')
+            && s.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+    };
+    (ok(owner) && ok(name)).then_some((owner, name))
+}
+
+/// The newest pull request of a GitHub `pulls?head=…&state=all` listing: its number, state (merged once it has a
+/// merge time) and merge time; null when the branch has none.
+fn pull_of(listing: &Value) -> Result<Value, String> {
+    let pulls = listing
+        .as_array()
+        .ok_or_else(|| format!("GitHub answered {listing}"))?;
+    Ok(pulls
+        .iter()
+        .max_by_key(|p| p["number"].as_u64())
+        .map_or(Value::Null, |p| {
+            let merged_at = &p["merged_at"];
+            json!({
+                "number": p["number"],
+                "state": if merged_at.is_string() { "merged" } else { p["state"].as_str().unwrap_or("unknown") },
+                "merged_at": merged_at,
+                "url": p["html_url"],
+            })
+        }))
+}
+
+/// `summary` with `pr`, its branch's pull request as `gh api` on this host finds it, and `pr_error` when it could
+/// not be told: no GitHub repository, no gh, or a refused call.
+fn with_pull(mut summary: Value) -> Value {
+    let task = summary["task"].as_str().unwrap_or_default();
+    let branch = summary["branch"]
+        .as_str()
+        .map_or_else(|| format!("pool/{task}"), str::to_owned);
+    let found = summary["repo"]
+        .as_str()
+        .and_then(github_repo)
+        .ok_or_else(|| "not a GitHub repository".to_owned())
+        .and_then(|(owner, name)| {
+            let out = std::process::Command::new("gh")
+                .args(["api", "-X", "GET", &format!("repos/{owner}/{name}/pulls")])
+                .args(["-f", &format!("head={owner}:{branch}"), "-f", "state=all"])
+                .stdin(std::process::Stdio::null())
+                .output()
+                .map_err(|e| format!("gh: {e}"))?;
+            if !out.status.success() {
+                let err = String::from_utf8_lossy(&out.stderr);
+                return Err(format!("gh api: {}", err.trim()));
+            }
+            serde_json::from_slice(&out.stdout)
+                .map_err(|e| format!("gh api: {e}"))
+                .and_then(|v| pull_of(&v))
+        });
+    match found {
+        Ok(pr) => summary["pr"] = pr,
+        Err(e) => {
+            summary["pr"] = Value::Null;
+            summary["pr_error"] = Value::String(e);
+        }
+    }
+    summary
 }
 
 fn timeout(args: &Args) -> Result<Option<Duration>, Fail> {
@@ -631,6 +772,67 @@ mod tests {
             let got = spec(&a).unwrap_err();
             assert!(got.contains(want), "{a:?}: {got}");
         }
+    }
+
+    #[test]
+    fn a_session_s_repository_and_pull_request_are_read_from_what_github_lists() {
+        for url in [
+            "https://github.com/sammasak/nixos-config.git",
+            "https://github.com/sammasak/nixos-config",
+            "git@github.com:sammasak/nixos-config.git",
+            "ssh://git@github.com/sammasak/nixos-config/",
+        ] {
+            assert_eq!(
+                github_repo(url),
+                Some(("sammasak", "nixos-config")),
+                "{url}"
+            );
+        }
+        for url in [
+            "https://gitlab.com/sammasak/nixos-config",
+            "https://github.com/sammasak",
+            "https://github.com/sammasak/a/b",
+            "https://github.com/../x",
+            "https://github.com/sammasak/x?y",
+            "/srv/git/nixos-config",
+        ] {
+            assert_eq!(github_repo(url), None, "{url}");
+        }
+        let listed = json!([
+            {"number": 788, "state": "closed", "merged_at": "2026-11-25T06:40:00Z", "html_url": "https://github.com/o/r/pull/788"},
+            {"number": 780, "state": "closed", "merged_at": null, "html_url": "https://github.com/o/r/pull/780"}
+        ]);
+        assert_eq!(
+            pull_of(&listed).unwrap(),
+            json!({"number": 788, "state": "merged", "merged_at": "2026-11-25T06:40:00Z", "url": "https://github.com/o/r/pull/788"})
+        );
+        assert_eq!(pull_of(&json!([listed[1]])).unwrap()["state"], "closed");
+        assert_eq!(pull_of(&json!([])).unwrap(), Value::Null);
+        assert!(pull_of(&json!({"message": "Not Found"})).is_err());
+    }
+
+    #[test]
+    fn the_report_takes_a_merged_session_once_it_is_out_of_the_pool() {
+        let at = |state: &str, pr: Value| json!({"task": "cli-1", "state": state, "pr": pr});
+        let merged_pr = json!({"number": 1, "state": "merged"});
+        for state in [
+            "waiting",
+            "needs_review",
+            "succeeded",
+            "failed",
+            "cancelled",
+        ] {
+            let s = at(state, merged_pr.clone());
+            assert!(out_of_the_pool(&s) && merged(&s), "{state}");
+        }
+        for state in ["queued", "leased", "running", "checkpointing"] {
+            assert!(!out_of_the_pool(&at(state, merged_pr.clone())), "{state}");
+        }
+        assert!(!merged(&at(
+            "waiting",
+            json!({"number": 1, "state": "open"})
+        )));
+        assert!(!merged(&at("waiting", Value::Null)));
     }
 
     #[test]
