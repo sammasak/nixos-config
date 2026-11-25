@@ -144,6 +144,9 @@ the root-only nix access token (the 404 after #798). Same narHash, so the same s
 the deploy recipe (more recipe code, still a github: lock) and a token group (wider secret access).
 `scripts/test-deploy-recipes.py` fails on any private input in flake.lock that is not git over ssh. The 4.6 GiB
 lenovo user.slice note above stays as written, not re-measured.
+Open: lenovo's root rebuild trigger (`modules/homelab/nixos-rebuild-trigger`) fetched a new skills pin with the
+token and now needs a GitHub SSH key for root, as it already did for the other private inputs; glance on lenovo:
+`sudo ssh -T git@github.com`.
 
 **Open, in pick-up order**
 
