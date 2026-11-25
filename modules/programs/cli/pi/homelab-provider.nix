@@ -21,8 +21,9 @@
     {
       id = "local";
       name = "homelab local";
-      # asus's OLLAMA_CONTEXT_LENGTH: a tool loop on `local` reaches only asus, and Ollama truncates past it silently
-      contextWindow = 32768;
+      # a tool loop on `local` reaches only asus (32768), and the gateway sends a self-hosted model only what fits 3/4 of
+      # its window (llm-gateway router.rs can_take): above this Pi must compact, or the request is refused
+      contextWindow = 24576;
       maxTokens = 8192;
     }
   ];
