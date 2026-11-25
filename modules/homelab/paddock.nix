@@ -14,6 +14,36 @@ let
   host = config.networking.hostName;
   # power-schedule.nix's unit: the scheduled poweroff starts it, and Paddock stops first
   shutdown = "${lib.head (lib.splitString "-" host)}-scheduled-shutdown.service";
+  inherit (config.sam.profile) username;
+  # Runs as root (the + prefix): a hardlink, never a copy, so a source on another filesystem fails here instead
+  # of filling the disk; a hand-started user unit of the same name holds the GPU and 20 GiB, so it is stopped first.
+  stage = pkgs.writeShellScript "paddock-stage" ''
+    set -eu
+    PATH=${
+      lib.makeBinPath [
+        pkgs.coreutils
+        config.systemd.package
+      ]
+    }
+    model=${lib.escapeShellArg cfg.model}
+    source=${lib.escapeShellArg (toString cfg.modelSource)}
+    install -d -m 0755 "$(dirname "$model")"
+    if [ ! -e "$model" ]; then
+      if [ -z "$source" ] || [ ! -f "$source" ]; then
+        echo "paddock: $model is missing and homelab.paddock.modelSource ('$source') is not a file; stage the GGUF" >&2
+        exit 1
+      fi
+      ln "$source" "$model" || {
+        echo "paddock: cannot hardlink $source to $model (another filesystem?); not copying it" >&2
+        exit 1
+      }
+    fi
+    chmod a+r "$model"
+    if systemctl --user --machine=${username}@ is-active --quiet paddock-serve.service 2>/dev/null; then
+      echo "paddock: stopping ${username}'s user unit paddock-serve, which holds the GPU"
+      systemctl --user --machine=${username}@ stop paddock-serve.service
+    fi
+  '';
   settings = (pkgs.formats.toml { }).generate "paddock.toml" {
     host = config.sam.fleet.hosts.${host}.address;
     inherit (listener) port;
@@ -33,7 +63,12 @@ in
     model = lib.mkOption {
       type = lib.types.str;
       default = "/var/lib/paddock-models/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf";
-      description = "The GGUF Paddock serves, staged by hand (nothing downloads it); its file stem is the model id /v1/models reports.";
+      description = "The GGUF Paddock serves; its file stem is the model id /v1/models reports.";
+    };
+    modelSource = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = "A GGUF on the same filesystem that the service's pre-start hardlinks to `model` while `model` is missing (nothing downloads it).";
     };
     contextLength = lib.mkOption {
       type = lib.types.ints.positive;
@@ -74,6 +109,7 @@ in
         XDG_RUNTIME_DIR = "/run/paddock";
       };
       serviceConfig = {
+        ExecStartPre = "+${stage}";
         ExecStart = "${lib.getExe pkgs.paddockRunner} --config ${settings} --kernel-pack ${pkgs.paddockCudaSm86}/lib/paddock/pd-cuda-sm86.so";
         Restart = "on-failure";
         RestartSec = 30;
