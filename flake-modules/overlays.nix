@@ -48,6 +48,18 @@ let
           inherit (inputs.herman) rev;
           wasmBindgenCli = wasmBindgenCli inputs.herman;
         };
+        # The fork's own recipe and Cargo.lock (the serving branch keeps both unchanged, or cargoSetupHook fails
+        # the build), over the serving branch's code; no default features, as measured on asus: PDF rendering off.
+        paddockRunner = inputs.paddock.packages.x86_64-linux.paddock-runner.overrideAttrs {
+          src = lib.cleanSourceWith {
+            src = inputs.paddock-serve;
+            name = "paddock-serve-source";
+            filter = path: _: !lib.hasPrefix "/docs" (lib.removePrefix "${inputs.paddock-serve}" path);
+          };
+          cargoBuildNoDefaultFeatures = true;
+          cargoCheckNoDefaultFeatures = true;
+        };
+        paddockCudaSm86 = inputs.paddock.packages.x86_64-linux.paddock-cuda-sm86;
       }
     )
   ];

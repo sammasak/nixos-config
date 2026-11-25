@@ -1,5 +1,5 @@
 
-# asus as a tier-3 provider beside msi: put before llm-gateway.toml only when
+# asus as tier-3 providers beside msi, Paddock then Ollama: put before llm-gateway.toml only when
 # homelab.llmGateway.asus.enable is set (llm-gateway.nix), so the catalog the
 # gateway reads without it is the base file alone. asus powers off every night
 # and the owner powers it off by hand (sam.fleet.hosts.asus-b460m.power): a
@@ -19,6 +19,18 @@ max_concurrency = 1
 drop_fields = ["reasoning_effort", "reasoning"]
 health_url = "http://@asus@:11434/api/tags"
 
+# Paddock on asus (modules/homelab/paddock.nix, sam.fleet.listeners.paddock-asus):
+# Qwen3.6-35B-A3B with its experts pinned in RAM, 27-30 tok/s decode, one
+# sequence at a time. While it runs it holds the GPU, and asus's Ollama serves
+# on the CPU. Its health probe holds it unreachable while it is stopped or asus
+# is off, and `local` falls to Ollama's model below.
+[[providers]]
+name = "asus-paddock"
+kind = "ollama"
+base_url = "http://@asus@:11540/v1"
+max_concurrency = 1
+health_url = "http://@asus@:11540/healthz"
+
 # One model: Ollama keeps one resident (OLLAMA_MAX_LOADED_MODELS 1), so a
 # second would swap weights between requests. Rendered before llm-gateway.toml,
 # so it is first in tier 3: `local` and `auto`'s floor try it before msi's CPU.
@@ -27,6 +39,19 @@ health_url = "http://@asus@:11434/api/tags"
 # 3.3 GB it stays on the GPU at 32K beside its KV cache. Until asus holds the tag
 # (homelab.ollama.toolModel.enable there, or `ollama pull qwen3.5:4b`) a call
 # gets 404, which blocks the model for block_secs and fails over.
+# First in tier 3, so `local` and `auto`'s floor try it before Ollama's model.
+# Its id is the GGUF's file stem, which Paddock's /v1/models reports.
+[[models]]
+provider = "asus-paddock"
+id = "Qwen3.6-35B-A3B-UD-Q4_K_XL"
+tier = 3
+cost_class = "free"
+enabled = true
+# homelab.paddock.contextLength on asus
+context_window = 32768
+tool_capable = true
+notes = "tool calls by Paddock's qwen35 template, finish_reason tool_calls on asus; Pi tool loop gated by the #620 canary through the gateway (#807)"
+
 [[models]]
 provider = "asus"
 id = "qwen3.5:4b"

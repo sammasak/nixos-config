@@ -33,3 +33,13 @@ groups:
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#llmgatewaydown"
           query: 'up{job="llm-gateway"}'
           description: "{{ if eq $value 0.0 }}Prometheus on black-pi fails to scrape llm-gateway's admin port on acer (up=0){{ else }}Prometheus on black-pi has no llm-gateway target{{ end }} for 5m: Pi, Open WebUI and factum have no LLM path. Run systemctl status llm-gateway and journalctl -u llm-gateway --since -15m on acer."
+
+  - name: llm-gateway.records
+    rules:
+      # Client requests Paddock on asus answered (llm-gateway-asus.toml's
+      # asus-paddock provider), per project and outcome: the local-model line's
+      # count (goals.md, #508). 0, not absent, while the gateway is scraped.
+      - record: llm_gateway:paddock_requests:increase1d
+        expr: |
+          sum by (project, outcome) (increase(llm_gateway_requests_total{model=~"asus-paddock/.+"}[1d]))
+          or on () (0 * max(up{job="llm-gateway"}))

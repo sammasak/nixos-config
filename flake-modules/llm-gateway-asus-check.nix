@@ -1,5 +1,5 @@
 # asus as acer's gateway provider: off, the deployed config is the base file's alone (the same store path); on, as
-# acer has it, it is one tier-3 provider before msi; and each wrong fact (modules/homelab/llm-gateway-asus.nix) fails its own assertion.
+# acer has it, its two tier-3 providers (Paddock, then Ollama) before msi; and each wrong fact (modules/homelab/llm-gateway-asus.nix) fails its own assertion.
 { config, lib, ... }:
 let
   host = config.flake.nixosConfigurations.acer-swift;
@@ -16,6 +16,7 @@ let
     inherit base address;
     fragment = lib.replaceStrings [ "@asus@" ] [ address ] fragment;
     inherit (acer.sam.fleet.listeners.ollama-asus) port;
+    paddockPort = acer.sam.fleet.listeners.paddock-asus.port;
     enabledByDefault = host.options.homelab.llmGateway.asus.enable.default;
     unit = acer.systemd.services.llm-gateway;
   };
@@ -55,6 +56,8 @@ let
     };
     two-slots = edit "max_concurrency = 1" "max_concurrency = 2";
     wrong-port = edit ":11434/" ":11435/";
+    paddock-wrong-port = edit ":11540/" ":11541/";
+    paddock-no-health-probe = edit "health_url = \"http://${address}:11540" "# health_url = \"http://${address}:11540";
     above-tier-3 = edit "tier = 3" "tier = 2";
     no-health-probe = edit "health_url" "# health_url";
     tool-capable-unverified = edit "Ollama's qwen3.5 parser" "unverified";
@@ -72,6 +75,8 @@ let
     in-base-catalog = "names an asus provider";
     two-slots = "max_concurrency = 1";
     wrong-port = "base_url and health_url";
+    paddock-wrong-port = "asus-paddock's base_url";
+    paddock-no-health-probe = "asus-paddock's base_url";
     above-tier-3 = "tier 3, beside msi";
     no-health-probe = "base_url and health_url";
     tool-capable-unverified = "tool use is unverified";
@@ -101,13 +106,14 @@ in
         assert lib.assertMsg
           (
             tier3 == [
+              "asus-paddock"
               "asus"
               "msi"
               "msi"
             ]
             && lib.any (p: p.name == "asus" && p.max_concurrency == 1) onCatalog.providers
           )
-          "llm-gateway: with asus on, tier 3 is not asus's one-slot provider then msi's models (${toString tier3})";
+          "llm-gateway: with asus on, tier 3 is not Paddock's model, then asus's Ollama one, then msi's (${toString tier3})";
         assert lib.assertMsg (
           lib.attrNames seeds == lib.attrNames expect
         ) "llm-gateway-asus: a seed without its expected failure";

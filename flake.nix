@@ -43,6 +43,12 @@
     herman.url = "git+ssh://git@github.com/sammasak/herman?rev=7f41955749fc473d11173ffbc18e76973a7bb224";
     herman.flake = false;
 
+    # The fork's flake (its own nixpkgs, CUDA 13 and toolchain) for the runner's recipe and the sm_86 kernel pack;
+    # paddock-serve is the serving branch it builds the runner from (modules/homelab/paddock.nix).
+    paddock.url = "git+ssh://git@github.com/sammasak/paddock?ref=asus/devshell-driver-lib&rev=355df36cc5eceef56e2eb108373162a79b131579";
+    paddock-serve.url = "git+ssh://git@github.com/sammasak/paddock?ref=asus/ssd-expert-backing&rev=11d7253b8921884d62fa27cbc4d2dbb8864ec4ef";
+    paddock-serve.flake = false;
+
     rust-overlay.url = "github:oxalica/rust-overlay";
     rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
 

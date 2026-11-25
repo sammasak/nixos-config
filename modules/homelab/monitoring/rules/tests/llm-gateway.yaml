@@ -1,0 +1,24 @@
+# promtool test rules for llm-gateway.yaml's Paddock request count (flake-modules/monitoring-check.nix runs it).
+rule_files: [../llm-gateway.yaml]
+evaluation_interval: 1m
+tests:
+  # Pi's requests answered by Paddock count, msi's and asus Ollama's do not; with none, the record is 0
+  - interval: 1h
+    input_series:
+      - series: 'up{job="llm-gateway"}'
+        values: '1x30'
+      - series: 'llm_gateway_requests_total{project="pi",model="asus-paddock/Qwen3.6-35B-A3B-UD-Q4_K_XL",outcome="ok"}'
+        values: '_x24 0 2 4 6'
+      - series: 'llm_gateway_requests_total{project="pi",model="asus/qwen3.5:4b",outcome="ok"}'
+        values: '0+5x30'
+    promql_expr_test:
+      - expr: llm_gateway:paddock_requests:increase1d
+        eval_time: 10h
+        exp_samples:
+          - labels: 'llm_gateway:paddock_requests:increase1d'
+            value: 0
+      - expr: llm_gateway:paddock_requests:increase1d
+        eval_time: 27h
+        exp_samples:
+          - labels: 'llm_gateway:paddock_requests:increase1d{project="pi",outcome="ok"}'
+            value: 6
