@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -36,6 +37,8 @@ DONE_PARKED = ("turn_end",)
 EVIDENCE_BYTES = 8000
 REPORT_BYTES = 60000
 DAY = 86400
+# exits after which a start may or may not have made the session: ssh's 255, the CLI's 3, a timed-out command's 124
+UNKNOWN = (3, 124, 255)
 
 Json = Any
 Run = Callable[[Sequence[str], str], tuple[int, str, str]]
@@ -43,7 +46,10 @@ Fetch = Callable[[str], str]
 
 
 def run_command(argv: Sequence[str], stdin: str) -> tuple[int, str, str]:
-    p = subprocess.run(list(argv), input=stdin, capture_output=True, text=True, timeout=120, check=False)
+    try:
+        p = subprocess.run(list(argv), input=stdin, capture_output=True, text=True, timeout=120, check=False)
+    except subprocess.TimeoutExpired:
+        return 124, "", f"{argv[0]}: no answer in 120 s"
     return p.returncode, p.stdout, p.stderr
 
 
@@ -169,7 +175,8 @@ rules (modules/homelab/monitoring/rules), docs/alert-runbooks.md and the modules
 checkout; read them with Read where the role needs them.
 
 Your final message is the report and nothing else, at most 12 KB of Markdown: alert-investigations posts it on \
-{cfg.repo}#{issue}. It has the role's six sections: Verdict, Evidence, Active generation, Hypotheses (cause \
+{cfg.repo}#{issue}, a public issue, so quote no credential and no log line that holds one. It has the role's six \
+sections: Verdict, Evidence, Active generation, Hypotheses (cause \
 unproven, two, each with the check that tells them apart), Recommended owner, Not checked.
 
 # Evidence
@@ -258,8 +265,22 @@ def issue_for(cfg: argparse.Namespace, tools: Tools, state: State, name: str) ->
     return number
 
 
+# token shapes a report could carry from a journal line; the issue is public
+SECRET_SHAPES = re.compile(
+    r"(?i)\b(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|xox[abpr]-[A-Za-z0-9-]{10,}"
+    r"|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|AGE-SECRET-KEY-[A-Z0-9]+|[A-Za-z0-9+/]{48,}={0,2})"
+    r"|((?:password|passwd|secret|token|api[_-]?key|authorization)[\"']?\s*[:=]\s*)(?:(?:bearer|basic|token)\s+)?[^\s\"',;]+"
+)
+PRIVATE_KEY = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(-----END [A-Z ]*PRIVATE KEY-----|\Z)", re.S)
+
+
+def redact(text: str) -> str:
+    text = PRIVATE_KEY.sub("[private key removed]", text)
+    return SECRET_SHAPES.sub(lambda m: (m.group(2) or "") + "[redacted]", text)
+
+
 def comment(cfg: argparse.Namespace, tools: Tools, issue: int, body: str) -> None:
-    tools.gh([f"repos/{cfg.repo}/issues/{issue}/comments", "-F", "body=@-"], clip(body, REPORT_BYTES))
+    tools.gh([f"repos/{cfg.repo}/issues/{issue}/comments", "-F", "body=@-"], clip(redact(body), REPORT_BYTES))
 
 
 def pushed(cfg: argparse.Namespace, tools: Tools, task: str, result: Json) -> bool:
@@ -269,53 +290,84 @@ def pushed(cfg: argparse.Namespace, tools: Tools, task: str, result: Json) -> bo
     return any(r.get("ref") == f"refs/heads/pool/{task}" for r in refs)
 
 
+def settle(state: State, name: str, inv: Json, reason: str | None, log: list[str]) -> None:
+    state.count(name, "failed" if reason else "reported", reason)
+    del state.open[name]
+    log.append(f"{name}: session {inv.get('task')} {'failed: ' + reason if reason else 'reported'} on #{inv['issue']}")
+
+
+def launch(cfg: argparse.Namespace, tools: Tools, inv: Json) -> tuple[int, str, str]:
+    args = ["start", "--agent", "claude", "--repo", cfg.clone_url, "--rev", cfg.rev, "--workdir", "."]
+    return tools.pool([*args, "--key", inv["key"], "--prompt-file", "-"], inv["prompt"])
+
+
 def finish(
     cfg: argparse.Namespace, tools: Tools, state: State, name: str, inv: Json, now: float, log: list[str]
 ) -> None:
     """Settles investigation `inv` of `name` once its first turn is over; leaves it open while it runs."""
+    late = now - inv["started"] > cfg.turn_timeout
+    if inv.get("task") is None:
+        # a start whose outcome was unknown: the same key returns the session it made, or makes it now
+        rc, out, err = launch(cfg, tools, inv)
+        if rc == 0 and out.strip():
+            inv["task"] = out.strip().splitlines()[-1]
+            del inv["prompt"]
+            log.append(f"{name}: started session {inv['task']} (retried start), report to #{inv['issue']}")
+        elif late or rc not in UNKNOWN:
+            log.append(f"{name}: investigation not started: exec-pool start: exit {rc}: {err.strip()[:300]}")
+            settle(state, name, inv, "start_failed", log)
+        return
     task, issue = inv["task"], inv["issue"]
+    head = f"Investigation of {name} by pool session `{task}`, started {utc(inv['started'])}"
     rc, out, err = tools.pool(["result", task])
     if rc != 0:
         log.append(f"{name}: exec-pool result {task}: exit {rc}: {err.strip()[:200]}")
-        return
-    got = json.loads(out)
+        if not late:
+            return
+        got: Json = {"status": "unknown"}
+    else:
+        got = json.loads(out)
     status, parked = got.get("status"), got.get("parked")
     result = got.get("result") or {}
-    head = f"Investigation of {name} by pool session `{task}`, started {utc(inv['started'])}"
-    if status in ("waiting", "succeeded") and (status == "succeeded" or parked in DONE_PARKED):
-        report = str(result.get("output") or "").strip()
-        if pushed(cfg, tools, task, result):
-            reason = "pushed"
-            body = f"{head}: **failed**, it pushed `pool/{task}` although read-only. Its report:\n\n{report}"
-        elif not report:
-            reason = "no_report"
-            body = f"{head}: **failed**, its turn ended without a report (`exec-pool logs {task}` on the pool host)."
-        else:
-            reason = None
-            body = f"{head}, read-only:\n\n{report}"
+    over = status == "succeeded" or (status == "waiting" and parked in DONE_PARKED)
+    if not over and status not in ("failed", "cancelled", "needs_review") and not late:
+        return
+    try:
+        branch = pushed(cfg, tools, task, result)
+    except RuntimeError as e:
+        if not late:
+            raise
+        log.append(f"{name}: branch of {task} not checked: {e}")
+        branch = False
+    report = str(result.get("output") or "").strip()
+    if branch:
+        reason: str | None = "pushed"
+        body = f"{head}: **failed**, it pushed `pool/{task}` although read-only ({status}). Its report:\n\n{report}"
+    elif over and report:
+        reason = None
+        body = f"{head}, read-only:\n\n{report}"
+    elif over:
+        reason = "no_report"
+        body = f"{head}: **failed**, its turn ended without a report (`exec-pool logs {task}` on the pool host)."
     elif status in ("failed", "cancelled", "needs_review"):
         reason = "session_failed"
         body = f"{head}: **failed**, the session is `{status}` (`exec-pool result {task}` on the pool host)."
-    elif now - inv["started"] > cfg.turn_timeout:
+    else:
         reason = "timed_out"
         crc, _, cerr = tools.pool(["cancel", task])
         cancelled = "cancelled" if crc == 0 else f"not cancelled (exit {crc}: {cerr.strip()[:200]})"
         waited = cfg.turn_timeout // 60
         body = f"{head}: **failed**, no report after {waited} minutes ({status}); the session was {cancelled}."
-    else:
-        return
     # the comment first: one that fails leaves the investigation open, and the next run posts it again, until the
     # timeout settles it as not posted
     try:
         comment(cfg, tools, issue, body)
     except RuntimeError as e:
         log.append(f"{name}: comment on #{issue}: {e}")
-        if now - inv["started"] <= cfg.turn_timeout:
+        if not late:
             return
         reason = reason or "not_posted"
-    state.count(name, "failed" if reason else "reported", reason)
-    del state.open[name]
-    log.append(f"{name}: session {task} {'failed: ' + reason if reason else 'reported'} on #{issue}")
+    settle(state, name, inv, reason, log)
 
 
 def start(
@@ -334,17 +386,26 @@ def start(
     try:
         issue = issue_for(cfg, tools, state, name)
         text = prompt(cfg, name, issue, firing, evidence(tools, firing, now), now)
-        key = f"alert-investigation:{name}:{firing_key(first)}"
-        args = ["start", "--agent", "claude", "--repo", cfg.clone_url, "--rev", cfg.rev, "--workdir", "."]
-        rc, out, err = tools.pool([*args, "--key", key, "--prompt-file", "-"], text)
-        if rc != 0 or not out.strip():
-            raise RuntimeError(f"exec-pool start: exit {rc}: {err.strip()[:300]}")
     except Exception as e:
         state.count(name, "failed", "start_failed")
         log.append(f"{name}: investigation not started: {type(e).__name__}: {e}")
         return
-    task = out.strip().splitlines()[-1]
-    state.open[name] = {"task": task, "issue": issue, "started": now}
+    inv: Json = {"task": None, "issue": issue, "started": now, "key": f"alert-investigation:{name}:{firing_key(first)}"}
+    inv["prompt"] = text
+    rc, out, err = launch(cfg, tools, inv)
+    if rc != 0 or not out.strip():
+        if rc in UNKNOWN:
+            # the session may exist: kept open, the next run starts it again under the same key
+            state.open[name] = inv
+            log.append(f"{name}: exec-pool start: exit {rc}, outcome unknown; retried next run: {err.strip()[:200]}")
+        else:
+            state.count(name, "failed", "start_failed")
+            log.append(f"{name}: investigation not started: exec-pool start: exit {rc}: {err.strip()[:300]}")
+        return
+    inv["task"] = out.strip().splitlines()[-1]
+    del inv["prompt"]
+    state.open[name] = inv
+    task = inv["task"]
     log.append(f"{name}: started session {task} for {len(firing)} alert(s), report to #{issue}")
     try:
         comment(
@@ -362,7 +423,7 @@ def tick(cfg: argparse.Namespace, tools: Tools, state: State, now: float) -> lis
     for name in sorted(state.open):
         try:
             finish(cfg, tools, state, name, state.open[name], now, log)
-        except (RuntimeError, ValueError, KeyError) as e:
+        except Exception as e:
             log.append(f"{name}: not settled, retried next run: {type(e).__name__}: {e}")
     active = tools.alerts()
     for name in cfg.alerts:

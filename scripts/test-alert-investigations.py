@@ -51,6 +51,9 @@ class World:
         self.cancelled: list[str] = []
         self.refs: list[str] = []
         self.start_rc = 0
+        self.start_made = False
+        self.result_rc = 0
+        self.keys: dict[str, str] = {}
         self.gh_down = False
         self.fetched: list[str] = []
 
@@ -77,13 +80,19 @@ class World:
 
     def pool(self, args: list[str], stdin: str) -> tuple[int, str, str]:
         if args[0] == "start":
-            if self.start_rc:
+            key = args[args.index("--key") + 1]
+            if self.start_rc and not self.start_made:
                 return self.start_rc, "", "submit_task: refused"
-            task = f"cli-{len(self.started):016x}"
-            self.started.append((args, stdin))
-            self.sessions[task] = {"task": task, "status": "running", "parked": None, "result": None}
-            return 0, task + "\n", ""
+            if key not in self.keys:
+                self.keys[key] = f"cli-{len(self.started):016x}"
+                self.started.append((args, stdin))
+                self.sessions[self.keys[key]] = {"status": "running", "parked": None, "result": None}
+            if self.start_rc:
+                return self.start_rc, "", "ssh: connection reset"
+            return 0, self.keys[key] + "\n", ""
         if args[0] == "result":
+            if self.result_rc:
+                return self.result_rc, "", "ssh: connect to host acer-swift: no route"
             return 0, json.dumps(self.sessions[args[1]]), ""
         if args[0] == "cancel":
             self.cancelled.append(args[1])
@@ -255,6 +264,41 @@ w2.alerts = None
 check(tick(w2, argv2, T0 + 1100) == 1, "Alertmanager unreachable: exit 1")
 check(series(out2)["homelab_alert_investigations_up"] == 0 and total(out2, "failed") == 1, "up 0, counts kept")
 check(series(out2)["homelab_alert_investigations_success_timestamp_seconds"] == T0 + 1000, "the success time stays")
+
+# review findings: an unknown start is retried under its key, an unreachable result settles at the timeout, a push
+# is checked on a failed session too, and a posted report is redacted
+w4, out4, argv4 = setup()
+w4.alerts = [alert(NAME, "aa01", T0)]
+w4.start_rc, w4.start_made = 255, True
+tick(w4, argv4, T0 + 1000)
+check(len(w4.started) == 1 and total(out4, "started") == 1 and total(out4, "failed") == 0, "ssh 255 after the start ran: kept open, not failed")
+w4.start_rc = 0
+tick(w4, argv4, T0 + 1100)
+check(len(w4.started) == 1 and series(out4)[f'homelab_alert_investigations_open{{alertname="{NAME}"}}'] == 1, "the retry under the same key finds the same session")
+w4.result_rc = 255
+tick(w4, argv4, T0 + 2000)
+check(total(out4, "failed") == 0, "an unreachable result before the timeout waits")
+w4.refs = ["refs/heads/pool/cli-0000000000000000"]
+tick(w4, argv4, T0 + 1000 + 10801)
+check(failed(out4, "pushed") == 1, "past the timeout, unreachable: settled, and the pushed branch is still found")
+w4.result_rc = 0
+w4.alerts = [alert(NAME, "bb02", T0 + 20000)]
+tick(w4, argv4, T0 + 21000)
+w4.sessions["cli-0000000000000001"].update(
+    status="waiting", parked="turn_end", result={"output": "saw token=" + "s3cr3t" * 4 + " in the log", "branch": None}
+)
+tick(w4, argv4, T0 + 21100)
+check("s3cr3t" not in w4.comments[-1][1] and "token=[redacted]" in w4.comments[-1][1], "a secret-shaped value is redacted before posting")
+w5, out5, argv5 = setup()
+w5.alerts = [alert(NAME, "aa01", T0)]
+w5.start_rc = 124
+tick(w5, argv5, T0 + 1000)
+tick(w5, argv5, T0 + 1000 + 10801)
+check(failed(out5, "start_failed") == 1 and len(w5.started) == 0, "a start that never answered fails at the timeout")
+w5.start_rc = 1
+w5.alerts = [alert(NAME, "bb02", T0 + 20000)]
+tick(w5, argv5, T0 + 21000)
+check(failed(out5, "start_failed") == 2, "a refused start (exit 1) fails at once")
 
 print(f"{failures} failure(s)")
 sys.exit(1 if failures else 0)

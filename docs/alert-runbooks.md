@@ -374,7 +374,8 @@ it has not read Alertmanager. An investigation is one read-only incident-investi
 lasted 15 minutes, its report a comment on the issue titled `Alert: <name>` (label `alert-investigation`); it fails
 when `exec-pool start` refuses it, the session ends `failed`, `cancelled` or `needs_review`, its first turn ends
 without a report, the session pushed `pool/<task id>` (it is read-only), no report came within 3 h (it is cancelled),
-or the report could not be posted. With `alertname`, an investigation of that alert failed; without it, the trigger
+or the report could not be posted. The issue is public: a posted text has secret-shaped values
+(tokens, keys, `password=`) replaced by `[redacted]`, and the session is told to quote none. With `alertname`, an investigation of that alert failed; without it, the trigger
 is blind.
 First: on lenovo, `journalctl -u alert-investigations.service` names the session and the reason;
 `homelab_alert_investigation_failures_total` counts them by reason. The issue holds the session id: `exec-pool result
