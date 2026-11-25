@@ -53,23 +53,15 @@ pkgs.testers.runNixOSTest {
           chown lukas:users /home/lukas/.ssh/id_ed25519 /home/lukas/.ssh/id_ed25519.pub
         '';
       };
-      # nor a gh login: a stub token, which the proxy loads and the named guest binds (LoadCredential fails on none)
-      systemd.services.stub-gh-login = {
-        before = [
-          "dev-env-egress.service"
-          "container@t.service"
-        ];
-        requiredBy = [
-          "dev-env-egress.service"
-          "container@t.service"
-        ];
-        serviceConfig.Type = "oneshot";
-        script = ''
-          install -d -m 0700 -o lukas -g users /home/lukas/.config /home/lukas/.config/gh
-          printf 'github.com:\n    oauth_token: stub\n' > /home/lukas/.config/gh/hosts.yml
-          chown lukas:users /home/lukas/.config/gh/hosts.yml
-        '';
-      };
+      # nor a gh login: a stub token for the proxy and the named guest, written before the proxy and its PathChanged
+      # watch start (a later write restarts the proxy mid-start); and the proxy hides /run/secrets.d, which only
+      # sops-nix creates (a missing path fails its namespace)
+      systemd.tmpfiles.rules = [
+        "d /home/lukas/.config 0700 lukas users -"
+        "d /home/lukas/.config/gh 0700 lukas users -"
+        "f /home/lukas/.config/gh/hosts.yml 0600 lukas users - github.com:\\n    oauth_token: stub\\n"
+        "d /run/secrets.d 0751 root root -"
+      ];
     };
 
   testScript = ''

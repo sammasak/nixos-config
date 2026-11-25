@@ -135,7 +135,9 @@ let
         drv() {
           local t=$SECONDS
           echo "nixos-flake-check: $1" >&2
+          cur=$1
           got=$(nix eval --raw --no-write-lock-file ".#$1.drvPath")
+          cur=""
           took "eval $1" "$t"
         }
         # each host's toplevel drvPath, "host drv" per line: seventh-host-test takes them as its unseeded baselines
@@ -164,6 +166,10 @@ let
           fi
         }
         me=$(uname -n)
+        # an output that fails to evaluate or dry-run fails the step without a build record: this one names it, or
+        # ScheduledGateRed and RetroDueStepFailsRepeat can name the step alone and rerun the whole gate
+        cur=""
+        trap 'rc=$?; [ "$rc" -eq 0 ] || [ -z "$cur" ] || ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check="$cur" owner="$me" seconds=0 result=fail head="''${NIXOS_QA_HEAD:-}"' EXIT
         cudahost=0
         if nix-store -qR /run/current-system 2>/dev/null | grep -qE -e "$heavy"; then cudahost=1; fi
         deferred=()
@@ -243,6 +249,7 @@ let
           IFS=. read -r kind s o <<<"$p"
           if [ "$kind.$s" = "checks.$here" ]; then
             c=checks.$s.$o
+            cur=$c
             t=$SECONDS
             drvpath "$c"
             took "eval $c" "$t"
@@ -271,6 +278,7 @@ let
                 if [ -n "''${NIXOS_FLAKE_CHECK_DRY:-}" ]; then
                   r=dry
                 elif ! nix build --no-link "$d^*"; then
+                  cur=""
                   ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check="$c" owner="$me" seconds=$((SECONDS - t)) eval_seconds=$ev eval_with="$with" compiled="$n" fetched="$m" result=fail head="''${NIXOS_QA_HEAD:-}" drv="$d"
                   exit 1
                 elif [ "$n" -gt 0 ]; then
@@ -282,12 +290,14 @@ let
                 fi
                 took "build $c" "$t"
                 ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check="$c" owner="$me" seconds=$((SECONDS - t)) eval_seconds=$ev eval_with="$with" compiled="$n" fetched="$m" result=$r head="''${NIXOS_QA_HEAD:-}" drv="$d"
+                cur=""
                 ;;
               foreign)
                 owner=''${o#deploy-*-}
                 deferred+=("$owner:$c")
                 echo "nixos-flake-check: deferred $c to $owner (compiles $n) $d: it would compile against $(grep -E -e "$heavy" <<<"$inputs" | sed 's|^/nix/store/[a-z0-9]*-||' | tr '\n' ' ')" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}" >&2
                 ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check="$c" owner="$owner" seconds=0 result=deferred head="''${NIXOS_QA_HEAD:-}" drv="$d"
+                cur=""
                 ;;
               nodeless)
                 echo "nixos-flake-check: $c would compile against CUDA on $me, whose system has none, and names no deploy node to defer to: name it deploy-*-<node> or run this gate on a CUDA host" >&2
@@ -295,8 +305,10 @@ let
                 ;;
             esac
           elif [ "$kind" = checks ]; then
+            cur=$p
             t=$SECONDS
             drvpath "$p"
+            cur=""
             took "eval $p" "$t"
           else
             drv "$p"
