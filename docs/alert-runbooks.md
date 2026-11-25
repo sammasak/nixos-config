@@ -334,6 +334,19 @@ would not see it.
 Rollback: none; push the dock's work by hand (or archive it), remove the dock's `dock-busy` mark and the slot's
 quarantine marker, then send the session.
 
+## ExecPoolPushesRefused
+
+Fires: the push filter refused three or more git pushes from one `slot` on `node` within an hour
+(`exec_pool_push_filter_pushes_total{slot,result="refused"}`, the filter's textfile under
+`/run/exec-pool-push-filter-metrics`). With `homelab.execPool.ownRefsOnly` a slot pushes only `pool/<task id>` and
+`refs/pool-wip/<task id>`; a single refusal is the filter working and does not fire. A slot that keeps trying is an
+agent pushing to main or another task's branch, or a slot whose runner manifest is missing (every push refused).
+First: on `node`, `journalctl -u exec-pool-push-filter --since -1h | grep refused` for the refs and the reason, and
+`exec-pool list` for the task in `slot`. A wrong ref is the task's: tell the session to push its own branch, or
+cancel it. `no task in` means the manifest under `/run/exec-pool-runner/<slot>/` is gone: read the runner's journal.
+Do not: turn `ownRefsOnly` off to let the push through.
+Rollback: none; the increase ages out of the hour once the refusals stop.
+
 ## ExecPoolSlotMemoryKills
 
 Fires: the kernel's OOM killer killed two or more processes in the execution pool slots on `node` within 2 hours

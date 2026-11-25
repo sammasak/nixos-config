@@ -76,6 +76,7 @@
     remoteRunners = true;
     monitoring = true;
     ownRefsOnly = true;
+    slot.privateUsers = true;
   };
   # the #494 usage spike: the workers' cgroup counters every minute (scripts/guest-records.py --usage)
   services.devEnvironments.records.usage = "1min";

@@ -114,6 +114,19 @@ groups:
           query: 'increase(exec_pool_park_push_failures_total{job="node-exporter",node="{{ $labels.node }}"}[1h])'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolparkpushfailing"
 
+      - alert: ExecPoolPushesRefused
+        # one refusal is the filter working; a slot that keeps trying is a task bent on a ref that is not its own
+        expr: |
+          sum by (node, slot) (increase(exec_pool_push_filter_pushes_total{job="node-exporter",result="refused"}[1h])) >= 3
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "Slot {{ $labels.slot }} on {{ $labels.node }} keeps pushing refs that are not its task's"
+          description: "{{ $value }} git pushes from {{ $labels.slot }} on {{ $labels.node }} were refused by the push filter in the last hour. On {{ $labels.node }} run journalctl -u exec-pool-push-filter --since -1h for the refs it tried, and exec-pool list for the task in that slot (runbook)."
+          query: 'increase(exec_pool_push_filter_pushes_total{job="node-exporter",node="{{ $labels.node }}",slot="{{ $labels.slot }}",result="refused"}[1h])'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolpushesrefused"
+
       - alert: ExecPoolSlotMemoryKills
         # the slots share the environments slice's one limit: a turn's nix eval meets it while its neighbours are busy
         expr: |

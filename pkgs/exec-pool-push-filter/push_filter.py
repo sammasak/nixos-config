@@ -11,7 +11,12 @@ GitHub's own answer is passed back as it comes, so the client sees whether the p
 and nothing is tried again: the push may or may not have landed, and only the client (the park checks with ls-remote)
 decides what to do.
 
-Usage: exec-pool-push-filter LISTEN UPSTREAM SLOTS"""
+With TEXTFILE, each slot's receive-pack requests passed and refused (a large push is two: git's empty probe first) are
+counted there for node-exporter, as exec_pool_push_filter_pushes_total{slot,result}; a request naming no known slot
+counts as slot "unknown".
+
+Usage: exec-pool-push-filter LISTEN UPSTREAM SLOTS [TEXTFILE]
+       exec-pool-push-filter --list   (the metric names it writes)"""
 
 import http.client
 import http.server
@@ -21,6 +26,7 @@ import re
 import socket
 import socketserver
 import sys
+import threading
 from collections.abc import Iterator
 import io
 
@@ -35,6 +41,42 @@ MAX_COMMANDS = 64
 CHUNK = 65536
 PASSED = ("Content-Type", "Accept", "Accept-Encoding", "Accept-Language", "Git-Protocol", "User-Agent", "Host")
 RETURNED = ("Content-Type", "Content-Encoding", "Cache-Control", "Expires", "Pragma")
+METRIC = "exec_pool_push_filter_pushes_total"
+RESULTS = ("passed", "refused")
+
+
+class Counts:
+    """Pushes by slot and result, rewritten whole to the textfile on every change."""
+
+    def __init__(self, path: str | None, slots: list[str]) -> None:
+        self.path = path
+        self.lock = threading.Lock()
+        # every series from the start, so the first refusal is an increase from 0
+        self.n = {(s, r): 0 for s in [*slots, "unknown"] for r in RESULTS}
+        self.write()
+
+    def bump(self, slot: str, result: str) -> None:
+        with self.lock:
+            key = (slot if (slot, result) in self.n else "unknown", result)
+            self.n[key] += 1
+            self.write()
+
+    def write(self) -> None:
+        if self.path is None:
+            return
+        lines = [f"# HELP {METRIC} git-receive-pack requests from a pool slot the ref filter passed or refused.",
+                 f"# TYPE {METRIC} counter"]
+        lines += [f'{METRIC}{{slot="{s}",result="{r}"}} {v}' for (s, r), v in sorted(self.n.items())]
+        tmp = f"{self.path}.tmp"
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines) + "\n")
+            # node-exporter is another user, and the socket's umask would keep it out
+            os.chmod(tmp, 0o644)
+            os.replace(tmp, self.path)
+        except OSError as e:
+            # a lost count must not refuse a push: the metric goes stale and says so
+            print(f"textfile not written: {e}", file=sys.stderr, flush=True)
 
 
 class Refused(Exception):
@@ -143,6 +185,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     upstream = ""
     slots: dict[str, str] = {}
+    counts = Counts(None, [])
 
     def address_string(self) -> str:
         return "caddy"
@@ -155,6 +198,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def refuse(self, why: str) -> None:
         self.note(f"refused ({why})")
+        self.counts.bump(self.headers.get("X-Pool-Slot", ""), "refused")
         msg = f"push refused by the pool's ref filter: {why}\n".encode()
         self.close_connection = True
         self.send_response(403)
@@ -194,6 +238,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if wrong:
             raise Refused(f"{', '.join(wrong)}: a slot pushes only {' and '.join(sorted(allowed))}")
         self.note(f"passed {refs}")
+        self.counts.bump(slot, "passed")
         self.forward(head, body)
 
     def forward(self, head: bytes, body: Body) -> None:
@@ -242,12 +287,16 @@ class Server(socketserver.ThreadingUnixStreamServer):
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 4:
+    if argv[1:] == ["--list"]:
+        print(METRIC)
+        return 0
+    if len(argv) not in (4, 5):
         print(__doc__, file=sys.stderr)
         return 2
     listen, Handler.upstream = argv[1], argv[2]
     with open(argv[3], encoding="utf-8") as f:
         Handler.slots = json.load(f)
+    Handler.counts = Counts(argv[4] if len(argv) == 5 else None, list(Handler.slots))
     if os.path.exists(listen):
         os.unlink(listen)
     # Caddy runs as this user: no other reaches the socket

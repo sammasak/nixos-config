@@ -190,6 +190,29 @@ tests:
               query: 'increase(exec_pool_park_push_failures_total{job="node-exporter",node="msi-ms7758"}[1h])'
               runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolparkpushfailing"
 
+  # two refusals from msi's pool1 are quiet; acer's pool2 is refused three times by 25m: firing, its passes uncounted
+  - interval: 1m
+    input_series:
+      - series: 'exec_pool_push_filter_pushes_total{job="node-exporter",node="msi-ms7758",slot="pool1",result="refused"}'
+        values: '0x10 2x80'
+      - series: 'exec_pool_push_filter_pushes_total{job="node-exporter",node="acer-swift",slot="pool2",result="refused"}'
+        values: '0x10 1x10 3x70'
+      - series: 'exec_pool_push_filter_pushes_total{job="node-exporter",node="acer-swift",slot="pool1",result="passed"}'
+        values: '0x10 9x80'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: ExecPoolPushesRefused
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: ExecPoolPushesRefused
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: acer-swift, slot: pool2}
+            exp_annotations:
+              summary: "Slot pool2 on acer-swift keeps pushing refs that are not its task's"
+              description: "3 git pushes from pool2 on acer-swift were refused by the push filter in the last hour. On acer-swift run journalctl -u exec-pool-push-filter --since -1h for the refs it tried, and exec-pool list for the task in that slot (runbook)."
+              query: 'increase(exec_pool_push_filter_pushes_total{job="node-exporter",node="acer-swift",slot="pool2",result="refused"}[1h])'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolpushesrefused"
+
   # one kill on msi is quiet; acer's slots lose a process at 10m and two at 20m: firing at once
   - interval: 1m
     input_series:

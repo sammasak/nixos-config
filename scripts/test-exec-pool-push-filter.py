@@ -3,6 +3,7 @@
 -> the filter -> Caddy's push socket -> git http-backend on a bare repository. A slot pushes its task's
 `pool/<id>` and `refs/pool-wip/<id>` (a large push too, chunked), and nothing else: another branch, another task's,
 a tag, a mixed push, a push with no manifest, an unknown slot and an unreadable body leave the remote as it was.
+Its textfile counts each passed and refused request by slot, the first refusal included.
 Usage: test-exec-pool-push-filter.py FILTER   (caddy and git on PATH)"""
 
 import http.client
@@ -157,13 +158,14 @@ http:// {{
 """)
         caddy = subprocess.Popen(["caddy", "run", "--adapter", "caddyfile", "--config", str(d / "Caddyfile")],
                                  stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
-        filt = subprocess.Popen([FILTER, fsock, push, str(d / "slots.json")],
+        prom = d / "push-filter.prom"
+        filt = subprocess.Popen([FILTER, fsock, push, str(d / "slots.json"), str(prom)],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
         try:
             wait_for(lambda: socket.create_connection(("127.0.0.1", port), 0.2).close(), "caddy", caddy)
             wait_for(lambda: socket.socket(socket.AF_UNIX).connect(push), "caddy's push socket", caddy)
             wait_for(lambda: socket.socket(socket.AF_UNIX).connect(fsock), "the filter", filt)
-            run(d, f"http://127.0.0.1:{port}/o/r.git", bare, fsock, manifest)
+            run(d, f"http://127.0.0.1:{port}/o/r.git", bare, fsock, manifest, prom)
         finally:
             filt.terminate()
             caddy.terminate()
@@ -174,10 +176,26 @@ http:// {{
         check("refused (" in log and "passed ['refs/heads/pool/t-1']" in log,
               f"the filter logs what it refused and passed ({log[-300:]!r})")
         check("passed []" in log, "the large push came as git's empty probe, then chunked")
+    listed = subprocess.run([FILTER, "--list"], capture_output=True, text=True).stdout.split()
+    check(listed == ["exec_pool_push_filter_pushes_total"], f"--list names the textfile's metric ({listed})")
     finish()
 
 
-def run(d, url, bare, fsock, manifest):
+def counts(prom):
+    """The textfile's series as {(slot, result): value}."""
+    out = {}
+    for line in prom.read_text().splitlines():
+        if line.startswith("exec_pool_push_filter_pushes_total{"):
+            labels, value = line.split("{", 1)[1].split("} ")
+            kv = dict(p.split("=", 1) for p in labels.split(","))
+            out[(kv["slot"].strip('"'), kv["result"].strip('"'))] = int(value)
+    return out
+
+
+def run(d, url, bare, fsock, manifest, prom):
+    zero = {(s, r): 0 for s in ("pool1", "unknown") for r in ("passed", "refused")}
+    check(counts(prom) == zero and oct(prom.stat().st_mode & 0o777) == "0o644",
+          f"at start the textfile holds every series at 0, readable by node-exporter ({counts(prom)})")
     work = d / "work"
     git("init", "-q", str(work))
     (work / "f").write_text("one\n")
@@ -198,6 +216,10 @@ def run(d, url, bare, fsock, manifest):
     check(ok.returncode == 0 and "refs/pool-wip/t-1" not in refs(), f"and removed ({ok.stderr.strip()})")
 
     before = refs()
+    bad = push("HEAD:refs/heads/main")
+    c = counts(prom)
+    check(bad.returncode != 0 and refs() == before and c[("pool1", "refused")] == 1 and c[("pool1", "passed")] == 3,
+          f"one refused push to main counts 1 refused beside the 3 passed ({c})")
     for what, spec in [
         ("main", ["HEAD:refs/heads/main"]),
         ("another task's branch", ["HEAD:refs/heads/pool/t-2"]),
@@ -240,6 +262,9 @@ def run(d, url, bare, fsock, manifest):
     check(raw(fsock, "pool1", b"zzzz") == 403 and raw(fsock, "pool1", pkt[:10]) == 403
           and raw(fsock, "pool1", pkt, {"Content-Encoding": "gzip"}) == 403,
           "a body that is no pkt-line, a cut one and a compressed one are refused")
+    c = counts(prom)
+    check(c[("unknown", "refused")] == 2 and c[("pool1", "refused")] == 12 and "pool9" not in str(c),
+          f"a request with no slot or an unknown one counts as unknown, not as its header's name ({c})")
 
 
 if __name__ == "__main__":

@@ -72,7 +72,7 @@ retire. Changing `slots` is a reviewed deploy; a task is released with `dev-env-
 | `credentials` | `[ ]` | which host credentials a slot may hold; never `id_ed25519` (asserted) |
 | `github.repos` | sammasak's repositories tasks hand back to, and nixos-config's private inputs | each slot's `egress.github.repos`: git and gh to these repositories through the host's GitHub proxy, no credential in the slot; a host in `sam.fleet.listeners.github-egress`'s `from` (msi) forwards to that listener's host (acer), which applies its own list ([execution-pool-credentials.md](records/execution-pool-credentials.md)) |
 | `agents` | `[ ]` | agents a task may run in a slot (`claude`): each slot's `headlessAgents`, the egress route a named worker of that agent has (the anthropic proxy, no credential in the guest), while its `agent` stays `none` and no session starts |
-| `slot.privateUsers` | `false` | each slot's `rootInGuest` without its sudo: its own 65536 uids, so guest root is an unprivileged host uid, with its own sshd key. A slot whose home was made in the other block resets it at its next start instead of refusing (`dev-env-fresh-on-toggle`), so flipping it is one deploy: the slots' binds move, so the switch restarts each slot (a deploy drains the pool first) rather than reloading it. The store and nix db are bound id-mapped, which needs a store on a filesystem that takes idmapped mounts (ext4, btrfs, erofs; not 9p or overlayfs). On on msi-ms7758 (`hosts/msi-ms7758/exec-pool.nix`), off on acer-swift (the same line there turns it on); `nix build .#execution-pool-vm` boots it |
+| `slot.privateUsers` | `false` | each slot's `rootInGuest` without its sudo: its own 65536 uids, so guest root is an unprivileged host uid, with its own sshd key. A slot whose home was made in the other block resets it at its next start instead of refusing (`dev-env-fresh-on-toggle`), so flipping it is one deploy: the slots' binds move, so the switch restarts each slot (a deploy drains the pool first) rather than reloading it. The store and nix db are bound id-mapped, which needs a store on a filesystem that takes idmapped mounts (ext4, btrfs, erofs; not 9p or overlayfs). On on msi-ms7758 (`hosts/msi-ms7758/exec-pool.nix`) and acer-swift; `nix build .#execution-pool-vm` boots it |
 
 Evaluation fails when a slot's name is also declared in `sam.workers.instances` or `retired`, or when the slots and
 the named instances reserve more than `pool.memory`. `worker-pool-inventory` prints one JSON line per slot from its
@@ -103,7 +103,7 @@ wrappers and its user are uids of its own block): systemd-nspawn's supervisor an
 writes files into the slot home and dock (new file, then rename, no link followed) and starts the task in the guest
 through `systemd-run -M` as the guest user; the nix-daemon, which serves the slot's requests and runs its builds as
 `nixbld` users in its sandbox; and `nixos-container run`, the reload's way in, which enters the slot's user namespace
-and so acts as its guest root. Without `slot.privateUsers` (acer) the guest's root and its setuid wrappers (su, mount,
+and so acts as its guest root. Without `slot.privateUsers` the guest's root and its setuid wrappers (su, mount,
 newuidmap, passwd) are host root's as well.
 
 ## Sizing

@@ -11,7 +11,6 @@
     queueListener = "exec-pool-db";
     monitoring = true;
     ownRefsOnly = true;
-    # each slot in its own uids; acer's slots follow once msi has run a day with it
     slot.privateUsers = true;
   };
 }
