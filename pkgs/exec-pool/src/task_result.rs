@@ -17,7 +17,8 @@ pub struct TaskResult {
     pub outcome: Option<Outcome>,
     pub exit_code: Option<i32>,
     /// Claude's `result` text, from its start; for any other agent, or a Claude run with none, the end of stdout
-    /// (of its first `CAPTURE_BYTES`: the runner keeps the head of the capture). No NUL, which `text` cannot hold.
+    /// (of its first `CAPTURE_BYTES`: the runner keeps the head of the capture), or of stderr when stdout is blank.
+    /// No NUL, which `text` cannot hold.
     output: String,
     /// The task's branch, `pool/<task id>`, when its repository showed it after the run: the code it handed back.
     pub branch: Option<String>,
@@ -112,6 +113,10 @@ impl TaskResult {
             )
             .replace('\0', "")),
             (None, Some(c)) => start(&c.result.replace('\0', "")),
+            // an agent that stopped before printing (no model, no key) said why on stderr alone
+            (None, None) if stdout.trim().is_empty() => {
+                end(&result.map_or("", |r| r.stderr_tail.as_str()).replace('\0', ""))
+            }
             (None, None) => end(&stdout.replace('\0', "")),
         };
         Self {
@@ -244,6 +249,19 @@ mod tests {
             r.output(),
             "prepare failed at exec-pool-clone (exit 128):\nfatal: could not read Username\n"
         );
+    }
+
+    #[test]
+    fn a_run_that_printed_nothing_hands_back_its_stderr() {
+        let failed = ExecResult {
+            stderr_tail: "No API key found for the selected model.\n".to_owned(),
+            ..exec(Stage::Run, Some(1))
+        };
+        let r = TaskResult::of(Agent::Pi, Some(&failed), "\n");
+        assert_eq!(r.outcome, Some(Outcome::Failed));
+        assert_eq!(r.output(), "No API key found for the selected model.\n");
+        let said = TaskResult::of(Agent::Pi, Some(&failed), "partial answer\n");
+        assert_eq!(said.output(), "partial answer\n", "stdout, once there is any");
     }
 
     #[test]

@@ -1250,6 +1250,7 @@ in {
   exec = acer.systemd.services."exec-pool-exec@".serviceConfig.ExecStart;
   env = acer.systemd.services."exec-pool-exec@".environment;
   agentEnv = builtins.fromJSON acer.systemd.services."exec-pool-exec@".environment.EXEC_POOL_AGENT_ENV;
+  piActivation = acer.containers.pool1.config.home-manager.users.lukas.home.activation.piGateway.data;
   scratch = acer.services.devEnvironments.instances.pool1.scratch;
   reset = acer.systemd.services."dev-env-reset@".script;
   polkit = acer.security.polkit.extraConfig;
@@ -1285,6 +1286,9 @@ def check_runner():
           and env.get("EXEC_POOL_SLOT_HOME") == "/var/lib/workers/%i/home" and env.get("EXEC_POOL_GUEST_HOME", "").startswith("/home/")
           and got.get("scratch") == ["attempts"] and "--expand-environment=no --wait" in got.get("reset", ""),
           f"the helper hands a step only the slot's egress variables and a PATH to the agent, admits by the host side of the slot home, and the reset trashes ~/attempts unchecked, its guest scan not expanded by systemd ({agent}, { {k: v for k, v in env.items() if 'HOME' in k} }, {got.get('scratch')})")
+    pi_dir = agent.get("PI_CODING_AGENT_DIR")
+    check(pi_dir == "/home/lukas/.pi/agent" and f'"{pi_dir}/models.json"' in got.get("piActivation", ""),
+          f"a Pi step reads the guest user's Pi config, where the slot's activation writes models.json, not its attempt's empty HOME ({pi_dir}, {got.get('piActivation', '')[-200:]!r})")
     herdr = json.loads(env.get("EXEC_POOL_HERDR", "[]"))
     check(env.get("EXEC_POOL_ATTACH") == "/run/current-system/sw/bin/worker-%i turn" and env.get("EXEC_POOL_DTACH", "").endswith("/bin/dtach")
           and herdr[:1] and herdr[0].endswith("/bin/setpriv") and "--reuid=lukas" in herdr and herdr[-1].endswith("/bin/herdr")
