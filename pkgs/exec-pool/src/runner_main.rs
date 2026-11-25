@@ -958,12 +958,10 @@ impl Guest {
             } else {
                 watch()
             };
-            // the time limit counts the agent's work since it was last idle, not its pause
-            if watched == Watch::Idle {
-                t = Instant::now();
-            }
+            let ran_out;
+            (t, ran_out) = limit(t, watched, Instant::now(), timeout);
             if !timed_out && !cancelled {
-                timed_out = t.elapsed() > timeout;
+                timed_out = ran_out;
                 cancelled = !timed_out && cancellable && self.cancelled();
             }
             if !stopped && (timed_out || cancelled || watched == Watch::Stop) {
@@ -1488,6 +1486,13 @@ enum Watch {
     Stop,
 }
 
+/// A step's time limit after a poll at `now` found `watched`, from `since`: its new start and whether it ran out. It
+/// counts the agent's work since it was last idle, not its pause, so an agent that never idles is cut at `timeout`.
+fn limit(since: Instant, watched: Watch, now: Instant, timeout: Duration) -> (Instant, bool) {
+    let since = if watched == Watch::Idle { now } else { since };
+    (since, now.saturating_duration_since(since) > timeout)
+}
+
 /// The watch of a step that only its time limit and the runner's marker stop.
 const fn never() -> Watch {
     Watch::Busy
@@ -1521,6 +1526,8 @@ enum Phase {
 /// its transcript's end. `poll` tells the agent's step whether it is idle and when to stop it.
 struct PaneTurn<'a> {
     herdr: &'a Herdr,
+    /// The slot and the agent step's unit, whose Bash tool commands keep it busy ([`pane::tool_shell`]).
+    unit: (&'a str, &'static str),
     label: String,
     name: String,
     home: &'a Path,
@@ -1551,12 +1558,13 @@ impl<'a> PaneTurn<'a> {
     fn new(
         herdr: &'a Herdr,
         (m, hint): (&Manifest, PathBuf),
-        home: &'a Path,
+        (home, unit): (&'a Path, (&'a str, &'static str)),
         uuid: &'a str,
         input: &'a str,
     ) -> Self {
         Self {
             herdr,
+            unit,
             label: pane::label(&m.slot, &m.task.idempotency_key),
             name: pane::agent_name(&m.task.id),
             home,
@@ -1647,7 +1655,9 @@ impl<'a> PaneTurn<'a> {
                 self.lost = None;
                 self.take_hint(&p, seen, note);
                 let now = u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX);
-                let idle = self.watch.as_mut().and_then(|w| w.idle_ms(seen, now));
+                // the host's /proc is read only once Herdr shows the agent settled
+                let jobs = seen.is_some_and(|s| s.settled) && self.jobs();
+                let idle = self.watch.as_mut().and_then(|w| w.idle_ms(seen, jobs, now));
                 self.idle = idle.is_some();
                 let waiting = self.home.join(wake::FILE).symlink_metadata().is_ok();
                 if pane::parks(idle, self.grace_secs, waiting) {
@@ -1666,6 +1676,25 @@ impl<'a> PaneTurn<'a> {
             Phase::Close(since) if since.elapsed() > AGENT_CLOSE => Watch::Stop,
             Phase::Close(_) => Watch::Idle,
         }
+    }
+
+    /// Whether a Bash tool command of the agent runs ([`pane::tool_shell`]), by the host's /proc; a process that
+    /// exits mid-read is not one.
+    fn jobs(&self) -> bool {
+        let Ok(procs) = fs::read_dir("/proc") else {
+            return false;
+        };
+        let (slot, unit) = self.unit;
+        procs.filter_map(Result::ok).any(|e| {
+            let p = e.path();
+            e.file_name()
+                .to_str()
+                .is_some_and(|n| n.bytes().all(|b| b.is_ascii_digit()))
+                && fs::read_to_string(p.join("cgroup")).is_ok_and(|cg| {
+                    fs::read(p.join("cmdline"))
+                        .is_ok_and(|c| pane::tool_shell(&cg, &c, (slot, unit)))
+                })
+        })
     }
 
     /// Reads the runner's hint: its grace, and the messages sent to the session since the last one prompted, which
@@ -2205,7 +2234,8 @@ impl<'a> Dock<'a> {
             }
         };
         let hint = guest.cancel.0.with_file_name(TURN_HINT);
-        let mut pane = PaneTurn::new(herdr, (m, hint), &home, &session.uuid, &input);
+        let step = (guest.slot.as_str(), run.unit);
+        let mut pane = PaneTurn::new(herdr, (m, hint), (&home, step), &session.uuid, &input);
         guest.steps(vec![run], bounds, (out, err), result, &mut || {
             pane.poll(note)
         });
@@ -2569,6 +2599,45 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pane_waiting_on_its_background_command_is_not_parked_but_its_turn_limit_still_cuts() {
+        let limit_secs = 1800;
+        let seen = Some(pane::Seen {
+            settled: true,
+            seq: 2,
+        });
+        // polls every 2 s of an agent Herdr shows idle since the prompt: the step's watch, the time limit's start
+        let run = |jobs: bool| {
+            let mut w = pane::TurnWatch::new(1);
+            let t0 = Instant::now();
+            let mut since = t0;
+            for ms in (0..=3_600_000_u64).step_by(2000) {
+                let idle = w.idle_ms(seen, jobs, ms);
+                if pane::parks(idle, GRACE_SECS, false) {
+                    return ("parked", ms);
+                }
+                let watched = if idle.is_some() {
+                    Watch::Idle
+                } else {
+                    Watch::Busy
+                };
+                let cut;
+                (since, cut) = limit(
+                    since,
+                    watched,
+                    t0 + Duration::from_millis(ms),
+                    Duration::from_secs(limit_secs),
+                );
+                if cut {
+                    return ("cut", ms);
+                }
+            }
+            ("running", 0)
+        };
+        assert_eq!(run(false), ("parked", GRACE_SECS * 1000));
+        assert_eq!(run(true), ("cut", limit_secs * 1000 + 2000));
+    }
 
     /// A herdr that answers as Herdr 0.9.5 does: one JSON object for `workspace` and `agent list`, nothing at all
     /// for `pane run` and `pane send-keys`, an error as JSON on stderr with exit 1; each call's argv logged.
