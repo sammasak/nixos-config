@@ -756,6 +756,8 @@ in
               null;
           missing = "sam.workers: a pi instance's calls are signed with the sops secret llm_gateway_pi_key (sam.profile.pi) and go to sam.fleet.listeners.gateway-api, which must admit this host.";
           guest.env = {
+            # a pool attempt's HOME is its own, empty one: without this Pi finds no homelab provider there
+            PI_CODING_AGENT_DIR = "${home}/.pi/agent";
             PI_SKIP_VERSION_CHECK = "1";
             PI_TELEMETRY = "0";
           };
@@ -781,8 +783,8 @@ in
               home.packages = [ pkgs.pi-coding-agent ];
               # copies, not store links: Pi rewrites its settings
               home.activation.piGateway = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-                run install -D -m 0644 ${models} "$HOME/.pi/agent/models.json"
-                run install -D -m 0644 ${settings} "$HOME/.pi/agent/settings.json"
+                run install -D -m 0644 ${models} "${dev.egress.llm-gateway.guest.env.PI_CODING_AGENT_DIR}/models.json"
+                run install -D -m 0644 ${settings} "${dev.egress.llm-gateway.guest.env.PI_CODING_AGENT_DIR}/settings.json"
               '';
             };
         };
