@@ -1704,12 +1704,11 @@ impl<'a> PaneTurn<'a> {
             if fs::read(p.join("cmdline")).is_ok_and(|c| pane::tool_shell(&cg, &c, self.unit)) {
                 return true;
             }
-            if let Some(up) = fs::read_to_string(p.join("stat"))
+            if let Some(proc) = fs::read_to_string(p.join("stat"))
                 .ok()
-                .as_deref()
-                .and_then(pane::parent)
+                .and_then(|s| pane::Proc::of_stat(pid, &s))
             {
-                unit.push((pid, up));
+                unit.push(proc);
             }
         }
         pane::detached(&unit)

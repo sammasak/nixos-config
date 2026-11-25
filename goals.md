@@ -118,8 +118,8 @@ before the restart is not seen.
 
 **25 Nov, branch `pool/cli-5b06de3210ce90a1`** (deploy acer and msi for the pool, black-pi for the rules):
 `exec-pool status` and `list` show each task's priority (migration 0021, additive, floor 9). A turn waiting only on a
-detached job (`nohup`, `setsid`) stays busy: a second process in the turn unit's cgroup whose parent is outside it is
-one, the 30 minute limit still the bound; a job started outside the unit (`systemd-run`) still dies at the park
+detached job (`nohup`, `setsid`) stays busy: a process in the turn unit's cgroup that the container's init adopted,
+in a session not the agent's (so Chromium's crashpad is not one), the 30 minute limit still the bound; a job started outside the unit (`systemd-run`) still dies at the park
 (contract). ExecPoolSessionStalled: the metric covers a third timeout in a row (no continue left, nothing in the
 inbox), and the old 10 minute `for:` plus textfile, scrape and `group_wait` paged within about 13 minutes, so the
 22 minute silence was most likely the rule or collector (#783, merged 05:00) not yet live; unverified, slots reach no

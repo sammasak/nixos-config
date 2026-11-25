@@ -119,28 +119,55 @@ pub fn tool_shell(cgroup: &str, cmdline: &[u8], at: (&str, &str)) -> bool {
     in_unit(cgroup, at) && cmdline.windows(TOOL_SHELL.len()).any(|w| w == TOOL_SHELL)
 }
 
-/// The parent's pid in a `/proc/PID/stat` line, the field after the state that follows the command's last `)`.
-#[must_use]
-pub fn parent(stat: &str) -> Option<u32> {
-    stat.rsplit_once(')')?
-        .1
-        .split_whitespace()
-        .nth(1)?
-        .parse()
-        .ok()
+/// A process the host sees, from its `/proc/PID/stat`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Proc {
+    pub pid: u32,
+    pub parent: u32,
+    pub session: u32,
+    /// Clock ticks after boot.
+    pub start: u64,
 }
 
-/// Whether a step unit's processes, `(pid, parent)` each, hold a detached job.
+impl Proc {
+    /// The process `pid`'s `/proc/PID/stat` line describes: after the command's last `)` come its state, parent,
+    /// process group and session, and its start time 20th.
+    #[must_use]
+    pub fn of_stat(pid: u32, stat: &str) -> Option<Self> {
+        let f: Vec<&str> = stat.rsplit_once(')')?.1.split_whitespace().collect();
+        Some(Self {
+            pid,
+            parent: f.get(1)?.parse().ok()?,
+            session: f.get(3)?.parse().ok()?,
+            start: f.get(19)?.parse().ok()?,
+        })
+    }
+}
+
+/// Whether a step unit's processes hold a detached job.
 ///
-/// That is a `nohup` or `setsid` one whose command returned, adopted by the container's init. It stays in the unit's cgroup with its parent outside it, as
-/// only the unit's own main process (`dtach`) has otherwise, so a second such root is one.
+/// The unit's main process (`dtach`), its oldest one, has the container's init for its parent. A `nohup` or `setsid`
+/// job whose command returned is adopted by that init and stays in the unit's cgroup; it counts only in a session
+/// of its own (a tool shell's, or one `setsid` made), so a helper the agent's processes double-fork (Chromium's
+/// crashpad under the browser MCP) stays in the agent's session and is passed over. A process whose parent exited
+/// mid-read, its adoption not yet seen, is not one.
 #[must_use]
-pub fn detached(procs: &[(u32, u32)]) -> bool {
+pub fn detached(procs: &[Proc]) -> bool {
+    let Some(main) = procs
+        .iter()
+        .filter(|p| !procs.iter().any(|q| q.pid == p.parent))
+        .min_by_key(|p| (p.start, p.pid))
+    else {
+        return false;
+    };
+    let agent: Vec<u32> = procs
+        .iter()
+        .filter(|p| p.pid == main.pid || p.parent == main.pid)
+        .map(|p| p.session)
+        .collect();
     procs
         .iter()
-        .filter(|(_, up)| !procs.iter().any(|(pid, _)| pid == up))
-        .nth(1)
-        .is_some()
+        .any(|p| p.pid != main.pid && p.parent == main.parent && !agent.contains(&p.session))
 }
 
 /// Whether a Claude subagent's `meta.json` is one still running.
@@ -478,23 +505,52 @@ mod tests {
     }
 
     #[test]
-    fn a_detached_job_is_a_second_root_of_the_unit_s_processes() {
-        assert_eq!(parent("24134 (sleep) S 1 24134 24134 0 -1"), Some(1));
+    fn a_detached_job_is_one_init_adopted_outside_the_agent_s_sessions() {
+        let stat = "24134 (a) b) S 1 24134 24134 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 1 0 9876 2 3";
         assert_eq!(
-            parent("7 (a) b) S 3 7"),
-            Some(3),
+            Proc::of_stat(24134, stat),
+            Some(Proc {
+                pid: 24134,
+                parent: 1,
+                session: 24134,
+                start: 9876
+            }),
             "a command name holding a parenthesis"
         );
-        assert_eq!(parent(""), None);
-        // dtach, the agent under it, an MCP server and a tool shell: one root
-        let tree = [(10, 1), (11, 10), (12, 11), (13, 12), (14, 12)];
+        assert_eq!(Proc::of_stat(1, ""), None);
+        let p = |pid, parent, session, start| Proc {
+            pid,
+            parent,
+            session,
+            start,
+        };
+        // as a slot showed it: dtach (its own session), fish and claude in the pty's, an MCP server, a tool shell
+        let tree = [
+            p(10, 1, 10, 100),
+            p(11, 10, 11, 101),
+            p(12, 11, 11, 102),
+            p(13, 12, 11, 103),
+            p(14, 12, 14, 500),
+        ];
         assert!(!detached(&tree));
         assert!(!detached(&[]));
-        // a setsid job, or a nohup one whose shell exited: adopted by the container's init
-        assert!(detached(&[tree.as_slice(), &[(20, 1)]].concat()));
+        let with = |more: Proc| [tree.as_slice(), &[more]].concat();
+        assert!(detached(&with(p(20, 1, 20, 600))), "a setsid job");
         assert!(
-            !detached(&[tree.as_slice(), &[(21, 14)]].concat()),
+            detached(&with(p(21, 1, 14, 600))),
+            "a nohup job whose shell exited"
+        );
+        assert!(
+            !detached(&with(p(22, 14, 14, 600))),
             "a job its shell still waits on is the shell's"
+        );
+        assert!(
+            !detached(&with(p(23, 1, 11, 600))),
+            "a helper the agent double-forked, crashpad"
+        );
+        assert!(
+            !detached(&with(p(24, 99, 24, 600))),
+            "its parent exited mid-read, its adoption not yet seen"
         );
     }
 
