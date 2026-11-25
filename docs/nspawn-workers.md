@@ -72,7 +72,7 @@ retire. Changing `slots` is a reviewed deploy; a task is released with `dev-env-
 | `credentials` | `[ ]` | which host credentials a slot may hold; never `id_ed25519` (asserted) |
 | `github.repos` | sammasak's repositories tasks hand back to, and nixos-config's private inputs | each slot's `egress.github.repos`: git and gh to these repositories through the host's GitHub proxy, no credential in the slot; a host in `sam.fleet.listeners.github-egress`'s `from` (msi) forwards to that listener's host (acer), which applies its own list ([execution-pool-credentials.md](records/execution-pool-credentials.md)) |
 | `agents` | `[ ]` | agents a task may run in a slot (`claude`): each slot's `headlessAgents`, the egress route a named worker of that agent has (the anthropic proxy, no credential in the guest), while its `agent` stays `none` and no session starts |
-| `rootInGuest` | `false` | each slot's |
+| `slot.privateUsers` | `false` | each slot's `rootInGuest` without its sudo: its own 65536 uids, so guest root is an unprivileged host uid, with its own sshd key and fetcher cache (emptied by every reset, so a turn's first `devenv shell` fetches its inputs again). A slot whose home was made in the other block resets it at its next start instead of refusing (`dev-env-fresh-on-toggle`), so flipping it is one deploy: the slots' binds move, so the switch restarts each slot (a deploy drains the pool first) rather than reloading it. Off everywhere; not yet booted in a VM or on a host |
 
 Evaluation fails when a slot's name is also declared in `sam.workers.instances` or `retired`, or when the slots and
 the named instances reserve more than `pool.memory`. `worker-pool-inventory` prints one JSON line per slot from its
@@ -83,7 +83,14 @@ Every slot has `sessionDock` (an instance option, off for named workers): `/sess
 `<stateDir>/.sessions/dock/<slot>`, root's 0755 under `.sessions/dock` (0755) and `.sessions` (0711). The exec helper
 makes a session turn's home and checkout afresh there and removes them at the park once its work is on the remote
 (`docs/records/execution-pool-contract.md`, Session state); reset, retire, the trash sweep and records never touch
-`.sessions`, and gcroots only reads it. Not with `rootInGuest`.
+`.sessions`, and gcroots only reads it. Under `slot.privateUsers` the dock's `home` and `work` take the slot home's
+mapped owner, as the runner makes them with the slot home's uid and gid.
+
+A slot's user is in no group but its own and has no sudo (named instances keep the fleet's groups). What a slot binds
+from its host is pinned per slot by `scripts/test-workers-eval.py` (`check_slot_reach`): its home, caches and dock,
+its egress sockets, the lock lanes, an sshd host key (the environments' shared one, or with `slot.privateUsers` its
+own, readable by guest root alone) and the host user's public key, beside the stock store, nix db, daemon socket and per-container profiles and roots; no secret,
+token or private key of the host user, and its container unit loads no credential.
 
 ## Sizing
 

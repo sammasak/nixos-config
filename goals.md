@@ -117,7 +117,11 @@ E501 last night) is caught before merge. A background subagent (no process of it
 4. Not yet seen live: a drain started by `just deploy`, claim order by priority, the prepare failure counter,
    `coord:brief` against the real CLI.
 5. The drain starts before the build, so a long build keeps a host from claiming.
-6. Slots run without a user namespace and `lukas` is in `wheel` in the guest.
+6. Slot isolation, branch `pool/cli-89635bd687bfeb7c` (deploy acer and msi): a slot's user is in no group and has no
+   sudo; `homelab.execPool.slot.privateUsers` (off) puts each slot in its own uid block, a toggled slot's home reset at
+   its next start; `check_slot_reach` pins every bind of every slot. Open: privateUsers not yet booted (VM on msi, then
+   flip msi first); the other setuid wrappers (su, mount, newuidmap) stay host root's in a slot without it; the shared
+   `.nix-cache` lets one slot plant fetcher entries another reads until privateUsers is on.
 7. `status` and `list` do not show priority.
 8. `HostBehindMain` needs 24 h; black-pi lacked new alert rules for some hours unseen.
 9. lenovo cannot push nixos-config (stale devenv gate) or fetch a new private skills pin as a user.
