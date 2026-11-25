@@ -41,6 +41,7 @@ check(got("docs/sub/x.md") == set(), "a nested doc under docs/: nothing")
 check(evals(got("hosts/lenovo-21CB001PMX/notes.md")) == set(HOSTS), "a *.md outside docs/ and the top level is not a doc")
 r = got("modules/homelab/monitoring/rules/exec-pool.yaml")
 check(r == {("check", c) for c in pmc.RULE_CHECKS}, f"a rule file: the rule checks, no host ({sorted(r)})")
+check(("check", "grafana-dashboards") in r, "a rule file: grafana-dashboards, which reads the names its rules select")
 check(evals(got("modules/homelab/monitoring/rules/homelab.nix")) == set(HOSTS), "the rules' Nix renderer: every host")
 d = got("modules/homelab/monitoring/dashboards/shipping.json")
 check(d == {("check", c) for c in pmc.DASHBOARD_CHECKS} | {("eval", "black-pi")},
