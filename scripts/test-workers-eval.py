@@ -430,8 +430,14 @@ let
   acer = flake.nixosConfigurations.acer-swift.config;
 in {
   listener = { inherit (msi.sam.fleet.listeners.github-egress) host port from url; };
-  msi = { caddy = caddy msi; creds = msi.systemd.services.dev-env-egress.serviceConfig.LoadCredential; paths = builtins.attrNames msi.systemd.paths; };
-  acer = { caddy = caddy acer; repos = acer.homelab.execPool.repos; msiAddress = acer.sam.fleet.hosts.msi-ms7758.address; };
+  msi = { caddy = caddy msi; creds = msi.systemd.services.dev-env-egress.serviceConfig.LoadCredential; paths = builtins.attrNames msi.systemd.paths;
+          filtered = msi.systemd.services ? exec-pool-push-filter; };
+  acer = { caddy = caddy acer; repos = acer.homelab.execPool.repos; msiAddress = acer.sam.fleet.hosts.msi-ms7758.address;
+           filter = let sc = acer.systemd.services.exec-pool-push-filter.serviceConfig; in {
+             inherit (sc) User PrivateNetwork RestrictAddressFamilies;
+             slots = builtins.fromJSON (builtins.readFile (flake.inputs.nixpkgs.lib.last (flake.inputs.nixpkgs.lib.splitString " " sc.ExecStart)));
+           };
+           egressUser = acer.systemd.services.dev-env-egress.serviceConfig.User; };
 }
 """
 
@@ -456,6 +462,53 @@ def check_github_forward():
     opened = site_wrong(body.replace(f"remote_ip {acer.get('msiAddress')}", "remote_ip 127.0.0.1").replace(repos, "(?i:o/r\\.s)"),
                         r"https://(api\.)?github\.com", GITHUB_CASES)
     check(shut == [] and opened == [], f"acer's listener refuses any other address, and from msi's lets through what a slot's own site does ({'no caddy on PATH' if shut is None else shut + (opened or [])})")
+    check_push_filter(acer, msi)
+
+
+# acer's slots push only their task's refs (homelab.execPool.ownRefsOnly): each slot site sends every receive-pack to
+# exec-pool-push-filter with its own name, and only the push site behind the filter signs one
+RECEIVE = ["/sammasak/nixos-config.git/git-receive-pack", "/SAMMASAK/nixos-config/GIT-RECEIVE-PACK", "/sammasak/skills/git-receive-pack/"]
+
+
+def check_push_filter(acer, msi):
+    f = acer.get("filter", {})
+    slots = f.get("slots", {})
+    check(slots and all(v == f"/run/exec-pool-runner/{n}/manifest.json" for n, v in slots.items())
+          and f.get("User") == acer.get("egressUser") and f.get("PrivateNetwork") is True and f.get("RestrictAddressFamilies") == ["AF_UNIX"]
+          and msi.get("filtered") is False,
+          f"acer's filter reads each slot's runner manifest, as the proxy's user with no network; msi runs none ({f})")
+    sites = {b.split("\n", 2)[1].strip(): b for b in acer.get("caddy", "").split("http:// {")[1:]}
+    for n in slots:
+        site = sites.get(f"bind unix//run/dev-env-egress/{n}/github.sock", "")
+        check(f"header_up X-Pool-Slot {n}\n" in site and site.find("handle @receive {") < site.find("handle @git {"),
+              f"{n}'s site sends receive-pack to the filter as {n}, ahead of its git route")
+        GitHubRecorder.seen = []
+        upstream = http.server.ThreadingHTTPServer(("127.0.0.1", 0), GitHubRecorder)
+        threading.Thread(target=upstream.serve_forever, daemon=True).start()
+        try:
+            # the filter's socket does not exist here: a receive-pack is a 502, never GitHub's
+            wrong = site_wrong(site, r"https://(api\.)?github\.com", [("POST", p, 502) for p in RECEIVE]
+                               + [("GET", "/sammasak/nixos-config/info/refs?service=git-receive-pack", True)],
+                               f"http://127.0.0.1:{upstream.server_port}")
+        finally:
+            upstream.shutdown()
+        check(wrong == [] and not any("receive-pack" in p.split("?")[0] for p, _ in GitHubRecorder.seen),
+              f"{n}'s site lets no receive-pack past the filter, and still the ref listing ({'no caddy on PATH' if wrong is None else wrong})")
+    push = sites.get("bind unix//run/dev-env-egress/.push.sock", "")
+    GitHubRecorder.seen = []
+    upstream = http.server.ThreadingHTTPServer(("127.0.0.1", 0), GitHubRecorder)
+    threading.Thread(target=upstream.serve_forever, daemon=True).start()
+    try:
+        wrong = site_wrong(push, r"https://github\.com", [
+            ("POST", "/sammasak/nixos-config.git/git-receive-pack", True), ("POST", "/sammasak/skills/git-receive-pack", True),
+            ("POST", "/x/pub/git-receive-pack", False), ("GET", "/sammasak/skills/git-receive-pack", False),
+            ("POST", "/sammasak/skills/git-upload-pack", False), ("POST", "/repos/sammasak/skills/pulls", False),
+            ("POST", "/sammasak/skills/../x/git-receive-pack", False), ("POST", "/sammasak%2fskills/git-receive-pack", False),
+        ], f"http://127.0.0.1:{upstream.server_port}")
+    finally:
+        upstream.shutdown()
+    check(wrong == [] and GitHubRecorder.seen and all(a for _, a in GitHubRecorder.seen),
+          f"the push site signs a listed repository's receive-pack alone ({'no caddy on PATH' if wrong is None else wrong})")
 
 
 def check_github_proxy(site):

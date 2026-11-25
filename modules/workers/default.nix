@@ -15,6 +15,28 @@ let
   user = profile.username;
   inherit (dev.paths) home creds;
   onGithub = i: i.egress.github.repos != [ ];
+  ownRefs = i: i.egress.github.ownRefs or null != null;
+  refsHeld = lib.filter ownRefs (lib.attrValues dev.instances);
+  filterSocket = "/run/exec-pool-push-filter/filter.sock";
+  # in the proxy's runtime directory, which no guest binds whole; no instance name starts with a dot
+  pushSocket = "/run/dev-env-egress/.push.sock";
+  repoRegex = repos: "(?i:${lib.concatMapStringsSep "|" (lib.escapeRegex) repos})";
+  # the ref updates are in the body, which Caddy cannot read: every receive-pack, however spelled, goes to the filter,
+  # which passes the slot's own task's refs on to the push site below
+  receiveRoute =
+    i:
+    lib.optionalString (ownRefs i) (
+      "\n"
+      + lib.removeSuffix "\n" ''
+        @receive path_regexp (?i)git-receive-pack
+        handle @receive {
+          reverse_proxy unix/${filterSocket} {
+            header_up X-Pool-Slot ${i.name}
+            flush_interval -1
+          }
+        }
+      ''
+    );
   # The tokens are read at request time from the unit's credential and its private directory.
   githubToken = "${dev.paths.egress.private}/github-token";
   openaiKey = "${dev.paths.egress.private}/openai-key";
@@ -35,15 +57,16 @@ let
       flush_interval -1
     }
   '';
+  oddMatcher = "@odd vars_regexp {http.request.orig_uri} (?i)%(2f|5c|2e|25)|(^|/)\\.\\.?(/|\\?|$)|//|\\\\";
   # GraphQL names no repository in its path, so it cannot be held to the list: off unless asked for.
   githubSite =
     i:
     let
-      repos = "(?i:${lib.concatMapStringsSep "|" (lib.escapeRegex) i.egress.github.repos})";
+      repos = repoRegex i.egress.github.repos;
     in
     ''
       # what Caddy matches is the decoded path, what GitHub gets is the raw one: refuse anything they could read apart
-      @odd vars_regexp {http.request.orig_uri} (?i)%(2f|5c|2e|25)|(^|/)\.\.?(/|\?|$)|//|\\
+      ${oddMatcher}
       # the owner's token administers the repository: none of that, on any listed repo
       @admin path_regexp (?i)^/repos/[^/]+/[^/]+/(rulesets|branches/.+/protection|collaborators|keys|hooks|transfer|actions/(secrets|variables|runners|permissions)|dependabot/secrets|codespaces/secrets|environments|invitations)(/.*)?$
       @adminRepo {
@@ -58,7 +81,7 @@ let
       }
       handle @adminRepo {
         respond 403
-      }
+      }${receiveRoute i}
       @git {
         path_regexp ^/${repos}(\.git)?/(info/refs|git-upload-pack|git-receive-pack)$
         method GET POST
@@ -378,6 +401,12 @@ let
         default = false;
         description = "Also pass GitHub's GraphQL API, which no repository list can bound; most gh pr and issue commands need it.";
       };
+      ownRefs = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        example = "/run/exec-pool-runner/pool1/manifest.json";
+        description = "A host file whose JSON `.task.id` names the instance's task: its git pushes then update only `refs/heads/pool/<id>` and `refs/pool-wip/<id>` (pkgs/exec-pool-push-filter), and with no such file none. Null, a push may update any ref of a listed repository.";
+      };
     };
     options.headlessAgents = mkOption {
       type = types.listOf (
@@ -508,27 +537,53 @@ in
       egressInaccessible = [ "/run/secrets.d" ]; # sops-nix: every host secret; the proxy gets its own as a credential
       # every address, so an early start is no bind failure: the firewall admits only `from` (modules/core/network.nix),
       # and remote_ip holds the site to it too
-      egressSites = lib.optionalString ghServes ''
-        http://:${toString ghFleet.port} {
-          log github-fleet
-          @outside not remote_ip ${
-            toString (
-              lib.concatMap (
-                h: [ config.sam.fleet.hosts.${h}.address ] ++ config.sam.fleet.hosts.${h}.extraAddresses
-              ) ghFleet.from
-            )
+      # the filter's upstream: a receive-pack it passed, signed here or forwarded to the fleet's sidecar
+      egressSites =
+        lib.optionalString (refsHeld != [ ]) ''
+          http:// {
+            bind unix/${pushSocket}
+            log github-push
+            ${oddMatcher}
+            @push {
+              path_regexp ^/${
+                repoRegex (lib.unique (lib.concatMap (i: i.egress.github.repos) refsHeld))
+              }(\.git)?/git-receive-pack$
+              method POST
+            }
+            handle @odd {
+              respond 403
+            }
+            handle @push {
+              ${
+                if ghForward then forwardSite else upstream "https://github.com" "Basic {file.${githubToken}.basic}"
+              }
+            }
+            handle {
+              respond 403
+            }
           }
-          handle @outside {
-            respond 403
+        ''
+        + lib.optionalString ghServes ''
+          http://:${toString ghFleet.port} {
+            log github-fleet
+            @outside not remote_ip ${
+              toString (
+                lib.concatMap (
+                  h: [ config.sam.fleet.hosts.${h}.address ] ++ config.sam.fleet.hosts.${h}.extraAddresses
+                ) ghFleet.from
+              )
+            }
+            handle @outside {
+              respond 403
+            }
+            ${githubSite {
+              egress.github = {
+                inherit (config.homelab.execPool) repos;
+                graphql = false;
+              };
+            }}
           }
-          ${githubSite {
-            egress.github = {
-              inherit (config.homelab.execPool) repos;
-              graphql = false;
-            };
-          }}
-        }
-      '';
+        '';
       egress = {
         anthropic = {
           for = i: i.agent == "claude" || headless "claude" i;
@@ -559,7 +614,15 @@ in
         };
         github = {
           for = onGithub;
-          site = if ghForward then _: forwardSite else githubSite;
+          site =
+            if ghForward then
+              i:
+              if ownRefs i then
+                lib.removePrefix "\n" (receiveRoute i) + "\nhandle {\n" + forwardSite + "}\n"
+              else
+                forwardSite
+            else
+              githubSite;
           port = 4102;
           secrets = lib.optionalAttrs (!ghForward) { "gh-hosts.yml" = cfg.ghHostsFile; };
           missing = "sam.workers: an instance with egress.github.repos is signed with the token in sam.workers.ghHostsFile, which this host does not set.";
@@ -695,6 +758,46 @@ in
           ) agentNames;
         };
       })
+      (lib.mkIf (refsHeld != [ ]) {
+        services.exec-pool-push-filter = {
+          description = "Holds the instances' git pushes to their own task's refs";
+          wantedBy = [ "multi-user.target" ];
+          before = [ "dev-env-egress.service" ];
+          onFailure = lib.optional (dev.alert != null) "dev-env-alert@%n.service";
+          serviceConfig = {
+            ExecStart = "${
+              lib.getExe (pkgs.callPackage ../../pkgs/exec-pool-push-filter/package.nix { })
+            } ${filterSocket} ${pushSocket} ${
+              pkgs.writeText "exec-pool-push-filter-slots.json" (
+                builtins.toJSON (
+                  lib.listToAttrs (map (i: lib.nameValuePair i.name i.egress.github.ownRefs) refsHeld)
+                )
+              )
+            }";
+            # the proxy's user: each connects to the other's socket, which only its owner may
+            User = user;
+            RuntimeDirectory = baseNameOf (dirOf filterSocket);
+            Restart = "always";
+            RestartSec = 2;
+            # unix sockets on the file system only: no network of its own
+            PrivateNetwork = true;
+            RestrictAddressFamilies = [ "AF_UNIX" ];
+            InaccessiblePaths = dev.egressInaccessible ++ [ dev.stateDir ];
+            PrivateTmp = true;
+            PrivateDevices = true;
+            ProtectHome = true;
+            ProtectSystem = "strict";
+            ProtectProc = "invisible";
+            ProtectKernelTunables = true;
+            ProtectControlGroups = true;
+            NoNewPrivileges = true;
+            CapabilityBoundingSet = "";
+            RestrictNamespaces = true;
+            SystemCallFilter = [ "@system-service" ];
+            MemoryMax = "128M";
+          };
+        };
+      })
       (lib.mkIf (!ghForward && lib.any onGithub (lib.attrValues dev.instances)) {
         # gh rewrites hosts.yml on a login or refresh; the token is read at start
         services.dev-env-egress-gh = {
@@ -738,6 +841,10 @@ in
           i: !onGithub i || !lib.elem "id_ed25519" i.credentials && !lib.elem "gh-hosts.yml" i.credentials
         ) (lib.attrValues dev.instances);
         message = "sam.workers: an instance with egress.github.repos gets neither id_ed25519 nor gh-hosts.yml.";
+      }
+      {
+        assertion = lib.all onGithub refsHeld;
+        message = "sam.workers: an instance with egress.github.ownRefs pushes through the GitHub proxy, which it reaches only with egress.github.repos.";
       }
       {
         assertion = ghServes -> lib.any onGithub (lib.attrValues dev.instances);
