@@ -363,7 +363,16 @@ GITHUB_CASES = [
     ("POST", "/repos/o/r.s/releases", False), ("POST", "/repos/o/r.s/branches/main/rename", False),
     ("POST", "/repos/o/r.s/pulls/12/reviews", False), ("PUT", "/repos/o/r.s/pulls/12/update-branch", False),
     ("POST", "/repos/o/r.s/pages", False), ("DELETE", "/repos/o/r.s/issues/12", False), ("POST", "/graphql", False),
+    # a repository off the list: a public fetch passes (unsigned), a push, its advertisement or its REST does not
+    ("GET", "/x/pub/info/refs?service=git-upload-pack", True), ("POST", "/x/pub.git/git-upload-pack", True),
+    ("GET", "/x/pub/info/refs?service=git-receive-pack", False), ("POST", "/x/pub.git/git-receive-pack", False),
+    ("GET", "/x/pub/info/refs", False), ("POST", "/x/pub/info/refs?service=git-upload-pack", False),
+    ("GET", "/x/pub/info/refs?service=git-upload-pack&service=git-receive-pack", False),
+    ("GET", "/repos/x/pub", False), ("POST", "/repos/x/pub/pulls", False), ("POST", "/repos/x/pub/issues/1/comments", False),
+    ("GET", "/x/pub/../r.s/info/refs?service=git-upload-pack", False),
 ]
+# (path, signed) of the git requests above that reach GitHub: a listed repository's carry the token, any other's none
+GITHUB_SIGNED = {"/o/r.s/info/refs": True, "/o/r.s.git/git-receive-pack": True, "/x/pub/info/refs": False, "/x/pub.git/git-upload-pack": False}
 
 
 def site_wrong(site, upstream, cases, to="http://127.0.0.1:1"):
@@ -449,8 +458,34 @@ def check_github_forward():
 
 
 def check_github_proxy(site):
-    wrong = site_wrong(site, r"https://(api\.)?github\.com", GITHUB_CASES)
-    check(wrong == [], f"the GitHub site lets agents do issue, comment, label and pull request work and git, and refuses merges, refs, contents, workflows, releases, reviews and dot segments ({'no caddy on PATH' if wrong is None else wrong})")
+    GitHubRecorder.seen = []
+    upstream = http.server.ThreadingHTTPServer(("127.0.0.1", 0), GitHubRecorder)
+    threading.Thread(target=upstream.serve_forever, daemon=True).start()
+    try:
+        wrong = site_wrong(site, r"https://(api\.)?github\.com", GITHUB_CASES, f"http://127.0.0.1:{upstream.server_port}")
+    finally:
+        upstream.shutdown()
+    check(wrong == [], f"the GitHub site lets agents do issue, comment, label and pull request work and git, fetch any other repository, and refuses merges, refs, contents, workflows, releases, reviews, dot segments and anything but a fetch off the list ({'no caddy on PATH' if wrong is None else wrong})")
+    seen = {p.split("?")[0]: a for p, a in GitHubRecorder.seen if p.split("?")[0] in GITHUB_SIGNED}
+    check(wrong is None or (seen.keys() == GITHUB_SIGNED.keys() and all(bool(seen[p]) == signed for p, signed in GITHUB_SIGNED.items())),
+          f"a listed repository's git requests reach GitHub with the token, another's with no Authorization ({seen})")
+
+
+class GitHubRecorder(http.server.BaseHTTPRequestHandler):
+    """GitHub as the site's upstream: each path that reached it and the Authorization it carried."""
+    seen = []
+
+    def answer(self):
+        self.rfile.read(int(self.headers.get("Content-Length", "0")))
+        GitHubRecorder.seen.append((self.path, self.headers.get("Authorization")))
+        self.send_response(200)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    do_GET = do_POST = do_PATCH = do_PUT = do_DELETE = do_HEAD = answer
+
+    def log_message(self, *_):
+        pass
 
 
 OTLP_CASES = [("POST", "/v1/metrics", True), ("POST", "/v1/logs", True), ("GET", "/v1/metrics", False), ("POST", "/v1/traces", False),
@@ -1325,6 +1360,91 @@ def check_submitter():
 
 
 
+LEGACY_SESSIONS = r"""
+let u = (builtins.getFlake (toString %(root)s)).nixosConfigurations.acer-swift.config.systemd.units;
+in (import <nixpkgs> { }).linkFarm "legacy" [
+  { name = "gc"; path = u."exec-pool-legacy-sessions.service".unit; }
+  { name = "list"; path = u."exec-pool-legacy-sessions-list.service".unit; }
+]
+"""
+
+LEGACY_SESSIONS_MSI = r"""
+let c = (builtins.getFlake (toString %(root)s)).nixosConfigurations.msi-ms7758.config.systemd.services;
+  s = c.exec-pool-legacy-sessions-list; g = c.exec-pool-legacy-sessions;
+in { inherit (s.serviceConfig) User LoadCredential PrivateNetwork ExecStart;
+  gc = { inherit (g.serviceConfig) PrivateNetwork RestrictAddressFamilies; cred = g.serviceConfig ? LoadCredential; }; }
+"""
+
+
+def check_legacy_sessions():
+    """Runs acer's remover of the old layout's session trees against a scratch state dir and a written list; msi's
+    lister reads acer's queue over TCP."""
+    out = subprocess.run(["nix", "build", "--no-link", "--print-out-paths", "--impure", "--expr", LEGACY_SESSIONS % {"root": json.dumps(ROOT)}],
+                         capture_output=True, text=True)
+    unit = pathlib.Path(out.stdout.strip(), "gc/exec-pool-legacy-sessions.service") if out.returncode == 0 else None
+    lunit = pathlib.Path(out.stdout.strip(), "list/exec-pool-legacy-sessions-list.service") if out.returncode == 0 else None
+    exe = re.search(r"^ExecStart=(\S+)", unit.read_text(), re.M) if unit else None
+    pre = re.search(r"^ExecStart=(\S+)", lunit.read_text(), re.M) if lunit else None
+    if not exe or not pre:
+        check(False, f"acer's remover of the old session trees and its lister are on ({out.stderr.strip()[-300:]})")
+        return
+    g, lister = unit.read_text(), pathlib.Path(pre.group(1)).read_text()
+    check("User=exec_pool" in lunit.read_text() and "User=" not in g and "PrivateNetwork=true" in g
+          and "Requires=exec-pool-legacy-sessions-list.service" in g
+          and "host=/run/postgresql dbname=exec_pool user=exec_pool" in lister and "FROM session_gc" in lister,
+          "acer lists every session as exec_pool, by peer, in its own unit; root's remover, after it, has no network")
+    out = run_eval(LEGACY_SESSIONS_MSI % {"root": json.dumps(ROOT)})
+    got = json.loads(out.stdout) if out.returncode == 0 else {}
+    check(got.get("User") == "exec_pool" and got.get("PrivateNetwork") is False
+          and [c.split(":")[0] for c in got.get("LoadCredential", [])] == ["db-password"]
+          and got.get("gc") == {"PrivateNetwork": True, "RestrictAddressFamilies": ["AF_UNIX"], "cred": False},
+          f"msi's lister reads acer's queue as exec_pool_runner with its runner's password credential; root's remover has neither network nor credential ({got or out.stderr.strip()[-300:]})")
+    text = pathlib.Path(exe.group(1)).read_text()
+    with tempfile.TemporaryDirectory() as d:
+        state, metrics, own, listed = (pathlib.Path(d, n) for n in ("state", "metrics", "own", "sessions"))
+        hx = lambda i: i.encode().hex()
+        for p in (state / ".trash", metrics, own, state / ".sessions/dock/pool1/cur/work"):
+            p.mkdir(parents=True)
+        # c: cancelled, h: handed back, u: unpushed, o: unknown to the queue
+        for t in ("cli-c", "cli-h", "cli-u", "cli-o"):
+            (state / ".sessions" / hx(t) / "tree/work").mkdir(parents=True)
+        for t in ("cli-c", "cli-u"):
+            (state / ".sessions-store" / hx(t) / "tree").mkdir(parents=True)
+        script = text.replace("/run/exec-pool-legacy-sessions-list/sessions", str(listed)).replace("/var/lib/exec-pool-legacy-sessions", str(own))
+        script = script.replace("/var/lib/workers", str(state)).replace("/run/exec-pool-legacy-sessions", str(metrics))
+        pathlib.Path(d, "gc").write_text(script)
+        line = lambda i, st, hb: json.dumps({"task_id": i, "dir": hx(i), "state": st, "handed_back": hb})
+        rows = [line("cli-c", "cancelled", False), line("cli-h", "waiting", True), line("cli-u", "waiting", False)]
+
+        def run(lines, listed_ok=True):
+            listed.unlink(missing_ok=True)
+            if listed_ok:
+                listed.write_text("".join(e + "\n" for e in lines))
+            return subprocess.run(["bash", str(pathlib.Path(d, "gc"))], capture_output=True, text=True)
+
+        prom = lambda: (metrics / "legacy-sessions.prom").read_text() if (metrics / "legacy-sessions.prom").exists() else ""
+        r = run(rows, listed_ok=False)
+        check(r.returncode != 0 and (state / ".sessions" / hx("cli-c")).is_dir() and prom() == "",
+              f"no list (the lister failed): the run fails and moves nothing ({r.returncode})")
+        r = run(rows)
+        trash = sorted(p.name.rsplit("-", 2)[0] for p in (state / ".trash").iterdir())
+        check(r.returncode == 0 and trash == [f"legacy-store-{hx('cli-c')}", f"legacy-tree-{hx('cli-c')}", f"legacy-tree-{hx('cli-h')}"]
+              and (state / ".sessions" / hx("cli-u") / "tree").is_dir() and (state / ".sessions-store" / hx("cli-u")).is_dir()
+              and (state / ".sessions" / hx("cli-o") / "tree").is_dir() and (state / ".sessions/dock/pool1/cur/work").is_dir()
+              and (state / ".sessions-store").is_dir(),
+              f"a cancelled session's tree and store copy, and a handed-back one's tree, move to .trash; an unpushed one, an unknown one, the docks and the store with a live entry stay ({r.returncode}, {trash}, {r.stderr.strip()[-200:]})")
+        check("homelab_exec_pool_legacy_sessions_removed_total 3" in prom() and 'homelab_exec_pool_legacy_sessions_kept{reason="unpushed"} 2' in prom()
+              and 'homelab_exec_pool_legacy_sessions_kept{reason="unknown"} 1' in prom(),
+              f"the moves are counted, and what stays is counted by why ({prom()!r})")
+        (state / "outside").mkdir()
+        (state / ".sessions" / hx("cli-l")).symlink_to(state / "outside")
+        r = run([line("cli-u", "cancelled", False), line("cli-l", "cancelled", True), line("dock", "cancelled", True)])
+        check(r.returncode == 0 and not (state / ".sessions-store").exists() and (state / "outside").is_dir()
+              and (state / ".sessions/dock/pool1/cur/work").is_dir()
+              and "homelab_exec_pool_legacy_sessions_removed_total 5" in prom() and 'homelab_exec_pool_legacy_sessions_kept{reason="refused"} 1' in prom(),
+              f"once its last entry goes the store dir goes; a link and the dock stay; the total carries over runs ({r.returncode}, {r.stdout.strip()[-300:]}, {prom()!r})")
+
+
 def main():
     # every evaluation below that is not expected to throw, in chunks of PREFETCH_CHUNK per process instead of one process
     # each: the order of the checks, and so of their lines, is unchanged. The TYPED cases must throw, so each stays its own.
@@ -1385,6 +1505,7 @@ def main():
           f"an instance without rootInGuest is unchanged: host uids, plain binds, sudo with a password ({ok})")
     check_host_network()
     check_submitter()
+    check_legacy_sessions()
     out = nix_eval("{ }", NO_ROOT)
     got = json.loads(out.stdout) if out.returncode == 0 else {}
     check(got.get("allowed") == ["*"] and got.get("mounts") == want_mounts,

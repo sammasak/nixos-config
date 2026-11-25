@@ -73,8 +73,24 @@ let
         path_regexp ^/repos/${repos}/(issues(/[0-9]+(/(comments|labels|assignees))?|/comments/[0-9]+)?|pulls(/[0-9]+(/(comments|requested_reviewers))?|/comments/[0-9]+)?|labels(/[^/]+)?)/?$
         method POST PATCH
       }
+      # any other repository: a fetch alone, sent without our token, so GitHub serves only what is public
+      @publicRefs {
+        path_regexp ^/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/info/refs$
+        method GET
+        expression `{query} == "service=git-upload-pack"`
+      }
+      @publicPack {
+        path_regexp ^/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/git-upload-pack$
+        method POST
+      }
       handle @git {
         ${upstream "https://github.com" "Basic {file.${githubToken}.basic}"}
+      }
+      handle @publicRefs {
+        ${unsigned}
+      }
+      handle @publicPack {
+        ${unsigned}
       }
       handle @read {
         ${upstream "https://api.github.com" "token {file.${githubToken}}"}
@@ -95,6 +111,14 @@ let
         respond 403
       }
     '';
+  unsigned = ''
+    reverse_proxy https://github.com {
+      header_up Host {upstream_hostport}
+      header_up -Authorization
+      header_up -Cookie
+      flush_interval -1
+    }
+  '';
   headless = a: i: lib.elem a i.headlessAgents;
   # the hosts.nix entries with the runtime-host role, by hostName (as ssh-known-hosts.nix reads the table)
   runtimeHosts = lib.sort lib.lessThan (
