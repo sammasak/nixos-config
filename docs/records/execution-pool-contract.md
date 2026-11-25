@@ -390,7 +390,7 @@ read only, through its own egress proxy (`modules/workers/default.nix`); the slo
 `PROMETHEUS_URL`, `ALERTMANAGER_URL` and `LOKI_ADDR` name the loopback ports. Prometheus passes GET or POST
 `/api/v1/query`, `query_range`, `series`, `labels` and `label/NAME/values`, GET `/api/v1/rules` and `alerts`;
 Alertmanager GET `/api/v2/alerts`; Loki GET or POST `/loki/api/v1/query`, `query_range` and `series`, GET `labels` and
-`label/NAME/values`. Anything else (admin, writes, silences, reloads, a path with an escape or dot segment) is 403.
+`label/NAME/values`. A request gets 60 s and two run at once per slot and service, as black-pi is one Pi. Anything else (admin, writes, silences, reloads, a path with an escape or dot segment) is 403.
 
 ```sh
 curl -sG "$PROMETHEUS_URL/api/v1/query" --data-urlencode 'query=ALERTS{alertstate="firing"}'

@@ -148,6 +148,12 @@ let
           header_up Host {upstream_hostport}
           header_up -Authorization
           header_up -Cookie
+          # black-pi serves Grafana and alerting from the same Pi: a slot's query is cut at 60 s, which cancels it
+          # there, and at most two run at once per slot and service
+          transport http {
+            response_header_timeout 60s
+            max_conns_per_host 2
+          }
         }
       '';
     in
