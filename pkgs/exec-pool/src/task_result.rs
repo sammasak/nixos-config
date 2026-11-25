@@ -114,9 +114,9 @@ impl TaskResult {
             .replace('\0', "")),
             (None, Some(c)) => start(&c.result.replace('\0', "")),
             // an agent that stopped before printing (no model, no key) said why on stderr alone
-            (None, None) if stdout.trim().is_empty() => {
-                end(&result.map_or("", |r| r.stderr_tail.as_str()).replace('\0', ""))
-            }
+            (None, None) if stdout.trim().is_empty() => end(&result
+                .map_or("", |r| r.stderr_tail.as_str())
+                .replace('\0', "")),
             (None, None) => end(&stdout.replace('\0', "")),
         };
         Self {
@@ -261,7 +261,11 @@ mod tests {
         assert_eq!(r.outcome, Some(Outcome::Failed));
         assert_eq!(r.output(), "No API key found for the selected model.\n");
         let said = TaskResult::of(Agent::Pi, Some(&failed), "partial answer\n");
-        assert_eq!(said.output(), "partial answer\n", "stdout, once there is any");
+        assert_eq!(
+            said.output(),
+            "partial answer\n",
+            "stdout, once there is any"
+        );
     }
 
     #[test]
