@@ -151,7 +151,10 @@ class PoolError(Exception):
 
 
 def pool(*args, stdin=None):
-    out = subprocess.run(["exec-pool", *args], input=stdin, capture_output=True, text=True)
+    try:
+        out = subprocess.run(["exec-pool", *args], input=stdin, capture_output=True, text=True)
+    except OSError as e:
+        raise PoolError(f"exec-pool: {e}") from e
     if out.returncode != 0:
         raise PoolError(f"exec-pool {args[0]} exits {out.returncode}: {out.stderr.strip()[-500:]}")
     return out.stdout.strip()
