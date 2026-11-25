@@ -1,7 +1,7 @@
 # The execution pool queue's alerts (modules/homelab/exec-pool.nix). The queue's series come from the collector's own
 # textfile, which exists only on a host that runs the queue and only while that host is scraped: an empty queue is up 1
 # with zero counts and never fires. Their host label is the slot's host (the queue renders every host's on acer); the
-# park push and prepare counters are each slot host's own textfile, split by node. A failed collector unit is
+# park push, prepare and memory kill counters are each slot host's own textfile, split by node. A failed collector unit is
 # SystemdUnitFailed's.
 groups:
   # #626's compaction window comparison: Claude turns by the arm their slot declared (variant: its autoCompactWindow

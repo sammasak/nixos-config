@@ -137,6 +137,22 @@ changed packages as before. lenovo's user.slice 8288M to 8032M, still above the 
 (4.6 GiB idle sessions plus the largest 3.0 GiB unit): 259M of budget left instead of 3M; a new 128M unit evaluates.
 Open: the 4.6 GiB idle figure predates the named workers moving to pool slots; re-measure lenovo's user slice. PR #799.
 
+**25 Nov, branch `pool/cli-651e53b8e000f3fd`** (deploy acer and msi for the pool, black-pi for the rule): three turns
+(acer 11:05 and 11:13, msi 11:24) ended as a bare `turn_error` when the kernel killed a slot's `nix eval` of a host
+toplevel at `environments.slice`'s limit (2 to 3.3 GiB resident, four sessions running): the guest's systemd stopped
+the whole task unit on the kill (DefaultOOMPolicy=stop). The task unit now runs with `OOMPolicy=continue`, so only the
+killed process dies and the agent sees its command fail. The exec helper reads the slot's `memory.events` `oom_kill`
+before and after each run and the kernel log's `task=` names for its cgroup: the result carries `oom_kills` and
+`oom_victims`, a failing turn with a kill parks as `turn_memory_kill` (counted in `exec_pool_session_turns_total` by
+host, stalled and backed off as an error), and its continue names what was killed (migration 23 lets a remote
+runner write that body; before it, the generic text). `exec_pool_memory_kills_total{slot}` per slot host, and
+`ExecPoolSlotMemoryKills` fires at two kills on a node in 2 h with the `journalctl -k -g oom-kill` command. No
+per-slot MemoryMax or MemoryHigh: the slice's own comment records why (it killed or stalled builds the pool had room
+for). Also `ownRefsOnly` on for msi; acer's push filter journal (a push `passed`, one `refused`) was not readable
+from a slot: the coordinator glances at it before the msi deploy.
+Open: a kill that leaves the agent running is counted but not told to it beyond its command's exit; the slots still
+share one limit, so four heavy evaluations at once still kill one of them.
+
 **Open, in pick-up order**
 
 1. Session turns are headless; the owner wants the same interactive Herdr panes the named workers had, with an idle
