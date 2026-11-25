@@ -9,9 +9,8 @@
 //! ([`decide_turn`]), not a settle.
 
 use std::fmt::Write as _;
-use std::fs::File;
 use std::io::{self, Read as _};
-use std::os::unix::fs::MetadataExt as _;
+use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
 use std::path::Path;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -822,6 +821,9 @@ pub fn read_regular_up_to(path: &Path, limit: u64) -> io::Result<String> {
     String::from_utf8(read_bytes(path, limit)?).map_err(io::Error::other)
 }
 
+/// Linux's `O_NONBLOCK`, the same on x86-64 and aarch64.
+const O_NONBLOCK: i32 = 0o4000;
+
 /// [`read_regular`]'s bytes, up to `limit` of them.
 ///
 /// # Errors
@@ -834,7 +836,11 @@ pub fn read_bytes(path: &Path, limit: usize) -> io::Result<Vec<u8>> {
             path.display()
         )));
     }
-    let file = File::open(path)?;
+    // non-blocking: a FIFO swapped in after the check would otherwise hang the open
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(O_NONBLOCK)
+        .open(path)?;
     let opened = file.metadata()?;
     if (opened.dev(), opened.ino()) != (before.dev(), before.ino()) {
         return Err(io::Error::other(format!(

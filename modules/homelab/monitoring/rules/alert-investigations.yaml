@@ -1,0 +1,34 @@
+# The alert investigation trigger's alerts (modules/homelab/alert-investigations.nix, on lenovo). Its series exist only
+# on a host that switches an alert name on, so a host without one never fires.
+groups:
+  - name: alert-investigations.alerts
+    rules:
+      - alert: AlertInvestigationFailed
+        # a counter that rose in 6 h: every failure pages once and clears 6 h later; up 0 for 15 minutes is a trigger
+        # that cannot read Alertmanager, so nothing is investigated
+        expr: |
+          sum by (node, alertname) (increase(homelab_alert_investigations_total{job="node-exporter",outcome="failed"}[6h])) > 0
+          or max by (node) (homelab_alert_investigations_up{job="node-exporter"} == 0)
+        for: 15m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "Alert investigations on {{ $labels.node }} are failing{{ with $labels.alertname }} for {{ . }}{{ end }}"
+          description: "An investigation pool session started by alert-investigations on {{ $labels.node }} failed in the last 6 h (its start was refused, the session failed, timed out, ended without a report or pushed a branch), or the trigger has not read Alertmanager for 15 minutes, so a firing alert goes uninvestigated. Run journalctl -u alert-investigations.service there; the reason is in homelab_alert_investigation_failures_total and on the alert's issue."
+          query: 'increase(homelab_alert_investigation_failures_total{job="node-exporter",node="{{ $labels.node }}"}[6h]) > 0 or homelab_alert_investigations_up{job="node-exporter",node="{{ $labels.node }}"}'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#alertinvestigationfailed"
+
+      - alert: AlertInvestigationsStale
+        # 1200 s is ten missed two-minute runs
+        expr: |
+          max by (node) (time() - node_textfile_mtime_seconds{job="node-exporter",file=~".*/alert-investigations[.]prom"} > 1200)
+        for: 10m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "The alert investigation trigger on {{ $labels.node }} has stopped"
+          description: "alert-investigations on {{ $labels.node }} has not rewritten its textfile for over 20 minutes, so no firing alert is investigated and AlertInvestigationFailed is blind. Run systemctl status alert-investigations.timer alert-investigations.service there."
+          query: 'time() - node_textfile_mtime_seconds{job="node-exporter",node="{{ $labels.node }}",file=~".*/alert-investigations[.]prom"}'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#alertinvestigationsstale"

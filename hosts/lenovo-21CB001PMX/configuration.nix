@@ -22,6 +22,7 @@
     ../../modules/homelab/shipping-metrics.nix
     ../../modules/homelab/nav-metrics.nix
     ../../modules/homelab/shunt-metrics.nix
+    ../../modules/homelab/alert-investigations.nix
   ];
 
   # a quarter of the collector's 256M MemoryMax, as the daemon and the user slice: zram is charged to no cgroup
@@ -31,6 +32,7 @@
 
   homelab.journalCollector.enable = true;
   homelab.shuntMetrics.enable = true;
+  homelab.alertInvestigations.alerts = [ "NodeSystemdUnitFailed" ];
 
   sam.profile = {
     username = "lukas";

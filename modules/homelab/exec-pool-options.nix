@@ -40,6 +40,11 @@ in
         default = 2;
         description = "Each slot's cores, as an instance's cpu.reserved.";
       };
+      privateUsers = mkOption {
+        type = types.bool;
+        default = false;
+        description = "Each slot in its own 65536 uids (the instances' rootInGuest, without its sudo): guest root is an unprivileged host uid, a slot has its own sshd key and nix fetcher cache, and a reset empties that cache. A slot's home made in the other block is replaced by a fresh one at its next start.";
+      };
     };
     repos = mkOption {
       type = types.listOf types.str;

@@ -145,6 +145,7 @@ in
         ./rules/llm-gateway.yaml
         ./rules/shunt.yaml
         ./rules/exec-pool.yaml
+        ./rules/alert-investigations.yaml
         (import ./rules/homelab.nix { inherit lib hosts; }).file
         llmBench
         shipping
@@ -275,6 +276,13 @@ in
           c = builtins.fromJSON (builtins.unsafeDiscardStringContext config.services.prometheus.configText);
         in
         !(c ? remote_write)
+        && lib.all (k: !(c.global ? ${k})) [
+          "target_limit"
+          "label_limit"
+          "label_name_length_limit"
+          "label_value_length_limit"
+          "body_size_limit"
+        ]
         && lib.all (
           s:
           lib.attrNames (
@@ -290,7 +298,7 @@ in
             ]
           ) == [ ]
         ) c.scrape_configs;
-      message = "modules/homelab/monitoring/prometheus.nix: rules/prometheus.yaml leaves out the remote-write and service-discovery alerts; with remote_write or a discovered target, add them back.";
+      message = "modules/homelab/monitoring/prometheus.nix: rules/prometheus.yaml leaves out the remote-write, service-discovery and target, label and body-size limit alerts; with remote_write, a discovered target or such a limit, add them back.";
     }
     {
       assertion =

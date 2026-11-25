@@ -1,6 +1,8 @@
 # kube-prometheus-stack 85.0.3's alertmanager.rules, the chart's job selector replaced by the native job and
-# descriptions naming instance, not namespace/pod (neither label exists off Kubernetes), less the two a single
-# unclustered instance can never fire (members, config consistency; alertmanager.nix asserts it stays one).
+# descriptions naming instance, not namespace/pod (neither label exists off Kubernetes), less the cluster ones a single
+# unclustered instance never fires or cannot deliver (alertmanager.nix asserts it stays one): members, config
+# consistency, the cluster send failures (AlertmanagerFailedToSendAlerts, with one instance) and ClusterDown (the only
+# instance down sends nothing; lenovo's cluster-watchdog pages a missing Watchdog).
 # Each alert's query (docs/alert-runbooks.md) is a copy of its expr: change both.
 groups:
   - name: alertmanager.rules
@@ -43,80 +45,6 @@ groups:
         for: 5m
         labels:
           severity: warning
-      - alert: AlertmanagerClusterFailedToSendAlerts
-        annotations:
-          description: The minimum notification failure rate to {{ $labels.integration }} sent from any instance in the {{$labels.job}} cluster is {{ $value | humanizePercentage }}.
-          query: |-
-            min by (namespace,service, integration) (
-              rate(alertmanager_notifications_failed_total{job="alertmanager", integration=~`.*`}[15m])
-            /
-              ignoring (reason) group_left rate(alertmanager_notifications_total{job="alertmanager", integration=~`.*`}[15m]) > 0
-            )
-            > 0.01
-          runbook_url: https://runbooks.prometheus-operator.dev/runbooks/alertmanager/alertmanagerclusterfailedtosendalerts
-          summary: All Alertmanager instances in a cluster failed to send notifications to a critical integration.
-        expr: |-
-          min by (namespace,service, integration) (
-            rate(alertmanager_notifications_failed_total{job="alertmanager", integration=~`.*`}[15m])
-          /
-            ignoring (reason) group_left rate(alertmanager_notifications_total{job="alertmanager", integration=~`.*`}[15m]) > 0
-          )
-          > 0.01
-        for: 5m
-        labels:
-          severity: critical
-      - alert: AlertmanagerClusterFailedToSendAlerts
-        annotations:
-          description: The minimum notification failure rate to {{ $labels.integration }} sent from any instance in the {{$labels.job}} cluster is {{ $value | humanizePercentage }}.
-          query: |-
-            min by (namespace,service, integration) (
-              rate(alertmanager_notifications_failed_total{job="alertmanager", integration!~`.*`}[15m])
-            /
-              ignoring (reason) group_left rate(alertmanager_notifications_total{job="alertmanager", integration!~`.*`}[15m]) > 0
-            )
-            > 0.01
-          runbook_url: https://runbooks.prometheus-operator.dev/runbooks/alertmanager/alertmanagerclusterfailedtosendalerts
-          summary: All Alertmanager instances in a cluster failed to send notifications to a non-critical integration.
-        expr: |-
-          min by (namespace,service, integration) (
-            rate(alertmanager_notifications_failed_total{job="alertmanager", integration!~`.*`}[15m])
-          /
-            ignoring (reason) group_left rate(alertmanager_notifications_total{job="alertmanager", integration!~`.*`}[15m]) > 0
-          )
-          > 0.01
-        for: 5m
-        labels:
-          severity: warning
-      - alert: AlertmanagerClusterDown
-        annotations:
-          description: '{{ $value | humanizePercentage }} of Alertmanager instances within the {{$labels.job}} cluster have been up for less than half of the last 5m.'
-          query: |-
-            (
-              count by (namespace,service,cluster) (
-                avg_over_time(up{job="alertmanager"}[5m]) < 0.5
-              )
-            /
-              count by (namespace,service,cluster) (
-                up{job="alertmanager"}
-              )
-            )
-            >= 0.5
-          runbook_url: https://runbooks.prometheus-operator.dev/runbooks/alertmanager/alertmanagerclusterdown
-          summary: Half or more of the Alertmanager instances within the same cluster are down.
-        expr: |-
-          (
-            count by (namespace,service,cluster) (
-              avg_over_time(up{job="alertmanager"}[5m]) < 0.5
-            )
-          /
-            count by (namespace,service,cluster) (
-              up{job="alertmanager"}
-            )
-          )
-          >= 0.5
-        for: 5m
-        labels:
-          severity: critical
       - alert: AlertmanagerClusterCrashlooping
         annotations:
           description: '{{ $value | humanizePercentage }} of Alertmanager instances within the {{$labels.job}} cluster have restarted at least 5 times in the last 10m.'

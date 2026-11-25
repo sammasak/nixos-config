@@ -57,7 +57,7 @@ groups:
           team: homelab
         annotations:
           summary: "Host {{ $labels.node }} has been unreachable for 15+ minutes"
-          description: "Prometheus on black-pi has not scraped node-exporter on {{ $labels.node }} for 15 minutes: the host is down, off the LAN, or its exporter stopped."
+          description: "Prometheus on black-pi has not scraped node-exporter on {{ $labels.node }} for 15 minutes: the host is down, off the LAN, or its exporter stopped. From lenovo, ping {{ $labels.node }} and ssh to it; there, systemctl status prometheus-node-exporter."
           query: 'up{job="node-exporter",node="{{ $labels.node }}"}'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#nodechronicnotready"
 
@@ -78,14 +78,16 @@ groups:
           query: 'up{job=~"nvidia-gpu|node-exporter",node="{{ $labels.node }}"}'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#gputelemetrydown"
 
+      # for: time for UnitOOMKilled's journal line to reach Loki's ruler; it inhibits this one (../alertmanager.nix)
       - alert: NodeOOMKill
         expr: increase(node_vmstat_oom_kill{job="node-exporter"}[15m]) > 0
+        for: 2m
         labels:
           severity: warning
           team: homelab
         annotations:
           summary: "The kernel OOM-killed a process on {{ $labels.node }}"
-          description: "{{ $value | humanize }} OOM kill(s) on {{ $labels.node }} in the last 15 minutes. A unit at its MemoryMax or the host out of memory: read that host's kernel journal before raising any limit."
+          description: "{{ $value | humanize }} OOM kill(s) on {{ $labels.node }} in the last 15 minutes. A unit at its MemoryMax or the host out of memory: run journalctl -k --since -1h | grep -i 'killed process' there for the process and its cgroup before raising any limit."
           query: 'increase(node_vmstat_oom_kill{job="node-exporter",node="{{ $labels.node }}"}[1h])'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#nodeoomkill"
 
@@ -116,25 +118,6 @@ groups:
           query: 'node_thermal_zone_temp{job="node-exporter",node="{{ $labels.node }}"}'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#nodetemperaturehigh"
 
-      # each hwmon sensor against its own critical mark (a desktop board's unwired sensors read nonsense, but have
-      # none; max by keeps the join single across a target's label change). msi and lenovo sit there through every
-      # gate, so it notifies no one (notify="none", alertmanager.nix): it shows in the alert list and on Hosts.
-      - alert: NodeSensorNearCritical
-        expr: |
-          node_hwmon_temp_celsius{job="node-exporter"}
-          > on (node, chip, sensor) group_left ()
-            (max by (node, chip, sensor) (node_hwmon_temp_crit_celsius{job="node-exporter"} > 0) - 5)
-        for: 15m
-        labels:
-          severity: warning
-          team: homelab
-          notify: none
-        annotations:
-          summary: "A sensor on {{ $labels.node }} is near its critical mark"
-          description: "{{ $labels.chip }} {{ $labels.sensor }} on {{ $labels.node }} has read {{ $value }} °C for 15 minutes, within 5 °C of its own critical mark. Expected during long builds on msi and lenovo; outside them, check the fan and airflow."
-          query: 'node_hwmon_temp_celsius{job="node-exporter",node="{{ $labels.node }}",chip="{{ $labels.chip }}",sensor="{{ $labels.sensor }}"}'
-          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#nodesensornearcritical"
-
       - alert: GpuThermalThrottling
         expr: nvidia_smi_clocks_event_reasons_hw_thermal_slowdown{job="nvidia-gpu"} == 1
         for: 10m
@@ -143,7 +126,7 @@ groups:
           team: homelab
         annotations:
           summary: "The GPU on {{ $labels.node }} slows itself for heat"
-          description: "The board on {{ $labels.node }} has reported hardware thermal slowdown for 10 minutes: model runs are slower than measured. The GPU dashboard shows its temperature, fan and power."
+          description: "The board on {{ $labels.node }} has reported hardware thermal slowdown for 10 minutes: model runs are slower than measured. Run nvidia-smi -q -d TEMPERATURE,PERFORMANCE there; the GPU dashboard shows its temperature, fan and power."
           query: 'nvidia_smi_temperature_gpu{job="nvidia-gpu",node="{{ $labels.node }}"}'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#gputhermalthrottling"
 
@@ -182,7 +165,7 @@ groups:
           team: homelab
         annotations:
           summary: "{{ $labels.node }} has under 3 GiB free on /"
-          description: "{{ $value | humanize1024 }}B free on / of {{ $labels.node }}. On black-pi, Prometheus is capped at 1500MB; check Loki's /var/lib/loki and the Nix store."
+          description: "{{ $value | humanize1024 }}B free on / of {{ $labels.node }}. Run df -h / and du -xsh /var/lib/* /nix/store 2>/dev/null | sort -h | tail there; on black-pi, Prometheus is capped at 1500MB, so check Loki's /var/lib/loki."
           query: 'node_filesystem_avail_bytes{job="node-exporter",node="{{ $labels.node }}",mountpoint="/"}'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#rootfilesystemlow"
 
@@ -373,38 +356,10 @@ groups:
           team: homelab
         annotations:
           summary: "TLS certificate of {{ $labels.instance }} expires in {{ $value | humanizeDuration }}"
-          description: "black-pi's HTTPS probe of {{ $labels.instance }} has seen a certificate expiring in under 14 days for an hour: no renewed certificate is being served. Check Caddy's journal on acer for ACME errors."
+          description: "black-pi's HTTPS probe of {{ $labels.instance }} has seen a certificate expiring in under 14 days for an hour: no renewed certificate is being served. Run journalctl -u caddy --since -1d | grep -i acme on acer for the renewal's error."
           query: '(probe_ssl_earliest_cert_expiry{job="blackbox",instance="{{ $labels.instance }}"} - time()) / 86400'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#certificateexpiringsoon"
 
-      - alert: PrometheusTargetsMostlyDown
-        # Self-blind guard: if a large fraction of scrape targets go down, the whole
-        # monitoring signal is suspect.
-        expr: (sum(up == 1) / count(up)) < 0.7
-        for: 10m
-        labels:
-          severity: critical
-          team: homelab
-        annotations:
-          summary: "Over 30% of Prometheus scrape targets are down"
-          description: "up ratio is {{ $value | humanizePercentage }}: Prometheus may be starved or scraping is broken. Check http://192.168.10.137:9090/targets."
-          query: 'up == 0'
-          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#prometheustargetsmostlydown"
-
-      - alert: HomelabHealthScoreLow
-        expr: homelab:health:score < 70
-        for: 15m
-        labels:
-          severity: warning
-          team: homelab
-        annotations:
-          summary: "Homelab health score is {{ $value }}/100"
-          description: "The composite homelab:health:score on black-pi has been below 70 for 15 minutes: at least two of its five KPIs (node ready, targets up, no critical alert, disk free, Watchdog alive) are failing. The query lists each KPI."
-          query: '{__name__=~"homelab:health:.+"}'
-          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#homelabhealthscorelow"
-
-  # A fixed, queryable definition of "healthy" (avg_over_time(...[30d]) gives a scorecard). The host-scope subset of
-  # the in-cluster KPIs; rules evaluate in order, so the score sees this cycle's values.
   - name: homelab.health.kpi
     interval: 1m
     rules:

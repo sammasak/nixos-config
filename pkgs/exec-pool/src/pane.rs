@@ -22,6 +22,11 @@ pub const INPUT_FILE: &str = "/session/cur/home/.exec-pool-input.md";
 pub const READY_TEXT: &str = "bypass permissions on";
 /// How long the agent must stay settled after the prompt before it counts as idle.
 pub const SETTLE_MS: u64 = 5000;
+/// What each of Claude's Bash tool commands runs under: `bash -c 'source ~/.claude/shell-snapshots/snapshot-…'`.
+///
+/// The shell lives as long as its command. A background one outlives the agent's turn, which Herdr then shows idle
+/// while the agent waits on it.
+pub const TOOL_SHELL: &[u8] = b"/.claude/shell-snapshots/snapshot-";
 
 /// The agent's name in Herdr: the task id as Herdr takes a name (`[a-z][a-z0-9_-]{0,31}`), so `agent list` names
 /// the session its pane runs.
@@ -94,11 +99,38 @@ pub fn seen(list: &Value, pane: &str) -> Option<Seen> {
     })
 }
 
-/// When the agent is idle: settled after the prompt, waiting for input.
+/// Whether a process the host sees is a Bash tool command ([`TOOL_SHELL`]) of the agent in `slot`'s step `unit`.
+///
+/// It is by its `/proc/PID/cgroup`, in that unit's cgroup inside the slot's container, and its `/proc/PID/cmdline`.
+#[must_use]
+pub fn tool_shell(cgroup: &str, cmdline: &[u8], (slot, unit): (&str, &str)) -> bool {
+    let container = format!("/container@{slot}.service/");
+    let unit = format!("{unit}.service");
+    let ours = cgroup.lines().any(|l| {
+        l.strip_prefix("0::")
+            .and_then(|p| p.split_once(&container))
+            .is_some_and(|(_, rest)| rest.split('/').any(|c| c == unit))
+    });
+    ours && cmdline.windows(TOOL_SHELL.len()).any(|w| w == TOOL_SHELL)
+}
+
+/// Whether a Claude subagent's `meta.json` is one still running.
+///
+/// Claude writes `~/.claude/projects/<project>/<session>/subagents/agent-<id>.meta.json` at the spawn and again with
+/// `"finished": true` once the subagent ends. A background subagent has no process of its own, so Herdr shows its
+/// agent idle while it works.
+#[must_use]
+pub fn subagent_running(meta: &str) -> bool {
+    serde_json::from_str::<Value>(meta)
+        .is_ok_and(|v| v.is_object() && v.get("finished") != Some(&Value::Bool(true)))
+}
+
+/// When the agent is idle: settled after the prompt, waiting for input, with no Bash tool command or subagent of its
+/// running.
 ///
 /// That is a state Herdr reached after the prompt, held for [`SETTLE_MS`]. A blocked or working agent, one Herdr does
-/// not see, or a message the owner types in the pane makes it busy again; only the time limit ends a turn that never
-/// settles.
+/// not see, one waiting on its own background command ([`tool_shell`]) or subagent ([`subagent_running`]), or a message the owner types in the pane makes
+/// it busy again; only the time limit ends a turn that never settles.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TurnWatch {
     /// The agent's `state_change_seq` just before the prompt.
@@ -116,11 +148,12 @@ impl TurnWatch {
         }
     }
 
-    /// How long the agent has been idle once Herdr shows `seen` at `now_ms`, counted from when it settled; `None`
-    /// while it is not.
-    pub const fn idle_ms(&mut self, seen: Option<Seen>, now_ms: u64) -> Option<u64> {
+    /// How long the agent has been idle once Herdr shows `seen` at `now_ms`, counted from when it settled.
+    ///
+    /// `None` while it is not, and while `jobs`: a Bash tool command or a subagent of its runs.
+    pub const fn idle_ms(&mut self, seen: Option<Seen>, jobs: bool, now_ms: u64) -> Option<u64> {
         match seen {
-            Some(s) if s.settled && s.seq > self.before => {
+            Some(s) if s.settled && !jobs && s.seq > self.before => {
                 let since = match self.settled {
                     Some((seq, since)) if seq == s.seq => since,
                     _ => now_ms,
@@ -361,33 +394,88 @@ mod tests {
         let s = |settled, seq| Some(Seen { settled, seq });
         let mut w = TurnWatch::new(1);
         // idle before the prompt took: the state it was prompted in
-        assert_eq!(w.idle_ms(s(true, 1), 0), None);
-        assert_eq!(w.idle_ms(s(true, 1), 60_000), None);
-        assert_eq!(w.idle_ms(s(false, 2), 61_000), None);
-        assert_eq!(w.idle_ms(s(true, 3), 62_000), None);
-        assert_eq!(w.idle_ms(s(true, 3), 62_000 + SETTLE_MS - 1), None);
-        assert_eq!(w.idle_ms(s(true, 3), 62_000 + SETTLE_MS), Some(SETTLE_MS));
-        assert_eq!(w.idle_ms(s(true, 3), 662_000), Some(600_000));
+        assert_eq!(w.idle_ms(s(true, 1), false, 0), None);
+        assert_eq!(w.idle_ms(s(true, 1), false, 60_000), None);
+        assert_eq!(w.idle_ms(s(false, 2), false, 61_000), None);
+        assert_eq!(w.idle_ms(s(true, 3), false, 62_000), None);
+        assert_eq!(w.idle_ms(s(true, 3), false, 62_000 + SETTLE_MS - 1), None);
+        assert_eq!(
+            w.idle_ms(s(true, 3), false, 62_000 + SETTLE_MS),
+            Some(SETTLE_MS)
+        );
+        assert_eq!(w.idle_ms(s(true, 3), false, 662_000), Some(600_000));
 
         // working again (a tool's gap, the owner typed into the pane, a message was prompted): it starts over
         let mut w = TurnWatch::new(1);
-        assert_eq!(w.idle_ms(s(true, 3), 0), None);
-        assert_eq!(w.idle_ms(s(true, 3), 100_000), Some(100_000));
-        assert_eq!(w.idle_ms(s(false, 4), 101_000), None);
-        assert_eq!(w.idle_ms(s(true, 5), 102_000), None);
-        assert_eq!(w.idle_ms(s(true, 5), 102_000 + SETTLE_MS), Some(SETTLE_MS));
+        assert_eq!(w.idle_ms(s(true, 3), false, 0), None);
+        assert_eq!(w.idle_ms(s(true, 3), false, 100_000), Some(100_000));
+        assert_eq!(w.idle_ms(s(false, 4), false, 101_000), None);
+        assert_eq!(w.idle_ms(s(true, 5), false, 102_000), None);
+        assert_eq!(
+            w.idle_ms(s(true, 5), false, 102_000 + SETTLE_MS),
+            Some(SETTLE_MS)
+        );
 
         // a turn quicker than a poll: settled at a later state, never seen working
         let mut w = TurnWatch::new(1);
-        assert_eq!(w.idle_ms(s(true, 3), 0), None);
-        assert_eq!(w.idle_ms(s(true, 3), SETTLE_MS), Some(SETTLE_MS));
+        assert_eq!(w.idle_ms(s(true, 3), false, 0), None);
+        assert_eq!(w.idle_ms(s(true, 3), false, SETTLE_MS), Some(SETTLE_MS));
 
         // no agent in the pane, or one at a dialog, is not idle
         let mut w = TurnWatch::new(1);
-        assert_eq!(w.idle_ms(s(true, 3), 0), None);
-        assert_eq!(w.idle_ms(None, 1000), None);
-        assert_eq!(w.idle_ms(s(true, 3), 2000), None);
-        assert_eq!(w.idle_ms(s(false, 9), 100_000), None);
+        assert_eq!(w.idle_ms(s(true, 3), false, 0), None);
+        assert_eq!(w.idle_ms(None, false, 1000), None);
+        assert_eq!(w.idle_ms(s(true, 3), false, 2000), None);
+        assert_eq!(w.idle_ms(s(false, 9), false, 100_000), None);
+    }
+
+    #[test]
+    fn a_bash_tool_command_is_told_by_its_shell_and_its_slot_s_unit() {
+        let cg = "0::/system.slice/container@pool3.service/payload/system.slice/exec-pool-task.service\n";
+        let tool = b"/run/current-system/sw/bin/bash\0-c\0source /session/cur/home/.claude/shell-snapshots/snapshot-bash-1-x.sh 2>/dev/null && eval 'nix build' \0";
+        let at = ("pool3", "exec-pool-task");
+        assert!(tool_shell(cg, tool, at));
+        // the agent itself, its MCP servers, another slot's or another step's shell are not
+        assert!(!tool_shell(cg, b"claude\0--session-id\0x\0", at));
+        assert!(!tool_shell(
+            cg,
+            b"node\0/nix/store/x-playwright-mcp/cli.js\0",
+            at
+        ));
+        assert!(!tool_shell(cg, tool, ("pool1", "exec-pool-task")));
+        assert!(!tool_shell(cg, tool, ("pool3", "exec-pool-probe")));
+        assert!(!tool_shell(&cg.replace("pool3", "pool30"), tool, at));
+        assert!(!tool_shell("", tool, at));
+    }
+
+    #[test]
+    fn a_subagent_runs_until_its_meta_says_finished() {
+        // as Claude Code 2.1 writes them: at the spawn, and once the subagent ended
+        let spawned = r#"{"agentType":"general-purpose","isBuiltIn":true,"description":"x","toolUseId":"toolu_1","spawnDepth":1,"requestShape":"background","requestNonInteractive":true,"model":"haiku"}"#;
+        assert!(subagent_running(spawned));
+        assert!(!subagent_running(&spawned.replace(
+            r#""model":"haiku"}"#,
+            r#""model":"haiku","finished":true}"#
+        )));
+        // half written, or not a meta at all: not a running subagent
+        assert!(!subagent_running(r#"{"agentType":"#));
+        assert!(!subagent_running("[]"));
+        assert!(!subagent_running(""));
+    }
+
+    #[test]
+    fn an_agent_waiting_on_its_own_background_command_is_not_idle() {
+        let s = Some(Seen {
+            settled: true,
+            seq: 3,
+        });
+        let mut w = TurnWatch::new(1);
+        assert_eq!(w.idle_ms(s, true, 0), None);
+        assert_eq!(w.idle_ms(s, true, 3_600_000), None);
+        assert!(!parks(w.idle_ms(s, true, 3_600_000), 0, true));
+        // the command ended: settled from then on, a fresh settle
+        assert_eq!(w.idle_ms(s, false, 3_600_000), None);
+        assert_eq!(w.idle_ms(s, false, 3_600_000 + SETTLE_MS), Some(SETTLE_MS));
     }
 
     #[test]
