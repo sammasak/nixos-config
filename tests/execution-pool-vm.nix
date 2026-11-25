@@ -1,5 +1,6 @@
 # homelab.execPool's slots on in QEMU beside a named environment: two idle slots boot, a slot is used, released by
 # dev-env-reset@ and used again without a switch, stops and restarts alone, and sees no host secret or socket.
+# pool1 runs under slot.privateUsers, pool2 in the host's ids (acer's slots), so both kinds boot here.
 # The runtime-host role's closure plus three guests: `nix build .#execution-pool-vm` on msi only.
 {
   pkgs,
@@ -38,6 +39,20 @@ pkgs.testers.runNixOSTest {
         enable = true;
         slots = 2;
         slot.memory = "512M";
+        slot.privateUsers = true;
+      };
+      services.devEnvironments.instances.pool2.rootInGuest = lib.mkForce false;
+      # a stand-in gh login, so the GitHub sidecar starts: the test reaches it, never GitHub
+      sam.workers.ghHostsFile = "/var/lib/stub-gh/hosts.yml";
+      systemd.services.stub-gh-hosts = {
+        before = [ "dev-env-egress.service" ];
+        requiredBy = [ "dev-env-egress.service" ];
+        serviceConfig.Type = "oneshot";
+        script = ''
+          install -d -m 0700 -o lukas -g users /var/lib/stub-gh
+          printf 'github.com:\n    oauth_token: stub\n' > /var/lib/stub-gh/hosts.yml
+          chown lukas:users /var/lib/stub-gh/hosts.yml
+        '';
       };
       virtualisation.memorySize = 5120;
       # a VM has no client key for the named guest to bind (the hosts have lukas's own)
@@ -87,6 +102,43 @@ pkgs.testers.runNixOSTest {
     assert not leaked, f"pool1 mounts host paths {leaked}"
     machine.succeed("nixos-container run pool1 -- sh -c 'test ! -e /run/secrets && test -z \"$(ls -A /var/lib/host-credentials 2>/dev/null | grep -vx -e ssh_host_ed25519_key -e [^/]*[.]pub)\"'")
 
+    # pool1 in its own ids (slot.privateUsers), pool2 in the host's: guest root and the slot user are unprivileged
+    # host uids, and the binds, the dock, the GitHub sidecar and the nix daemon all still work for its user
+    base = int(machine.succeed("cat /var/lib/workers/pool1/.id-base"))
+    assert base >= 0x70000000, f"pool1 has no id block of its own: {base}"
+    assert machine.succeed("cat /var/lib/workers/pool2/.id-base").strip() == "0", "pool2 left the host's ids"
+    for n, want in (("pool1", f"0 {base} 65536"), ("pool2", None)):
+        leader = machine.succeed(f"machinectl show -P Leader {n}").strip()
+        got = " ".join(machine.succeed(f"cat /proc/{leader}/uid_map").split())
+        owner = machine.succeed(f"stat -c %u /proc/{leader}").strip()
+        if want:
+            assert got == want and owner == str(base), f"{n}: guest root is host uid {owner}, uid_map {got}"
+        else:
+            assert owner == "0", f"{n}: its root is not the host's: {owner}"
+    assert machine.succeed(f"stat -c %u:%g {home}").strip() == f"{base + 1000}:{base + 100}", "pool1's home is not its user's"
+    machine.succeed(guest + "sh -c 'test \"$(id -u)\" = 1000 && touch ~/.probe ~/.cache/nix/probe && rm ~/.probe ~/.cache/nix/probe'")
+    machine.fail(guest + "touch /var/lib/host-credentials/x")
+    machine.fail("nixos-container run pool1 -- test -e /run/wrappers/bin/sudo")
+
+    # the nix daemon serves pool1's user (allowed-users names it vu-pool1-1000), a store write included
+    machine.succeed(guest + "sh -c 'echo probe > /tmp/p && nix-store --add /tmp/p'")
+    machine.succeed("nixos-container run pool2 -- runuser -u lukas -- nix store ping")
+
+    # the dock as the runner makes it: root's cur, home and work the slot home's owner's
+    dock = "/var/lib/workers/.sessions/dock/pool1/cur"
+    machine.succeed(f"install -d -m 0711 {dock} && install -d -m 0700 -o {base + 1000} -g {base + 100} {dock}/home {dock}/work")
+    machine.succeed(guest + "sh -c 'touch /session/cur/home/x /session/cur/work/y'")
+    machine.fail(guest + "touch /session/cur/z")
+    machine.succeed(f"test \"$(stat -c %u {dock}/work/y)\" = {base + 1000} && rm -r {dock}")
+
+    # the GitHub sidecar's socket through the read-only idmapped /run/egress: any HTTP answer, never GitHub's
+    machine.wait_for_unit("dev-env-egress.service")
+    for n in ("pool1", "pool2"):
+        code = machine.succeed(
+            f"nixos-container run {n} -- runuser -u lukas -- ${pkgs.curl}/bin/curl -s -o /dev/null -w %{{http_code}} http://127.0.0.1:4102/not-a-listed-repo/info/refs"
+        ).strip()
+        assert code not in ("", "000"), f"{n} cannot reach the GitHub sidecar: {code}"
+
     # a task, its release and the next task on the same slot, with no switch in between
     machine.succeed(guest + "bash -c 'echo one > ~/task'")
     machine.succeed("systemctl start dev-env-reset@pool1.service")
@@ -111,6 +163,14 @@ pkgs.testers.runNixOSTest {
     machine.wait_for_unit("container@pool1.service")
     machine.wait_until_succeeds(guest + "true")
     assert inventory()["pool1"]["state"] == "active", "the restarted slot reads active"
+
+    # a home made in the other block (privateUsers toggled on a running pool): the next start resets it, not refuses
+    machine.succeed("systemctl stop container@pool1.service")
+    machine.succeed(f"echo 0 > /var/lib/workers/pool1/.id-base && touch {home}/old")
+    machine.succeed("systemctl reset-failed container@pool1.service; systemctl start container@pool1.service")
+    machine.wait_until_succeeds(guest + "true")
+    machine.succeed(f"test ! -e {home}/old && test \"$(cat /var/lib/workers/pool1/.id-base)\" = {base}")
+    machine.succeed(guest + "touch /home/lukas/new")
 
     assert t_invocation() == named, "a slot's reset, stop or restart restarted the named environment"
     assert machine.succeed("readlink /run/current-system") == generation, "the host's generation changed"
