@@ -26,7 +26,7 @@ pub const DOWN: &str = include_str!("../migrations/0001_queue.down.sql");
 /// From 7 each records its floor, the oldest VERSION whose reads and writes stay correct on it: an additive one keeps
 /// the previous floor, so a binary rolled back across it still serves; one an older binary would misread or break by
 /// its writes records its own version.
-const STEPS: [(i32, &str); 20] = [
+const STEPS: [(i32, &str); 21] = [
     (1, UP),
     (2, include_str!("../migrations/0002_submitter.up.sql")),
     (3, include_str!("../migrations/0003_result.up.sql")),
@@ -56,6 +56,10 @@ const STEPS: [(i32, &str); 20] = [
         20,
         include_str!("../migrations/0020_session_summaries.up.sql"),
     ),
+    (
+        21,
+        include_str!("../migrations/0021_summary_priority.up.sql"),
+    ),
 ];
 const DOWN_SUBMITTER: &str = include_str!("../migrations/0002_submitter.down.sql");
 const DOWN_RESULT: &str = include_str!("../migrations/0003_result.down.sql");
@@ -72,7 +76,7 @@ const DOWN_PRIORITY: &str = include_str!("../migrations/0016_priority.down.sql")
 const DOWN_TRANSCRIPT: &str = include_str!("../migrations/0017_transcript.down.sql");
 const DOWN_UNDELIVERED: &str = include_str!("../migrations/0018_undelivered.down.sql");
 const DOWN_SESSION_SUMMARIES: &str = include_str!("../migrations/0020_session_summaries.down.sql");
-const VERSION: i32 = 20;
+const VERSION: i32 = 21;
 /// The fence's SQLSTATE, raised by `attempts_fence`.
 const FENCED: &str = "XP409";
 const LIVE: &str = "('leased', 'running', 'checkpointing')";
@@ -473,7 +477,7 @@ const ATTEMPT_COLS: &str = "a.id, a.task_id, a.lease_epoch, a.tries, a.status, a
 
 /// One task and its attempt as `status` and `list` show them, under `a` (attempts) and `t` (`task_summaries`).
 const SUMMARY: &str = "jsonb_build_object('task', t.id, 'attempt', a.id, 'status', a.status, \
-    'agent', t.agent, 'repo', t.repo, 'rev', t.rev, 'session', t.session, \
+    'agent', t.agent, 'repo', t.repo, 'rev', t.rev, 'session', t.session, 'priority', t.priority, \
     'parked', CASE WHEN a.status = 'waiting' THEN (SELECT e.reason FROM events e \
     WHERE e.attempt_id = a.id AND e.to_status = 'waiting' ORDER BY e.id DESC LIMIT 1) END, \
     'workdir', t.workdir, 'lease_epoch', a.lease_epoch, 'tries', a.tries, 'host', a.host, \

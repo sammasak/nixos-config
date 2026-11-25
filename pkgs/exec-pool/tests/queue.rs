@@ -239,12 +239,12 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
         .query_one("SELECT max(version) FROM schema_migrations", &[])
         .unwrap()
         .get(0);
-    assert_eq!(version, 20);
+    assert_eq!(version, 21);
     submit(&mut s, &task("t-1", 1));
     // a newer binary's additive migration keeps the floor: this one still serves the database, as after a rollback
     pg.sql()
         .execute(
-            "INSERT INTO schema_migrations (version, floor) VALUES (21, 20)",
+            "INSERT INTO schema_migrations (version, floor) VALUES (22, 21)",
             &[],
         )
         .unwrap();
@@ -252,17 +252,17 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
     assert!(s.claim(&slot("s0"), 60).unwrap().is_some());
     // one this binary would misread, or one that names no floor, is refused
     pg.sql()
-        .execute("INSERT INTO schema_migrations (version) VALUES (22)", &[])
+        .execute("INSERT INTO schema_migrations (version) VALUES (23)", &[])
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(22))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(23))));
     pg.sql()
         .execute(
-            "UPDATE schema_migrations SET floor = 22 WHERE version = 22",
+            "UPDATE schema_migrations SET floor = 23 WHERE version = 23",
             &[],
         )
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(22))));
-    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(22))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(23))));
+    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(23))));
 }
 
 #[test]
@@ -3180,6 +3180,9 @@ fn the_submitter_sets_a_priority_once_and_within_its_bound() {
     other.idempotency_key = "cli:session".to_owned();
     let (session, _) = s.start_session(&other, -100).unwrap();
     assert_eq!(priority(&session), -100);
+    // the submitter reads it back in status and list, through task_summaries
+    assert_eq!(s.task(&urgent).unwrap().unwrap()["priority"], 7);
+    assert_eq!(s.tasks(1).unwrap()[0]["priority"], -100);
 }
 
 #[test]
