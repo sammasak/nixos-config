@@ -73,6 +73,13 @@ let
     echo "''${1##*/}: rootInGuest was toggled on an existing environment; retire it (or declare it under a new name) so it starts from a fresh home" >&2
     exit 1
   '';
+  # A docked slot's home holds nothing past a turn (its session is on the remote and in the queue): one made in the other
+  # block is reset where a named instance's is refused, so toggling a pool's privateUsers takes one deploy.
+  freshOnToggle = pkgs.writeShellScript "dev-env-fresh-on-toggle" ''
+    ${idCheck} "$1" "$2" 2>/dev/null && exit 0
+    echo "''${1##*/}: its home was made in the other id block; a slot starts from a fresh one" >&2
+    exec ${resetSteps} "''${1##*/}"
+  '';
   # Retire and reset share these (with $d the state dir, $n the name), so a reset leaves exactly what a retire plus a
   # new declaration would.
   trashOne = ''
@@ -1446,10 +1453,6 @@ in
               message = "${i}: hostname ${w.hostName} is longer than 63.";
             }
             {
-              assertion = !(w.sessionDock && w.rootInGuest);
-              message = "${i}: sessionDock with rootInGuest: its writable binds are not id-mapped, so a session turn's home and checkout would not be the guest user's.";
-            }
-            {
               assertion = !w.rootInGuest || gid != null;
               message = "${i}.rootInGuest maps ${user}'s group ${group}, which declares no gid.";
             }
@@ -1566,7 +1569,11 @@ in
                     "-${pkgs.writeShellScript "worker-wait-resolv-conf" ''
                       for _ in {1..30}; do ${pkgs.gnugrep}/bin/grep -q ^nameserver /etc/resolv.conf && exit; ${pkgs.coreutils}/bin/sleep 1; done
                     ''}"
-                  ++ [ "${idCheck} ${cfg.stateDir}/${w.name} ${toString (if w.rootInGuest then baseOf w else 0)}" ]
+                  ++ [
+                    "${if w.sessionDock then freshOnToggle else idCheck} ${cfg.stateDir}/${w.name} ${
+                      toString (if w.rootInGuest then baseOf w else 0)
+                    }"
+                  ]
                 );
               };
             })

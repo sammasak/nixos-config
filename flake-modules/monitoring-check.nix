@@ -316,8 +316,8 @@ in
               promtool test rules tests.yaml
               touch $out
             '';
-        # who an alert notifies: Alertmanager's own routing (amtool) on black-pi's configuration. A near-critical
-        # sensor (notify="none") and an info alert reach no one; the paging temperature alert and a warning reach ntfy.
+        # who an alert notifies: Alertmanager's own routing (amtool) on black-pi's configuration. HostExpectedOff, a
+        # notify="none" and an info alert reach no one; the paging temperature alert and a warning reach ntfy.
         monitoring-alert-routes =
           pkgs.runCommand "monitoring-alert-routes"
             {
@@ -331,12 +331,13 @@ in
                 shift
                 amtool config routes test --config.file="$configPath" --verify.receivers="$want" "$@"
               }
-              route null alertname=NodeSensorNearCritical notify=none severity=warning team=homelab node=msi-ms7758
+              route null alertname=HostExpectedOff severity=none team=homelab node=msi-ms7758
+              route null alertname=SeedAlert notify=none severity=warning team=homelab node=msi-ms7758
               route ntfy alertname=NodeTemperatureHigh severity=warning team=homelab node=black-pi
-              route null alertname=NodeCPUHighUsage severity=info node=acer-swift
+              route null alertname=SeedAlert severity=info node=acer-swift
               route ntfy alertname=NodeMemoryHighUtilization severity=warning node=acer-swift
               # seeded: without the label the same alert would notify
-              if route null alertname=NodeSensorNearCritical severity=warning team=homelab node=msi-ms7758; then
+              if route null alertname=SeedAlert severity=warning team=homelab node=msi-ms7758; then
                 echo "monitoring-alert-routes: the seed without notify=none reached no one" >&2
                 exit 1
               fi

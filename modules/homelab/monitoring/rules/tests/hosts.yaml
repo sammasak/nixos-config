@@ -1,0 +1,82 @@
+# promtool test rules for TargetDown (general.yaml) and homelab.yaml's host alerts whose text names their first command
+# (flake-modules/monitoring-check.nix runs it).
+rule_files: [../general.yaml, ../homelab.yaml]
+evaluation_interval: 1m
+tests:
+  # acer-swift's exporter stops answering at 10m; lenovo keeps answering
+  - interval: 1m
+    input_series:
+      - series: 'up{job="node-exporter",node="acer-swift",instance="acer-swift"}'
+        values: '1x9 0x30'
+      - series: 'up{job="node-exporter",node="lenovo-21CB001PMX",instance="lenovo-21CB001PMX"}'
+        values: '1x40'
+    alert_rule_test:
+      - eval_time: 18m
+        alertname: TargetDown
+        exp_alerts: []
+      - eval_time: 21m
+        alertname: TargetDown
+        exp_alerts:
+          - exp_labels: {severity: warning, job: node-exporter}
+            exp_annotations:
+              summary: "Scrape targets are unreachable."
+              description: "50% of the node-exporter targets have not answered black-pi's scrape for 10 minutes. The query lists them and http://192.168.10.137:9090/targets?search=node-exporter shows each one's error; a node-exporter target down is also NodeChronicNotReady's page for that host."
+              query: "up == 0 unless on (node) homelab:node:off_as_planned"
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#targetdown"
+      - eval_time: 23m
+        alertname: NodeChronicNotReady
+        exp_alerts: []
+      - eval_time: 26m
+        alertname: NodeChronicNotReady
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, job: node-exporter, node: acer-swift, instance: acer-swift}
+            exp_annotations:
+              summary: "Host acer-swift has been unreachable for 15+ minutes"
+              description: "Prometheus on black-pi has not scraped node-exporter on acer-swift for 15 minutes: the host is down, off the LAN, or its exporter stopped. From lenovo, ping acer-swift and ssh to it; there, systemctl status prometheus-node-exporter."
+              query: 'up{job="node-exporter",node="acer-swift"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#nodechronicnotready"
+  # one OOM kill at 11m: pending for 2 minutes, so UnitOOMKilled's journal line can inhibit it
+  - interval: 1m
+    input_series:
+      - series: 'node_vmstat_oom_kill{job="node-exporter",node="acer-swift"}'
+        values: '0x10 1x20'
+      # 2 GiB free on black-pi's /
+      - series: 'node_filesystem_avail_bytes{job="node-exporter",node="black-pi",mountpoint="/",fstype="ext4",device="/dev/mmcblk0p2"}'
+        values: '2147483648x30'
+      # a certificate 10 days and an hour from expiry at the start
+      - series: 'probe_ssl_earliest_cert_expiry{job="blackbox",instance="https://chat.sammasak.dev"}'
+        values: '867600x70'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: NodeOOMKill
+        exp_alerts: []
+      - eval_time: 14m
+        alertname: NodeOOMKill
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, job: node-exporter, node: acer-swift}
+            exp_annotations:
+              summary: "The kernel OOM-killed a process on acer-swift"
+              description: "1 OOM kill(s) on acer-swift in the last 15 minutes. A unit at its MemoryMax or the host out of memory: run journalctl -k --since -1h | grep -i 'killed process' there for the process and its cgroup before raising any limit."
+              query: 'increase(node_vmstat_oom_kill{job="node-exporter",node="acer-swift"}[1h])'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#nodeoomkill"
+      - eval_time: 16m
+        alertname: RootFilesystemLow
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, job: node-exporter, node: black-pi, mountpoint: /, fstype: ext4, device: /dev/mmcblk0p2}
+            exp_annotations:
+              summary: "black-pi has under 3 GiB free on /"
+              description: "2GiB free on / of black-pi. Run df -h / and du -xsh /var/lib/* /nix/store 2>/dev/null | sort -h | tail there; on black-pi, Prometheus is capped at 1500MB, so check Loki's /var/lib/loki."
+              query: 'node_filesystem_avail_bytes{job="node-exporter",node="black-pi",mountpoint="/"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#rootfilesystemlow"
+      - eval_time: 59m
+        alertname: CertificateExpiringSoon
+        exp_alerts: []
+      - eval_time: 60m
+        alertname: CertificateExpiringSoon
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, job: blackbox, instance: "https://chat.sammasak.dev"}
+            exp_annotations:
+              summary: "TLS certificate of https://chat.sammasak.dev expires in 10d 0h 0m 0s"
+              description: "black-pi's HTTPS probe of https://chat.sammasak.dev has seen a certificate expiring in under 14 days for an hour: no renewed certificate is being served. Run journalctl -u caddy --since -1d | grep -i acme on acer for the renewal's error."
+              query: '(probe_ssl_earliest_cert_expiry{job="blackbox",instance="https://chat.sammasak.dev"} - time()) / 86400'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#certificateexpiringsoon"

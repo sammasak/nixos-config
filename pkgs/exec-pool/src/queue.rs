@@ -26,7 +26,7 @@ pub const DOWN: &str = include_str!("../migrations/0001_queue.down.sql");
 /// From 7 each records its floor, the oldest VERSION whose reads and writes stay correct on it: an additive one keeps
 /// the previous floor, so a binary rolled back across it still serves; one an older binary would misread or break by
 /// its writes records its own version.
-const STEPS: [(i32, &str); 19] = [
+const STEPS: [(i32, &str); 20] = [
     (1, UP),
     (2, include_str!("../migrations/0002_submitter.up.sql")),
     (3, include_str!("../migrations/0003_result.up.sql")),
@@ -52,6 +52,10 @@ const STEPS: [(i32, &str); 19] = [
     (17, include_str!("../migrations/0017_transcript.up.sql")),
     (18, include_str!("../migrations/0018_undelivered.up.sql")),
     (19, include_str!("../migrations/0019_continue_due.up.sql")),
+    (
+        20,
+        include_str!("../migrations/0020_session_summaries.up.sql"),
+    ),
 ];
 const DOWN_SUBMITTER: &str = include_str!("../migrations/0002_submitter.down.sql");
 const DOWN_RESULT: &str = include_str!("../migrations/0003_result.down.sql");
@@ -67,7 +71,8 @@ const DOWN_TURN_LOG: &str = include_str!("../migrations/0015_turn_log.down.sql")
 const DOWN_PRIORITY: &str = include_str!("../migrations/0016_priority.down.sql");
 const DOWN_TRANSCRIPT: &str = include_str!("../migrations/0017_transcript.down.sql");
 const DOWN_UNDELIVERED: &str = include_str!("../migrations/0018_undelivered.down.sql");
-const VERSION: i32 = 19;
+const DOWN_SESSION_SUMMARIES: &str = include_str!("../migrations/0020_session_summaries.down.sql");
+const VERSION: i32 = 20;
 /// The fence's SQLSTATE, raised by `attempts_fence`.
 const FENCED: &str = "XP409";
 const LIVE: &str = "('leased', 'running', 'checkpointing')";
@@ -781,7 +786,7 @@ impl Store {
             None => Err(QueueError::NotMigrated),
             Some(v) if v > VERSION => Err(QueueError::SchemaAhead(v)),
             Some(_) => Ok(tx.batch_execute(&format!(
-                "{DOWN_UNDELIVERED}{DOWN_TRANSCRIPT}{DOWN_PRIORITY}{DOWN_TURN_LOG}{DOWN_TIMER}{DOWN_DRAIN_REASON}{DOWN_CLAIM_HOST}{DOWN_SESSION_METRICS}{DOWN_SESSION}{DOWN_SLOTS}{DOWN_QUARANTINE}{DOWN_CANCEL}{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"
+                "{DOWN_SESSION_SUMMARIES}{DOWN_UNDELIVERED}{DOWN_TRANSCRIPT}{DOWN_PRIORITY}{DOWN_TURN_LOG}{DOWN_TIMER}{DOWN_DRAIN_REASON}{DOWN_CLAIM_HOST}{DOWN_SESSION_METRICS}{DOWN_SESSION}{DOWN_SLOTS}{DOWN_QUARANTINE}{DOWN_CANCEL}{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"
             ))?),
         })
     }
@@ -1444,6 +1449,28 @@ impl Store {
                      ORDER BY t.submitted_at DESC, t.id LIMIT $1"
                 ),
                 &[&limit],
+            )?
+            .iter()
+            .map(|r| Ok(r.try_get(0)?))
+            .collect()
+        })
+    }
+
+    /// Where the sessions' time and money went (migration 0020's `session_summaries`), newest first, at most `limit`:
+    /// every session's, or the one `id` names (its own id or its attempt's).
+    ///
+    /// # Errors
+    /// What the database reports.
+    pub fn session_summaries(
+        &mut self,
+        id: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<Value>, QueueError> {
+        self.tx(|tx| {
+            tx.query(
+                "SELECT to_jsonb(s) FROM session_summaries s WHERE $1::text IS NULL OR s.task = $1 \
+                 OR s.attempt = $1 ORDER BY s.submitted_at DESC, s.task LIMIT $2",
+                &[&id, &limit],
             )?
             .iter()
             .map(|r| Ok(r.try_get(0)?))

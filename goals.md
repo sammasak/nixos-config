@@ -104,7 +104,17 @@ turn waiting on its own background command (a build started in the background) l
 which killed the command; a live Bash tool command of the agent in its slot's turn unit now keeps it busy, the 30 minute
 limit still the outer bound. `just pool-merge-check` built exec-pool alone; it now builds each `pkgs/<dir>` the branch
 changes (`pkgsDir.<dir>`) and names them, nothing when none changed, so a lint failing inside a package build (ruff
-E501 last night) is caught before merge. A background subagent (no process of its own) still looks idle.
+E501 last night) is caught before merge.
+
+**25 Nov, branch `pool/cli-8ce84f45f00fc734`** (deploy acer and msi): a turn waiting only on its own background
+subagent no longer looks idle: Claude writes `subagents/agent-<id>.meta.json` under the session's transcript and adds
+`"finished": true` when it ends, so an unfinished one written this turn keeps the agent busy, the 30 minute limit
+still the outer bound. Per merged change (epic 646): `exec-pool sessions [ID]` prints one JSON line per session with
+turns, wall, running, queued, review and waiting time (split by park reason), tokens, cost and the pull request of
+`pool/<task>` as gh finds it (migration 0020, view `session_summaries`). `exec-pool-session-report` on acer logs each
+merged session once to the journal, and the pool dashboard's "Merged sessions (7 d)" table reads it from Loki, with no
+id in a metric label. Follow-up: a runner restarted mid-turn takes its new start as the turn's, so a subagent from
+before the restart is not seen.
 
 **Open, in pick-up order**
 
@@ -117,11 +127,16 @@ E501 last night) is caught before merge. A background subagent (no process of it
 4. Not yet seen live: a drain started by `just deploy`, claim order by priority, the prepare failure counter,
    `coord:brief` against the real CLI.
 5. The drain starts before the build, so a long build keeps a host from claiming.
-6. Slots run without a user namespace and `lukas` is in `wheel` in the guest.
+6. Slot isolation, branch `pool/cli-89635bd687bfeb7c` (deploy acer and msi): a slot's user is in no group and has no
+   sudo; `homelab.execPool.slot.privateUsers` (off) puts each slot in its own uid block, a toggled slot's home reset at
+   its next start; `check_slot_reach` pins every bind of every slot. Open: privateUsers not yet booted (VM on msi, then
+   flip msi first); the other setuid wrappers (su, mount, newuidmap) stay host root's in a slot without it; the shared
+   `.nix-cache` lets one slot plant fetcher entries another reads until privateUsers is on.
 7. `status` and `list` do not show priority.
 8. `HostBehindMain` needs 24 h; black-pi lacked new alert rules for some hours unseen.
 9. lenovo cannot push nixos-config (stale devenv gate) or fetch a new private skills pin as a user.
-10. Cost: about 45 USD of session cost on 24 Nov; track cost per merged PR.
+10. Cost: about 45 USD of session cost on 24 Nov; cost per merged PR is in `exec-pool sessions` and the dashboard
+    table once `pool/cli-8ce84f45f00fc734` deploys to acer; read it after a day.
 11. Store follow-ups in #754; credential slices 3 and 4.
 12. Session state lives in git (#781, merged); its old trees and store are removed by the legacy remover once deployed.
 13. The proxy cannot hold a pull request to the task's own repository and `pool/<task id>` branch: the head is in the
@@ -190,10 +205,15 @@ benchmark requirements: #776; epic: #491).
 | 624-g | Live delivery receipts | read 24 Nov (comment on #624): NodeOOMKill and the synthetic alert reached ntfy and resolved; no blindness alert has fired yet | |
 | 624-h | Query and runbook in the ntfy page | merged, live: Alertmanager posts straight to ntfy, alert-bridge removed | #672, #680 |
 | 624-i | Alerts red with nothing to do (25 Nov): DeployRolledBack per host until a good deploy of it; EscapeFound drops a reapplied revert (the live one, `78f4ee80`, reapplied as `ab8acd36`), one marked `Escape: no` and closed escape issues; the scheduled gate retries a red head once; RetroDueStepFailsRepeat clears on a scheduled green after the last failure; each text names its command | branch `pool/cli-273036d46c7d3230`; needs lenovo (collector) and acer (scheduled gate), rules on black-pi | |
+| 624-j | Audit and cut (25 Nov, #600 comment): 16 rules deleted that could not fire here (RAID, bonding, scrape limits, Alertmanager cluster), could reach no one (Prometheus not connected to Alertmanager; lenovo's watchdog covers it) or duplicated a page (TargetsMostlyDown, HealthScoreLow, the some-Alertmanagers twin), plus the never-notifying NodeCPUHighUsage, InfoInhibitor and NodeSensorNearCritical; UnitOOMKilled inhibits NodeOOMKill on the same node; TargetDown has its own runbook and query text; five host texts name their command. HostExpectedOff was already a silent inhibitor (route test added). The 14-day firing history is unknown from a slot | branch `pool/cli-f7637116415e4bb0`; deploy black-pi | |
+| 624-k | Alert to investigation with no human in between: an alert switched on in `homelab.alertInvestigations.alerts` (lenovo: `NodeSystemdUnitFailed` alone) that fired 15 minutes with none open starts one read-only incident-investigator pool session per firing (at most 3 a day per name), its prompt holding what lenovo read (alerts, Prometheus, the unit's journal); its report lands on the issue `Alert: <name>` (label `alert-investigation`, one per name). `homelab_alert_investigations_total{alertname,outcome}`, failures by reason; `AlertInvestigationFailed`, `AlertInvestigationsStale`. Read-only by prompt: the proxy cannot refuse a slot's push (item 13 of the pool list), so a pushed `pool/<id>` fails the investigation | branch `pool/cli-f7ad8047dbbfdc72`; needs lenovo (trigger), rules on black-pi | #792 |
 
-Open for #624, in pick-up order: after 624-i deploys, read the live list and confirm each alert cleared or names
-its command; the failing check behind the live ScheduledGateRed and RetroDueStepFailsRepeat was `checks.x86_64-linux.execution-pool-vm` failing to evaluate, which wrote no check record (branch `pool/cli-38a64f8b5b1d81f5`: the VM fixed, an eval failure now records its check, the red series carries `check`, and both alerts name one rerun command, `nix build -L .#<check>` or `NIXOS_STEP=<step> devenv tasks run nixos:step`); an intentional revert that is never reapplied still counts for 24 h (no after-the-fact
-acknowledgement); `query` on TargetDown and the llm-gateway rules.
+Open for #624, in pick-up order: after 624-k deploys, read the first live investigation on its issue and its counters; after 624-i deploys, read the live list and confirm each alert cleared or names
+its command; the failing check behind the live ScheduledGateRed and RetroDueStepFailsRepeat was
+`checks.x86_64-linux.execution-pool-vm` failing to evaluate, which wrote no check record (branch
+`pool/cli-38a64f8b5b1d81f5`: the VM fixed, an eval failure now records its check, the red series carries `check`, and
+both alerts name one rerun command, `nix build -L .#<check>` or `NIXOS_STEP=<step> devenv tasks run nixos:step`); an intentional revert that is never reapplied still counts for 24 h (no after-the-fact
+acknowledgement); after 624-j deploys, read `count_over_time(ALERTS{alertstate="firing"}[14d])` by alertname on black-pi and cut what still never fired; the texts with no command: PrLeadTimeHigh, ReviewFirstPassLow, GateFailRateHigh, the llm-gateway pair, ShuntDelegationFailing, ShuntSilent, ClaudeCompactionLoop and the upstream node, Prometheus and Alertmanager rules.
 
 ### #625 Shunt metrics
 

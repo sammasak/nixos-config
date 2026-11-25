@@ -3,8 +3,9 @@
 # - node-exporter: the deployed command on node_exporter's own sysfs/procfs fixtures (node.prom); the systemd and
 #   timex collectors' names from their source and flags (systemd.prom); the repo's textfile writers (writers.prom),
 #   the names scripts/shipping-metrics.py, scripts/nav-metrics.py, scripts/shunt-metrics.py, scripts/guest-records.py
-#   and pkgs/scheduled-gate print with --list (shipping.prom, nav.prom, shunt.prom, guest-records.prom,
-#   scheduled-gate.prom) and the series exec-pool's renderer types (exec-pool.prom);
+#   and pkgs/scheduled-gate and pkgs/alert-investigations print with --list (shipping.prom, nav.prom, shunt.prom,
+#   guest-records.prom, scheduled-gate.prom, alert-investigations.prom) and the series exec-pool's renderer types
+#   (exec-pool.prom);
 # - the monitoring stack's own /metrics, run here (scripts/monitoring-exposition.sh: Prometheus, Alertmanager, Alloy);
 # - name literals and registrations in the source each host runs: Loki, Alloy, Caddy and blackbox (`sources` below),
 #   llm-gateway, Authentik; AdGuard's (dns.prom); the GPU exporter's (the gpu-telemetry-exporter check's output);
@@ -535,6 +536,10 @@ in
             python3 -I ${../scripts/shunt-metrics.py} --list > shunt.prom
             # the dev environment hosts' record shipper textfile (modules/workers/core.nix's dev-env-records)
             python3 -I ${../scripts/guest-records.py} --list > guest-records.prom
+            # lenovo's alert investigation textfile (modules/homelab/alert-investigations.nix)
+            ${
+              lib.getExe (pkgs.callPackage ../pkgs/alert-investigations/package.nix { })
+            } --list > alert-investigations.prom
             # acer's scheduled full gate textfile (modules/homelab/scheduled-gate.nix)
             python3 -I ${../pkgs/scheduled-gate/scheduled_gate.py} --list > scheduled-gate.prom
             # acer's execution pool textfile (modules/homelab/exec-pool.nix): every series its renderer types, a
@@ -549,6 +554,7 @@ in
             checker=${pkgs.python3.withPackages (ps: [ ps.pyyaml ])}/bin/python3
             static=(node-exporter=node.prom node-exporter=systemd.prom node-exporter=writers.prom
               node-exporter=${adguardCheck}/dns.prom node-exporter=shipping.prom node-exporter=nav.prom node-exporter=shunt.prom node-exporter=guest-records.prom node-exporter=scheduled-gate.prom node-exporter=exec-pool.prom
+              node-exporter=alert-investigations.prom
               node-exporter=${compactionInfo}
               llm-gateway=llm-gateway.prom authentik-server=authentik.prom authentik-worker=authentik.prom
               nvidia-gpu=${self'.checks.gpu-telemetry-exporter} \
