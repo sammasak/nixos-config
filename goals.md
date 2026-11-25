@@ -177,7 +177,7 @@ benchmark requirements: #776; epic: #491).
 |---|-------|----------|-------------------|
 | 1 | Pool platform | the open findings above | a pool session for the top open finding |
 | 2 | Deploy | asus behind main | asus in its power window |
-| 3 | Alerts | 624-i fixes the alerts nobody could act on; not yet read live (pool slots reach neither Prometheus nor Alertmanager) | merge and deploy 624-i, then read the live list; a1's patch at `/var/lib/worker-archive/a1` on acer |
+| 3 | Alerts | 624-i fixes the alerts nobody could act on; not yet read live. Slots on acer get read-only Prometheus, Alertmanager and Loki queries through their egress proxy (`homelab.execPool.monitoring`, contract "Reading monitoring from a slot"), branch `pool/cli-0d3d4ed67630a5c5`; msi's slots not yet | merge, deploy black-pi (Alertmanager admits acer) then acer, curl each from a slot; then read the live list; a1's patch at `/var/lib/worker-archive/a1` on acer |
 | 4 | Gates | scheduled gate red since 24 Nov on `checks.x86_64-linux.execution-pool-vm`, which failed to evaluate (slots' repos need `sam.workers.ghHostsFile`, the VM set none); fixed in branch `pool/cli-38a64f8b5b1d81f5` | merge, deploy acer (scheduled gate) and black-pi (rules), read the next scheduled gate result |
 | 5 | Live comparison | `ShuntCollectorStale` fires since the on side moved | read a day of Shunt on and off on 25 Nov, now on acer `pool1` |
 | 5b | Live comparison | #626 had no per-variant tokens, cost or compactions from the pool | deploy branch `pool/cli-950c25fbd3f89b7a` (acer, msi, black-pi), then read the "Compaction window on versus off" table a day later |
