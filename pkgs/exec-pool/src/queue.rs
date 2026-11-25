@@ -26,7 +26,7 @@ pub const DOWN: &str = include_str!("../migrations/0001_queue.down.sql");
 /// From 7 each records its floor, the oldest VERSION whose reads and writes stay correct on it: an additive one keeps
 /// the previous floor, so a binary rolled back across it still serves; one an older binary would misread or break by
 /// its writes records its own version.
-const STEPS: [(i32, &str); 24] = [
+const STEPS: [(i32, &str); 25] = [
     (1, UP),
     (2, include_str!("../migrations/0002_submitter.up.sql")),
     (3, include_str!("../migrations/0003_result.up.sql")),
@@ -62,7 +62,11 @@ const STEPS: [(i32, &str); 24] = [
         include_str!("../migrations/0022_summary_priority.up.sql"),
     ),
     (23, include_str!("../migrations/0023_continue_body.up.sql")),
-    (24, include_str!("../migrations/0024_hold_input.up.sql")),
+    (
+        24,
+        include_str!("../migrations/0024_ledger_summaries.up.sql"),
+    ),
+    (25, include_str!("../migrations/0025_hold_input.up.sql")),
 ];
 const DOWN_SUBMITTER: &str = include_str!("../migrations/0002_submitter.down.sql");
 const DOWN_RESULT: &str = include_str!("../migrations/0003_result.down.sql");
@@ -81,8 +85,8 @@ const DOWN_UNDELIVERED: &str = include_str!("../migrations/0018_undelivered.down
 const DOWN_SESSION_SUMMARIES: &str = include_str!("../migrations/0020_session_summaries.down.sql");
 const DOWN_TURN_ARM: &str = include_str!("../migrations/0021_turn_arm.down.sql");
 const DOWN_CONTINUE_BODY: &str = include_str!("../migrations/0023_continue_body.down.sql");
-const DOWN_HOLD_INPUT: &str = include_str!("../migrations/0024_hold_input.down.sql");
-const VERSION: i32 = 24;
+const DOWN_HOLD_INPUT: &str = include_str!("../migrations/0025_hold_input.down.sql");
+const VERSION: i32 = 25;
 /// The fence's SQLSTATE, raised by `attempts_fence`.
 const FENCED: &str = "XP409";
 const LIVE: &str = "('leased', 'running', 'checkpointing')";
@@ -491,7 +495,7 @@ fn leave_continue(
 /// Holds the input an undelivered turn was handed (what [`mark_read`] would mark) until the park's continue is due
 /// (`delay`), or with none left until a message comes (the queue's `release_held_input` makes it due then), so it is not
 /// queued again at once. A queue not yet
-/// at 24 has no `hold_input`: there it wakes at once, as before.
+/// at 25 has no `hold_input`: there it wakes at once, as before.
 fn hold_input(
     tx: &mut Transaction<'_>,
     (task, attempt, epoch, upto): (&str, &str, i64, i64),
@@ -2395,7 +2399,8 @@ fn insert_turn(
 /// settings compare per turn and per session. A session whose turns ran under two arms counts once on each, and the
 /// sessions that did so in the last day are counted queue-wide: a claim has no slot affinity, so they mix the arms.
 fn usage(tx: &mut Transaction<'_>, out: &mut String, hosts: &[String]) -> Result<(), QueueError> {
-    // a turn's host is where its lease ran: the running event at the turn's epoch
+    // a turn's host is where its lease ran: the running event at the turn's epoch. Cost sums as numeric: a float8
+    // sum's order varies between reads, so its last bit drops and Prometheus reads each drop as a counter reset
     let rows = tx.query(
         "SELECT coalesce((SELECT e.host FROM events e WHERE e.attempt_id = u.attempt_id \
          AND e.lease_epoch = u.lease_epoch AND e.to_status = 'running' ORDER BY e.id DESC LIMIT 1), 'none'), \
@@ -2403,7 +2408,8 @@ fn usage(tx: &mut Transaction<'_>, out: &mut String, hosts: &[String]) -> Result
          count(u.input_tokens), coalesce(sum(u.input_tokens), 0)::bigint, \
          coalesce(sum(u.output_tokens), 0)::bigint, coalesce(sum(u.cache_read_tokens), 0)::bigint, \
          coalesce(sum(u.cache_creation_tokens), 0)::bigint, \
-         count(DISTINCT t.id) FILTER (WHERE u.input_tokens IS NOT NULL AND u.parked_at > now() - interval '1 day'), coalesce(sum(u.cost_usd), 0)::float8 \
+         count(DISTINCT t.id) FILTER (WHERE u.input_tokens IS NOT NULL AND u.parked_at > now() - interval '1 day'), \
+         coalesce(sum(u.cost_usd::numeric), 0)::float8 \
          FROM turns u JOIN attempts a ON a.id = u.attempt_id JOIN tasks t ON t.id = a.task_id GROUP BY 1, 2, 3, 4",
         &[],
     )?;

@@ -451,6 +451,20 @@ Rollback: set that slot's `sam.claude.autoCompactWindow` back to null in its hos
 (`hosts/acer-swift/configuration.nix` for acer's `pool2`) and deploy the host; the slot's next turn starts with Claude's
 default. The alert clears when the day's ratio falls under 1.5.
 
+## PoolCostPerMergedChangeHigh
+
+Fires: over the last 3 days the pool changes whose pull request merged cost over 8 USD each on average (about twice
+the 25 Nov mean of 3.82 USD), with at least 10 of them, for an hour (Loki's ruler on black-pi). Read from the lines
+`exec-pool-session-report` logs on acer, one per merged change with the cost its turns reported (#806's ledger). Its
+`query` is LogQL, for Grafana's Explore.
+First: `exec-pool sessions --merged --limit 20` on acer: the costliest changes, their turns and where their time went;
+then the "Merged changes per day" table in the Agent harnesses dashboard, by agent and model.
+Do not: read the day's cost from `increase()` over `exec_pool_session_cost_usd_total` over a range before acer's
+deploy of #806's fix: that counter's float sum dropped by its last bit and every drop read as a reset.
+The deploy itself can drop each series once in its last bit (the exact sum replacing the float one), so leave out
+the day after it too.
+One-shot tasks report no cost: the alert and the table divide by the changes that reported one.
+
 ## ShuntDelegationFailing
 
 Fires: over a quarter of the bulk-read delegations in the collector's 24 h window failed with auth, rate_limited,

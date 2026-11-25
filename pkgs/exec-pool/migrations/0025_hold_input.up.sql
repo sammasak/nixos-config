@@ -32,6 +32,6 @@ REVOKE ALL ON FUNCTION release_held_input() FROM PUBLIC;
 CREATE TRIGGER inbox_release_held_input AFTER INSERT ON inbox
   FOR EACH ROW WHEN (NEW.kind = 'message') EXECUTE FUNCTION release_held_input();
 
--- additive: a binary at 9 to 23 never holds, reads a held row as not yet due, and a message releases one held past
+-- additive: a binary at 9 to 24 never holds, reads a held row as not yet due, and a message releases one held past
 -- the backoff for it as for any binary
-INSERT INTO schema_migrations (version, floor) VALUES (24, 9);
+INSERT INTO schema_migrations (version, floor) VALUES (25, 9);
