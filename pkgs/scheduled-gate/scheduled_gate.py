@@ -107,7 +107,10 @@ def write_metrics(path: pathlib.Path, st: State, checked: float, main: str) -> N
         step, _, check = unit.partition("\t")
         values["homelab_scheduled_gate_green_deferred"].append((f'step="{label(step)}",check="{label(check)}"', 1.0))
     if st.result == "fail":
-        labels = f'head="{st.head[:12]}",step="{label(st.step)}",check="{label(st.check)}",green="{st.green[:12] or "none"}"'
+        labels = (
+            f'head="{st.head[:12]}",step="{label(st.step)}",check="{label(st.check)}",'
+            f'green="{st.green[:12] or "none"}"'
+        )
         values["homelab_scheduled_gate_red"].append((labels, 1.0))
     lines = []
     for name, help_text in METRICS.items():
