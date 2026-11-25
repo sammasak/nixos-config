@@ -90,6 +90,15 @@ metrics for acer only (#768), a turn cut at 30 minutes left its session waiting 
 deploy's activation (#768), stale Shunt alerts for retired workers (#771), deploys waiting for an idle pool and a turn
 lost when the queue restarts (#773), no claim priority (#772).
 
+**Found live on 24/25 Nov, fixed in branch `pool/cli-bae083cc3a959222`** (deploy acer and msi): a turn that ends in an
+error now gets up to three continues, due 10, 30 and 90 minutes later, each a new turn told what happened; a session
+left with nothing to wake it after errors or timeouts is counted in `exec_pool_sessions_stalled{reason}` and alerts
+(ExecPoolSessionStalled). `gh pr create` and `gh pr comment` failed because they use GraphQL, which the proxy refuses:
+pool tasks are told the REST calls (`gh api repos/<repo>/pulls`, `.../issues/N/comments`) the proxy already passes.
+The proxy fetches any other repository unsigned and read-only (truespar/scriptor). The old layout's session trees and
+`.sessions-store` are removed daily when cancelled or handed back on their branch, the rest counted
+(`homelab_exec_pool_legacy_sessions_kept{reason}`).
+
 **Open, in pick-up order**
 
 1. Session turns are headless; the owner wants the same interactive Herdr panes the named workers had, with an idle
@@ -107,10 +116,10 @@ lost when the queue restarts (#773), no claim priority (#772).
 9. lenovo cannot push nixos-config (stale devenv gate) or fetch a new private skills pin as a user.
 10. Cost: about 45 USD of session cost on 24 Nov; track cost per merged PR.
 11. Store follow-ups in #754; credential slices 3 and 4.
-12. Session state lives in git, not a copied directory (session in flight, branch `pool/cli-fd59cf28cf1b122c`).
-13. A turn that ends in an error parks silently: nothing wakes the session or alerts.
-14. A session stops continuing after three timeouts in a row, and nothing alerts.
-15. The slot's GitHub proxy refuses a git dependency outside the allowed list (truespar/scriptor, 403).
+12. Session state lives in git (#781, merged); its old trees and store are removed by the legacy remover once deployed.
+13. The proxy cannot hold a pull request to the task's own repository and `pool/<task id>` branch: the head is in the
+    request body, which Caddy does not read, and acer's fleet site does not know which slot asks. Today any listed
+    repository, any head; a body-reading gate would close it.
 
 ### Paddock SSD-backed MoE expert streaming
 
