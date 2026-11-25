@@ -58,8 +58,9 @@ const USAGE: &str = "usage: exec-pool COMMAND
                     and pr_error when gh could not tell), and rescued: true when it merged at another commit than
                     the one the task pushed (head), null when either is not known. --merged: only those whose pull request merged. --report FILE:
                     only those merged, out of a slot and the queue, that FILE does not list yet, each then added to it
-  cancel ID         cancels a task you submitted: a queued one at once; a running one is stopped by its runner within
-                    seconds and settles cancelled (follow it with wait). Prints the attempt and its status after";
+  cancel ID         cancels a task you submitted: a queued one, or one in needs_review, at once; a running one is
+                    stopped by its runner within seconds and settles cancelled (follow it with wait). Prints the
+                    attempt and its status after";
 /// What `attach` tells the session it wakes.
 const ATTACH_PROMPT: &str = "The owner opened this session in its pane to work with you: say in one line where you \
 are, then wait for their input.";

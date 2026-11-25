@@ -29,3 +29,6 @@ scripts/nix-comment-lint.sh docs/x.md
 # devenv's per-checkout local overrides: untracked by design (.gitignore), hashed when present (devenv.nix builtFrom)
 devenv.nix ./devenv.local.nix
 devenv.nix ./devenv.local.yaml
+# the next local-lane tasks' files, in herman
+goals.md tools/perf-metrics/gate-tests.sh
+goals.md tools/web/web.sh

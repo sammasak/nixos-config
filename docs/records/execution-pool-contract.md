@@ -38,7 +38,7 @@ waiting -> queued            (a wake: for a session task, a message in its inbox
 leased  -> queued            (lease expired before its start was accepted)
 running | checkpointing -> needs_review   (lease expired: effects unknown, never replayed blindly)
 needs_review -> succeeded | failed | queued   (resolve: an operator's explicit decision, never automatic)
-queued | waiting -> cancelled                 (cancel_task; a live attempt is marked and its runner stops it)
+queued | waiting | needs_review -> cancelled  (cancel_task; a live attempt is marked and its runner stops it)
 any return to queued with no attempt left -> failed
 ```
 

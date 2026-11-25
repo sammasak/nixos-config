@@ -26,7 +26,7 @@ pub const DOWN: &str = include_str!("../migrations/0001_queue.down.sql");
 /// From 7 each records its floor, the oldest VERSION whose reads and writes stay correct on it: an additive one keeps
 /// the previous floor, so a binary rolled back across it still serves; one an older binary would misread or break by
 /// its writes records its own version.
-const STEPS: [(i32, &str); 26] = [
+const STEPS: [(i32, &str); 27] = [
     (1, UP),
     (2, include_str!("../migrations/0002_submitter.up.sql")),
     (3, include_str!("../migrations/0003_result.up.sql")),
@@ -67,7 +67,8 @@ const STEPS: [(i32, &str); 26] = [
         include_str!("../migrations/0024_ledger_summaries.up.sql"),
     ),
     (25, include_str!("../migrations/0025_hold_input.up.sql")),
-    (26, include_str!("../migrations/0026_result_head.up.sql")),
+    (26, include_str!("../migrations/0026_cancel_review.up.sql")),
+    (27, include_str!("../migrations/0027_result_head.up.sql")),
 ];
 const DOWN_SUBMITTER: &str = include_str!("../migrations/0002_submitter.down.sql");
 const DOWN_RESULT: &str = include_str!("../migrations/0003_result.down.sql");
@@ -87,7 +88,7 @@ const DOWN_SESSION_SUMMARIES: &str = include_str!("../migrations/0020_session_su
 const DOWN_TURN_ARM: &str = include_str!("../migrations/0021_turn_arm.down.sql");
 const DOWN_CONTINUE_BODY: &str = include_str!("../migrations/0023_continue_body.down.sql");
 const DOWN_HOLD_INPUT: &str = include_str!("../migrations/0025_hold_input.down.sql");
-const VERSION: i32 = 26;
+const VERSION: i32 = 27;
 /// The fence's SQLSTATE, raised by `attempts_fence`.
 const FENCED: &str = "XP409";
 const LIVE: &str = "('leased', 'running', 'checkpointing')";
@@ -1744,7 +1745,7 @@ fn insert_result(
             &result.branch,
         ],
     )?;
-    // a remote runner may record into a queue its host has not migrated to 26 yet: the head is left out there
+    // a remote runner may record into a queue its host has not migrated to 27 yet: the head is left out there
     if n == 1
         && tx
             .query_one(

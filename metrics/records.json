@@ -149,6 +149,9 @@
         "lines",
         "seconds",
         "task"
+      ],
+      "optional": [
+        "pr"
       ]
     },
     "offload": {

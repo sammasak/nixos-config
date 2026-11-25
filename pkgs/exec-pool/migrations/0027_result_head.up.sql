@@ -1,6 +1,6 @@
 -- The commit a run pushed its branch at (runner_main.rs hand_back), so a merged pull request whose head is another
 -- commit counts as finished by someone else (exec-pool sessions' `rescued`). NULL: none pushed, or a runner from
--- before 26. 0024's summaries with it appended, as OR REPLACE allows.
+-- before 27. 0024's summaries with it appended, as OR REPLACE allows.
 ALTER TABLE results ADD COLUMN head text CHECK (head ~ '^[0-9a-f]{40,64}$');
 GRANT UPDATE (head) ON results TO exec_pool_runner;
 
@@ -62,5 +62,5 @@ CREATE OR REPLACE VIEW session_summaries AS
     FROM turns n WHERE n.attempt_id = a.id) u
   WHERE t.session OR t.spec->'command'->>'agent' <> 'none';
 
--- additive: a binary at 9 to 25 writes no head and reads the columns it names
-INSERT INTO schema_migrations (version, floor) VALUES (26, 9);
+-- additive: a binary at 9 to 26 writes no head and reads the columns it names
+INSERT INTO schema_migrations (version, floor) VALUES (27, 9);
