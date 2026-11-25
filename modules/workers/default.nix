@@ -859,6 +859,13 @@ in
                 builtins.toJSON {
                   defaultProvider = "homelab";
                   defaultModel = "auto";
+                  # the 32K `local` model: Pi's default 20000 kept tokens re-prefilled cold after each of 7 compactions
+                  # on asus; with these, 1 (sammasak/paddock asus/ssd-expert-backing, "Pi on the pinned serve")
+                  compaction = {
+                    reserveTokens = 6144;
+                    keepRecentTokens = 8000;
+                  };
+                  modelThinkingLevels."homelab/local" = "off";
                 }
               );
             in

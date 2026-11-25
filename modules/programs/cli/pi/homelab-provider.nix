@@ -21,10 +21,14 @@
     {
       id = "local";
       name = "homelab local";
-      # a tool loop on `local` reaches only asus (32768), and the gateway sends a self-hosted model only what fits 3/4 of
-      # its window (llm-gateway router.rs can_take): above this Pi must compact, or the request is refused
-      contextWindow = 24576;
-      maxTokens = 8192;
+      # Paddock's Qwen3.6-35B-A3B on asus (32768), as measured with Pi (sammasak/paddock asus/ssd-expert-backing, "Pi on
+      # the pinned serve"): thinking spent most of the output and broke a compaction summary, and a longer cap only
+      # lets the model deliberate. The gateway sends a self-hosted model only what fits 3/4 of its window, counting
+      # characters / 4 (llm-gateway router.rs can_take); the slots compact 6144 below this.
+      contextWindow = 32768;
+      maxTokens = 4096;
+      reasoning = false;
+      samplingParams.chat_template_kwargs.enable_thinking = false;
     }
   ];
   # One request shape every tier accepts: msi Ollama 400s on `reasoning_effort`
