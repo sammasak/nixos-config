@@ -26,7 +26,7 @@ pub const DOWN: &str = include_str!("../migrations/0001_queue.down.sql");
 /// From 7 each records its floor, the oldest VERSION whose reads and writes stay correct on it: an additive one keeps
 /// the previous floor, so a binary rolled back across it still serves; one an older binary would misread or break by
 /// its writes records its own version.
-const STEPS: [(i32, &str); 22] = [
+const STEPS: [(i32, &str); 23] = [
     (1, UP),
     (2, include_str!("../migrations/0002_submitter.up.sql")),
     (3, include_str!("../migrations/0003_result.up.sql")),
@@ -61,6 +61,7 @@ const STEPS: [(i32, &str); 22] = [
         22,
         include_str!("../migrations/0022_summary_priority.up.sql"),
     ),
+    (23, include_str!("../migrations/0023_continue_body.up.sql")),
 ];
 const DOWN_SUBMITTER: &str = include_str!("../migrations/0002_submitter.down.sql");
 const DOWN_RESULT: &str = include_str!("../migrations/0003_result.down.sql");
@@ -78,7 +79,8 @@ const DOWN_TRANSCRIPT: &str = include_str!("../migrations/0017_transcript.down.s
 const DOWN_UNDELIVERED: &str = include_str!("../migrations/0018_undelivered.down.sql");
 const DOWN_SESSION_SUMMARIES: &str = include_str!("../migrations/0020_session_summaries.down.sql");
 const DOWN_TURN_ARM: &str = include_str!("../migrations/0021_turn_arm.down.sql");
-const VERSION: i32 = 22;
+const DOWN_CONTINUE_BODY: &str = include_str!("../migrations/0023_continue_body.down.sql");
+const VERSION: i32 = 23;
 /// The fence's SQLSTATE, raised by `attempts_fence`.
 const FENCED: &str = "XP409";
 const LIVE: &str = "('leased', 'running', 'checkpointing')";
@@ -302,6 +304,10 @@ pub struct Park {
     /// The slot's declared settings the turn ran under, recorded with its usage; `None`: not known.
     #[serde(default)]
     pub arm: Option<Arm>,
+    /// The names of the processes of the slot the kernel's OOM killer killed in a `turn_memory_kill` turn, as its
+    /// log has them: its continue tells the agent.
+    #[serde(default)]
+    pub memory_killed: Vec<String>,
 }
 
 /// A slot's declared Claude settings, which the session metrics split usage by (#626).
@@ -354,6 +360,33 @@ pub const TIMEOUTS_IN_A_ROW: usize = 3;
 const ERRORED: &str = "Your last turn ended in an error (the agent failed or exited, perhaps at a rate limit). Check \
     the state of your last action before continuing, and do not repeat a push, comment or other outside change you \
     cannot confirm.";
+/// A `continue` row's text after a park for a turn that ended in an error after a memory kill in its slot, before
+/// what was killed ([`memory_killed`]).
+const MEMORY_KILLED: &str = "Your last turn ended in an error after the kernel's OOM killer killed a process in your \
+    slot: the host's slots share one memory limit, and a large evaluation or build (a nix eval of a host toplevel) \
+    meets it when the other slots are busy too. Do not run it again as it was: make it smaller, run one at a time, or \
+    say in your answer that it needs more memory than the slot has. Check the state of your last action before \
+    continuing, and do not repeat a push, comment or other outside change you cannot confirm.";
+
+/// [`MEMORY_KILLED`] naming the processes killed, at most eight of their names, each as the kernel's log has it.
+#[must_use]
+pub fn memory_killed(names: &[String]) -> String {
+    let shown: Vec<&str> = names
+        .iter()
+        .map(String::as_str)
+        .filter(|n| {
+            (1..=16).contains(&n.len())
+                && n.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-' | b'+'))
+        })
+        .take(8)
+        .collect();
+    if shown.is_empty() {
+        return MEMORY_KILLED.to_owned();
+    }
+    format!("{MEMORY_KILLED} Killed: {}.", shown.join(", "))
+}
+
 /// The delay before each automatic continue after turns in a row that end in an error, no message in between: once
 /// they are spent, the session waits for a message (`exec_pool_sessions_stalled`).
 pub const ERROR_BACKOFF_SECS: [u32; 3] = [600, 1800, 5400];
@@ -376,7 +409,14 @@ fn unattended(
         if why == ParkReason::Preempted.as_str() || why == ParkReason::HostDraining.as_str() {
             continue;
         }
-        if why != ParkReason::TurnError.as_str() && why != ParkReason::TurnTimeout.as_str() {
+        if ![
+            ParkReason::TurnError,
+            ParkReason::TurnTimeout,
+            ParkReason::TurnMemoryKill,
+        ]
+        .map(ParkReason::as_str)
+        .contains(&why)
+        {
             break;
         }
         n = n.saturating_add(1);
@@ -394,7 +434,7 @@ fn unattended(
 fn leave_continue(
     tx: &mut Transaction<'_>,
     (task, attempt, epoch): (&str, &str, i64),
-    reason: ParkReason,
+    (reason, killed): (ParkReason, &[String]),
 ) -> Result<(), QueueError> {
     tx.execute(
         "UPDATE inbox SET consumed_epoch = $2 WHERE task_id = $1 AND kind = 'continue' AND consumed_epoch IS NULL",
@@ -405,7 +445,7 @@ fn leave_continue(
         ParkReason::TurnTimeout => {
             (unattended(tx, (task, attempt))? < TIMEOUTS_IN_A_ROW).then_some(0)
         }
-        ParkReason::TurnError => {
+        ParkReason::TurnError | ParkReason::TurnMemoryKill => {
             let n = unattended(tx, (task, attempt))?;
             ERROR_BACKOFF_SECS.get(n.saturating_sub(1)).copied()
         }
@@ -419,11 +459,26 @@ fn leave_continue(
             )?;
         }
         Some(secs) => {
-            tx.execute(
-                "INSERT INTO inbox (task_id, kind, due_at) \
-                 VALUES ($1, 'continue', now() + $2::int8 * interval '1 second')",
-                &[&task, &i64::from(secs)],
-            )?;
+            // a remote runner may park into a queue its host has not migrated to 23 yet: the claim's text names none
+            let named = reason == ParkReason::TurnMemoryKill
+                && tx
+                    .query_one(
+                        "SELECT to_regprocedure('continue_after(text, int8, text)') IS NOT NULL",
+                        &[],
+                    )?
+                    .try_get::<_, bool>(0)?;
+            if named {
+                tx.execute(
+                    "SELECT continue_after($1, $2, $3)",
+                    &[&task, &i64::from(secs), &memory_killed(killed)],
+                )?;
+            } else {
+                tx.execute(
+                    "INSERT INTO inbox (task_id, kind, due_at) \
+                     VALUES ($1, 'continue', now() + $2::int8 * interval '1 second')",
+                    &[&task, &i64::from(secs)],
+                )?;
+            }
         }
         None => {}
     }
@@ -828,7 +883,7 @@ impl Store {
             None => Err(QueueError::NotMigrated),
             Some(v) if v > VERSION => Err(QueueError::SchemaAhead(v)),
             Some(_) => Ok(tx.batch_execute(&format!(
-                "{DOWN_TURN_ARM}{DOWN_SESSION_SUMMARIES}{DOWN_UNDELIVERED}{DOWN_TRANSCRIPT}{DOWN_PRIORITY}{DOWN_TURN_LOG}{DOWN_TIMER}{DOWN_DRAIN_REASON}{DOWN_CLAIM_HOST}{DOWN_SESSION_METRICS}{DOWN_SESSION}{DOWN_SLOTS}{DOWN_QUARANTINE}{DOWN_CANCEL}{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"
+                "{DOWN_CONTINUE_BODY}{DOWN_TURN_ARM}{DOWN_SESSION_SUMMARIES}{DOWN_UNDELIVERED}{DOWN_TRANSCRIPT}{DOWN_PRIORITY}{DOWN_TURN_LOG}{DOWN_TIMER}{DOWN_DRAIN_REASON}{DOWN_CLAIM_HOST}{DOWN_SESSION_METRICS}{DOWN_SESSION}{DOWN_SLOTS}{DOWN_QUARANTINE}{DOWN_CANCEL}{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"
             ))?),
         })
     }
@@ -1114,7 +1169,11 @@ impl Store {
             put_transcript(tx, &task, epoch, park.transcript.as_ref())?;
             insert_turn(tx, attempt, epoch, park)?;
             mark_read(tx, (&task, attempt, epoch), park)?;
-            leave_continue(tx, (&task, attempt, epoch), park.reason)?;
+            leave_continue(
+                tx,
+                (&task, attempt, epoch),
+                (park.reason, &park.memory_killed),
+            )?;
             if let Some(w) = &wake {
                 tx.execute(
                     "SELECT wake_at($1, $2::text::timestamptz, $3)",
@@ -1693,6 +1752,7 @@ fn turn(
         Some("host_draining") => DRAINED,
         Some("turn_timeout") => TIMED_OUT,
         Some("turn_error") => ERRORED,
+        Some("turn_memory_kill") => MEMORY_KILLED,
         _ => CONTINUE,
     };
     let transcript = tx
@@ -1979,7 +2039,8 @@ const IDLE: [u64; 4] = [86400, 259_200, 604_800, 1_209_600];
 const SOURCES: [&str; 3] = ["message", "timer", "continue"];
 /// A session's turn: started, then parked to waiting for one of the park reasons (not a settle).
 const PARKED: &str = "e.to_status = 'waiting' AND e.from_status IN ('running', 'checkpointing') \
-    AND e.reason IN ('turn_end', 'waiting_until', 'preempted', 'host_draining', 'turn_error', 'turn_timeout')";
+    AND e.reason IN ('turn_end', 'waiting_until', 'preempted', 'host_draining', 'turn_error', 'turn_timeout', \
+    'turn_memory_kill')";
 
 /// The sessions' series: by state, turns by park reason and their durations, wake latency by source, closed sessions'
 /// turns and age, how long parked ones sit idle, host changes between turns and the tokens and cost turns report. A
@@ -2056,7 +2117,7 @@ fn sessions(
 fn stalled(tx: &mut Transaction<'_>, out: &mut String, hosts: &[String]) -> Result<(), QueueError> {
     out.push_str(
         "# HELP exec_pool_sessions_stalled Waiting sessions whose automatic continues are spent (turn_error, \
-         turn_timeout) and that nothing in their inbox wakes, by host and that reason.\n\
+         turn_timeout, turn_memory_kill) and that nothing in their inbox wakes, by host and that reason.\n\
          # TYPE exec_pool_sessions_stalled gauge\n",
     );
     for (host, why, n) in counted(
@@ -2065,13 +2126,14 @@ fn stalled(tx: &mut Transaction<'_>, out: &mut String, hosts: &[String]) -> Resu
             "SELECT {LAST_HOST}, p.reason, count(*) FROM attempts a JOIN tasks t ON t.id = a.task_id \
              CROSS JOIN LATERAL (SELECT e.reason FROM events e WHERE e.attempt_id = a.id \
              AND e.to_status = 'waiting' ORDER BY e.id DESC LIMIT 1) p WHERE t.session AND a.status = 'waiting' \
-             AND p.reason IN ('turn_error', 'turn_timeout') \
+             AND p.reason IN ('turn_error', 'turn_timeout', 'turn_memory_kill') \
              AND NOT EXISTS (SELECT FROM inbox i WHERE i.task_id = t.id AND i.consumed_epoch IS NULL) GROUP BY 1, 2"
         ),
         hosts,
         &[
             ParkReason::TurnError.as_str(),
             ParkReason::TurnTimeout.as_str(),
+            ParkReason::TurnMemoryKill.as_str(),
         ],
     )? {
         let _ = writeln!(

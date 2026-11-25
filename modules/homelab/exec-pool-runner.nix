@@ -178,6 +178,8 @@ in
           EXEC_POOL_GIT_EMAIL = config.sam.userConfig.git.email;
           # node-exporter's (monitoring/node-exporter.nix): the failed prepares' and park pushes' counts, one file per slot
           EXEC_POOL_TEXTFILE = "/run/node-exporter-textfile";
+          # the slot's cgroup on the host (modules/workers/core.nix): its memory.events counts a run's OOM kills
+          EXEC_POOL_SLOT_CGROUP = "/environments.slice/container@%i.service";
         };
         serviceConfig = {
           Type = "oneshot";
