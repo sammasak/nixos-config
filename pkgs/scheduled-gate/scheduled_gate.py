@@ -136,8 +136,11 @@ def records(spool: pathlib.Path, since: datetime, head: str) -> list[dict[str, s
 
 
 def deferred(spool: pathlib.Path, since: datetime, head: str) -> list[str]:
-    return [f"{f.get('step', '')}\t{f.get('check', '')}" for f in records(spool, since, head)
-            if f.get("result") == "deferred"]
+    return [
+        f"{f.get('step', '')}\t{f.get('check', '')}"
+        for f in records(spool, since, head)
+        if f.get("result") == "deferred"
+    ]
 
 
 def first_failed_step(spool: pathlib.Path, since: datetime, head: str) -> str:
@@ -173,7 +176,8 @@ def run(repo: str, state_dir: pathlib.Path, metrics: pathlib.Path) -> int:
         shutil.rmtree(tree, ignore_errors=True)
     git("worktree", "prune", cwd=clone)
     git("worktree", "add", "--quiet", "--detach", str(tree), main, cwd=clone)
-    say(f"full gate on origin/main {main[:12]} ({'again, once: it was red' if retry else 'last finished: ' + (st.head[:12] or 'none')})")
+    last = "again, once: it was red" if retry else f"last finished: {st.head[:12] or 'none'}"
+    say(f"full gate on origin/main {main[:12]} ({last})")
     env = {
         **os.environ,
         "NIXOS_QA_MODE": "scheduled",
