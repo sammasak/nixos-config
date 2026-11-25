@@ -1103,50 +1103,7 @@ impl Store {
             let epoch = i64_of("epoch", epoch)?;
             insert_result(tx, attempt, epoch, &park.result)?;
             put_transcript(tx, &task, epoch, park.transcript.as_ref())?;
-            let usage = park.result.usage;
-            let tokens = |f: fn(&crate::task_result::Usage) -> u64| {
-                usage.as_ref().map(|u| i64_of("tokens", f(u))).transpose()
-            };
-            // a remote runner may park into a queue its host has not migrated to 20 yet: the arm is left out there
-            let armed = park.arm.is_some()
-                && tx
-                    .query_one(
-                        "SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema = current_schema() \
-                         AND table_name = 'turns' AND column_name = 'variant')",
-                        &[],
-                    )?
-                    .try_get::<_, bool>(0)?;
-            let (input, output, read, creation) = (
-                tokens(|u| u.input_tokens)?,
-                tokens(|u| u.output_tokens)?,
-                tokens(|u| u.cache_read_tokens)?,
-                tokens(|u| u.cache_creation_tokens)?,
-            );
-            let cost = usage.and_then(|u| u.cost_usd);
-            let delivered = !park.undelivered;
-            let variant = park.arm.as_ref().map(|a| a.variant.as_str());
-            let shunt = park.arm.as_ref().map(|a| a.shunt.as_str());
-            let mut row: Vec<&(dyn postgres::types::ToSql + Sync)> = vec![
-                &attempt,
-                &epoch,
-                &input,
-                &output,
-                &read,
-                &creation,
-                &cost,
-                &park.result.handed_back,
-                &delivered,
-            ];
-            let sql = if armed {
-                row.extend([&variant as &(dyn postgres::types::ToSql + Sync), &shunt]);
-                "INSERT INTO turns (attempt_id, lease_epoch, input_tokens, output_tokens, cache_read_tokens, \
-                 cache_creation_tokens, cost_usd, handed_back, delivered, variant, shunt) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"
-            } else {
-                "INSERT INTO turns (attempt_id, lease_epoch, input_tokens, output_tokens, cache_read_tokens, \
-                 cache_creation_tokens, cost_usd, handed_back, delivered) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
-            };
-            tx.execute(sql, &row)?;
+            insert_turn(tx, attempt, epoch, park)?;
             mark_read(tx, (&task, attempt, epoch), park)?;
             leave_continue(tx, (&task, attempt, epoch), park.reason)?;
             if let Some(w) = &wake {
@@ -2223,6 +2180,62 @@ fn session_totals(
         );
     }
     usage(tx, out, hosts)
+}
+
+/// The turns row of a park: its usage, whether its branch holds the tree, and the slot's arm.
+fn insert_turn(
+    tx: &mut Transaction<'_>,
+    attempt: &str,
+    epoch: i64,
+    park: &Park,
+) -> Result<(), QueueError> {
+    type Param<'a> = &'a (dyn postgres::types::ToSql + Sync);
+    let usage = park.result.usage;
+    let tokens = |f: fn(&crate::task_result::Usage) -> u64| {
+        usage.as_ref().map(|u| i64_of("tokens", f(u))).transpose()
+    };
+    // a remote runner may park into a queue its host has not migrated to 20 yet: the arm is left out there
+    let armed = park.arm.is_some()
+        && tx
+            .query_one(
+                "SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema = current_schema() \
+                 AND table_name = 'turns' AND column_name = 'variant')",
+                &[],
+            )?
+            .try_get::<_, bool>(0)?;
+    let (input, output, read, creation) = (
+        tokens(|u| u.input_tokens)?,
+        tokens(|u| u.output_tokens)?,
+        tokens(|u| u.cache_read_tokens)?,
+        tokens(|u| u.cache_creation_tokens)?,
+    );
+    let cost = usage.and_then(|u| u.cost_usd);
+    let delivered = !park.undelivered;
+    let variant = park.arm.as_ref().map(|a| a.variant.as_str());
+    let shunt = park.arm.as_ref().map(|a| a.shunt.as_str());
+    let mut row: Vec<Param<'_>> = vec![
+        &attempt,
+        &epoch,
+        &input,
+        &output,
+        &read,
+        &creation,
+        &cost,
+        &park.result.handed_back,
+        &delivered,
+    ];
+    let sql = if armed {
+        row.push(&variant);
+        row.push(&shunt);
+        "INSERT INTO turns (attempt_id, lease_epoch, input_tokens, output_tokens, cache_read_tokens, \
+         cache_creation_tokens, cost_usd, handed_back, delivered, variant, shunt) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"
+    } else {
+        "INSERT INTO turns (attempt_id, lease_epoch, input_tokens, output_tokens, cache_read_tokens, \
+         cache_creation_tokens, cost_usd, handed_back, delivered) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
+    };
+    tx.execute(sql, &row)?;
+    Ok(())
 }
 
 /// The tokens and cost session turns reported, by the host each turn ran on, the arm it ran under ([`Arm`],
