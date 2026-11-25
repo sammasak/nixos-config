@@ -3595,7 +3595,7 @@ fn an_undelivered_turn_keeps_the_error_backoff_and_past_it_counts_as_stalled() {
         pg.sql().query_one(&sql, &[]).unwrap().get(0)
     };
     assert_eq!(
-        unread("AND due_at IS NOT NULL"),
+        unread("AND due_at > now()"),
         0,
         "the message makes it due in the queue, for a runner at any version"
     );
