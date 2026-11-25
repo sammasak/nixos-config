@@ -32,6 +32,8 @@ def check(ok, what):
 check(lb.quantile([1.0] * 4, 0.5) is None and lb.quantile([1.0] * 5, 0.5) == 1.0, "p50 needs 5 samples")
 check(lb.quantile(list(range(19)), 0.95) is None and lb.quantile(list(range(1, 21)), 0.95) == 19, "p95 needs 20 samples (nearest rank)")
 check(lb.quantile([None] * 30, 0.5) is None, "missing values are not samples")
+check(lb.quantile([None, 4, 0, 3, 1, 2], 0.5) == 2, "quantile ignores missing values")
+check(lb.quantile([None, 0, 1, 2, 3], 0.5) is None, "missing values do not count toward sample floor")
 check(lb.metric(None, "s", "client_measured", 4)["source"] == "insufficient_samples"
       and lb.metric(None, "s", "prometheus")["source"] == "unavailable", "a null value says why it is null")
 
