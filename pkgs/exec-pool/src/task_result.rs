@@ -22,6 +22,9 @@ pub struct TaskResult {
     output: String,
     /// The task's branch, `pool/<task id>`, when its repository showed it after the run: the code it handed back.
     pub branch: Option<String>,
+    /// The commit the run pushed `branch` at.
+    #[serde(default)]
+    pub head: Option<String>,
     /// What the agent reported the run cost, from Claude's result JSON; `None` for any other agent or none reported.
     #[serde(default)]
     pub usage: Option<Usage>,
@@ -73,6 +76,7 @@ impl TaskResult {
             exit_code,
             output: end(&output.replace('\0', "")),
             branch: None,
+            head: None,
             usage: None,
             handed_back: None,
         }
@@ -124,6 +128,7 @@ impl TaskResult {
             exit_code,
             output,
             branch: result.and_then(|r| r.branch.clone()),
+            head: result.and_then(|r| r.head.clone()),
             usage,
             handed_back: result.and_then(|r| r.handed_back),
         }
@@ -162,6 +167,7 @@ mod tests {
             timed_out: false,
             cancelled: false,
             branch: None,
+            head: None,
             failed_step: None,
             parked_at: None,
             unkept: None,

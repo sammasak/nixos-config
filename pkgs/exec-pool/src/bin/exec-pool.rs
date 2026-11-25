@@ -54,8 +54,9 @@ const USAGE: &str = "usage: exec-pool COMMAND
                     newest first (N, 20), with its model (its --model, default when none) and session: turns,
                     wall, running, queued, review and waiting seconds (waiting_by_reason: by why its turns parked),
                     the tokens and cost its turns reported, and pr: the pull request of its branch pool/<task> on
-                    GitHub as gh finds it ({number, state open|closed|merged, merged_at, url}; null with none, and
-                    pr_error when gh could not tell). --merged: only those whose pull request merged. --report FILE:
+                    GitHub as gh finds it ({number, state open|closed|merged, merged_at, url, head}; null with none,
+                    and pr_error when gh could not tell), and rescued: true when it merged at another commit than
+                    the one the task pushed (head), null when either is not known. --merged: only those whose pull request merged. --report FILE:
                     only those merged, out of a slot and the queue, that FILE does not list yet, each then added to it
   cancel ID         cancels a task you submitted: a queued one at once; a running one is stopped by its runner within
                     seconds and settles cancelled (follow it with wait). Prints the attempt and its status after";
@@ -425,7 +426,7 @@ fn github_repo(url: &str) -> Option<(&str, &str)> {
 }
 
 /// The newest pull request of a GitHub `pulls?head=…&state=all` listing: its number, state (merged once it has a
-/// merge time) and merge time; null when the branch has none.
+/// merge time), merge time and head commit; null when the branch has none.
 fn pull_of(listing: &Value) -> Result<Value, String> {
     let pulls = listing
         .as_array()
@@ -440,6 +441,7 @@ fn pull_of(listing: &Value) -> Result<Value, String> {
                 "state": if merged_at.is_string() { "merged" } else { p["state"].as_str().unwrap_or("unknown") },
                 "merged_at": merged_at,
                 "url": p["html_url"],
+                "head": p.pointer("/head/sha").cloned().unwrap_or(Value::Null),
             })
         }))
 }
@@ -476,7 +478,9 @@ fn with_pull(mut summary: Value) -> Value {
     if let Some(fields) = summary.as_object_mut() {
         match found {
             Ok(pr) => {
+                let rescued = rescued(&pr, fields.get("head").unwrap_or(&Value::Null));
                 fields.insert("pr".to_owned(), pr);
+                fields.insert("rescued".to_owned(), rescued);
             }
             Err(e) => {
                 fields.insert("pr".to_owned(), Value::Null);
@@ -485,6 +489,15 @@ fn with_pull(mut summary: Value) -> Value {
         }
     }
     summary
+}
+
+/// Whether a merged pull request was finished by someone else than the task: its head is not the commit the task
+/// pushed. Null unless it merged and the runner recorded that commit.
+fn rescued(pr: &Value, pushed: &Value) -> Value {
+    match (pr["state"].as_str(), pr["head"].as_str(), pushed.as_str()) {
+        (Some("merged"), Some(merged), Some(pushed)) => Value::Bool(merged != pushed),
+        _ => Value::Null,
+    }
 }
 
 fn timeout(args: &Args) -> Result<Option<Duration>, Fail> {
@@ -812,13 +825,19 @@ mod tests {
             assert_eq!(github_repo(url), None, "{url}");
         }
         let listed = json!([
-            {"number": 788, "state": "closed", "merged_at": "2026-11-25T06:40:00Z", "html_url": "https://github.com/o/r/pull/788"},
+            {"number": 788, "state": "closed", "merged_at": "2026-11-25T06:40:00Z", "html_url": "https://github.com/o/r/pull/788", "head": {"sha": "1f2e"}},
             {"number": 780, "state": "closed", "merged_at": null, "html_url": "https://github.com/o/r/pull/780"}
         ]);
         assert_eq!(
             pull_of(&listed).unwrap(),
-            json!({"number": 788, "state": "merged", "merged_at": "2026-11-25T06:40:00Z", "url": "https://github.com/o/r/pull/788"})
+            json!({"number": 788, "state": "merged", "merged_at": "2026-11-25T06:40:00Z", "url": "https://github.com/o/r/pull/788", "head": "1f2e"})
         );
+        let pr = pull_of(&listed).unwrap();
+        assert_eq!(rescued(&pr, &json!("1f2e")), json!(false), "the task's own commit merged");
+        assert_eq!(rescued(&pr, &json!("0a0a")), json!(true), "another commit merged");
+        assert_eq!(rescued(&pr, &Value::Null), Value::Null, "no head recorded");
+        let open = pull_of(&json!([listed[1]])).unwrap();
+        assert_eq!(rescued(&open, &json!("1f2e")), Value::Null, "not merged");
         assert_eq!(pull_of(&json!([listed[1]])).unwrap()["state"], "closed");
         assert_eq!(pull_of(&json!([])).unwrap(), Value::Null);
         assert!(pull_of(&json!({"message": "Not Found"})).is_err());

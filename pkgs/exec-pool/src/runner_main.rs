@@ -1055,7 +1055,7 @@ impl Guest {
     }
 
     /// Records in `result` what the run handed back once its agent ran: the branch if it pushed to it ([`handed_back`]
-    /// against the listing `before`), and whether that branch holds the whole tree ([`holds_tree`] of [`tree_check`],
+    /// against the listing `before`) and the commit it pushed, and whether that branch holds the whole tree ([`holds_tree`] of [`tree_check`],
     /// its output in the run directory's file `tree`).
     fn hand_back(
         &self,
@@ -1069,6 +1069,10 @@ impl Guest {
         result.branch = agent::branch(&m.task)
             .ok()
             .and_then(|b| handed_back(before, &after, &b));
+        result.head = match (&result.branch, &after) {
+            (Some(_), Listed::At(commit)) => Some(commit.clone()),
+            _ => None,
+        };
         let checkout = match &m.session {
             Some(_) => SESSION_WORK.to_owned(),
             None => ws.checkout(),
