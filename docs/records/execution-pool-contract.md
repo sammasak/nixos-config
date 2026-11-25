@@ -387,7 +387,7 @@ measured: no exit time reaches the queue. Wake latency starts when a row is due:
 
 ### Reading monitoring from a slot
 
-On a host with `homelab.execPool.monitoring` (acer now), a slot queries black-pi's Prometheus, Alertmanager and Loki
+On a host with `homelab.execPool.monitoring` (acer and msi), a slot queries black-pi's Prometheus, Alertmanager and Loki
 read only, through its own egress proxy (`modules/workers/default.nix`); the slot holds no credential. The guest's
 `PROMETHEUS_URL`, `ALERTMANAGER_URL` and `LOKI_ADDR` name the loopback ports. Prometheus passes GET or POST
 `/api/v1/query`, `query_range`, `series`, `labels` and `label/NAME/values`, GET `/api/v1/rules` and `alerts`;
