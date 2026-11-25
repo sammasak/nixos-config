@@ -84,7 +84,7 @@
         "tunedBy": "max(shipping_deploy_lag_hours)"
       },
       "upHours": {
-        "value": 2,
+        "value": 6,
         "tunedBy": "max(shipping_deploy_lag_hours)"
       }
     },

@@ -638,6 +638,42 @@ let
         ];
       }
       {
+        name = "a host that slept through merges gets its up hours after it wakes, a flap starts them again";
+        interval = "1m";
+        input_series = [
+          {
+            series = ''shipping_deploy_lag_hours{host="msi-ms7758",node="msi-ms7758"}'';
+            values = "${n (a.HostBehindMain.maxHours.value + 12)}x900";
+          }
+          {
+            # off as planned for 2 h, up, one missed scrape at 4 h, then up
+            series = ''up{job="node-exporter",node="msi-ms7758"}'';
+            values = "0x120 1x119 0 1x659";
+          }
+        ];
+        alert_rule_test = [
+          {
+            alertname = "HostBehindMain";
+            eval_time = "${n (240 + a.HostBehindMain.upHours.value * 60 - 5)}m";
+            exp_alerts = [ ];
+          }
+          {
+            alertname = "HostBehindMain";
+            eval_time = "${n (240 + a.HostBehindMain.upHours.value * 60 + 5)}m";
+            exp_alerts = [
+              {
+                exp_labels = {
+                  severity = "warning";
+                  team = "shipping";
+                  host = "msi-ms7758";
+                  node = "msi-ms7758";
+                };
+              }
+            ];
+          }
+        ];
+      }
+      {
         name = "a fresh collector without the owner's gh login pages, with it not";
         interval = "1m";
         input_series = [

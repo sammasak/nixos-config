@@ -36,8 +36,9 @@ const USAGE: &str = "usage: exec-pool COMMAND
   attach ID [--timeout SECS]
                     wakes the session into a slot's Herdr pane with no message of yours (it is told the owner opened
                     it) and prints the host, slot and Herdr agent to open, once its turn runs (600 s by default)
-  status [ID]       the task (or attempt) ID with its events, or the number of attempts in each status
-  list [--limit N]  the newest N tasks (20), newest first; a session's shows why it waits (parked)
+  status [ID]       the task (or attempt) ID with its priority and events, or the number of attempts in each status
+  list [--limit N]  the newest N tasks (20), newest first, each with its priority; a session's shows why it waits
+                    (parked)
   result ID         the task's state and, once the runner recorded it, its result (a session's last turn): the
                     agent's outcome, the exit code and up to 16 KiB of output (Claude's result text, or the end of
                     stdout)

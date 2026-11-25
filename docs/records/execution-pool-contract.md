@@ -85,8 +85,8 @@ PostgreSQL over a Unix socket only (`Store::open` refuses a TCP host), so the da
 caller's. Schema `pkgs/exec-pool/migrations/0001_queue.up.sql`; forward-only in production, with
 `exec-pool-queue migrate-down` dropping everything after the operator has exported what they keep. A claim takes the fitting queued
 attempt of the highest priority (`tasks.priority`, -100 to 100, set by `submit` and `start --priority N` through
-migration 0016, default 0) plus one for every 10 minutes it has waited queued, the oldest among equals, so a low one is
-not starved; nothing is preempted. It locks only the queued row it takes, `FOR UPDATE SKIP LOCKED`; every change runs `transition` and then the `attempts_fence` trigger, which refuses
+migration 0016, default 0; `exec-pool status` and `list` show it, migration 0022) plus one for every 10 minutes it has
+waited queued, the oldest among equals, so a low one is not starved; nothing is preempted. It locks only the queued row it takes, `FOR UPDATE SKIP LOCKED`; every change runs `transition` and then the `attempts_fence` trigger, which refuses
 a write that names any epoch but the current one (or none), moves the epoch by more than one, leases from anything
 but queued, or touches a succeeded or failed attempt. One live attempt per slot is a unique index. A holder's event
 after its lease deadline is refused; `reconcile` (at startup and on a timer) expires overdue leases. A database that
@@ -180,7 +180,11 @@ and the task's key) whose pane runs the slot's entry point `<prefix>-<slot> turn
 the slot's ssh as `claude`, so Herdr sees and names the agent (`pane::agent_name`: the task id) and the owner watches
 and types into it there. Once Claude draws its prompt the helper prompts the turn's input with `herdr agent prompt`
 (over 3000 bytes it is written to `/session/cur/home/.exec-pool-input.md` and the prompt names the file). The agent is
-idle when Herdr reports it idle or done at a state after the prompt for 5 s (`pane::TurnWatch`). Idle is the session's
+idle when Herdr reports it idle or done at a state after the prompt for 5 s (`pane::TurnWatch`) with nothing of its
+own left running in the turn's unit: a Bash tool command (`pane::tool_shell`), an unfinished subagent, or a detached
+job (`nohup` or `setsid`, `pane::detached`: a process in the unit's cgroup adopted by the container's init, in a
+session that is not the agent's) keeps it
+busy, the time limit still the bound; a job started outside the unit (`systemd-run`) is not seen and dies at the park. Idle is the session's
 **pause**: the agent stays in its pane for `homelab.execPool.idleGraceSecs` (600 s; `idleGraceBusySecs`, 60 s, while a
 task is queued and no slot is idle on any host), and whatever the owner types in the pane, or a message `exec-pool send`
 puts in the inbox meanwhile (handed over in the turn hint `turn.json` beside the manifest, `runner::TurnHint`, every
