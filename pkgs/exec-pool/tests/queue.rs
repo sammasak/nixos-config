@@ -2273,13 +2273,9 @@ fn a_memory_kill_continues_as_an_error_does_and_tells_the_agent_what_was_killed(
         .unwrap();
     // as a remote runner's park into a queue host still at 22: the claim's text names nothing
     pg.sql()
-        .batch_execute("REVOKE INSERT (body) ON inbox FROM exec_pool_runner")
+        .batch_execute("DROP FUNCTION continue_after(text, int8, text)")
         .unwrap();
     s.send(&id, "go on").unwrap();
-    let (a, epoch, turn) = started(&mut runner);
-    runner
-        .park(&a, epoch, &park(ParkReason::TurnEnd, turn.upto))
-        .unwrap();
     assert_eq!(killed(&mut runner), [(Status::Waiting, "turn_memory_kill")]);
     assert_eq!(all_due(&pg, &mut owner), [(Status::Queued, "wake")]);
     let (_, _, turn) = started(&mut runner);

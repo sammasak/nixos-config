@@ -79,6 +79,7 @@ const DOWN_TRANSCRIPT: &str = include_str!("../migrations/0017_transcript.down.s
 const DOWN_UNDELIVERED: &str = include_str!("../migrations/0018_undelivered.down.sql");
 const DOWN_SESSION_SUMMARIES: &str = include_str!("../migrations/0020_session_summaries.down.sql");
 const DOWN_TURN_ARM: &str = include_str!("../migrations/0021_turn_arm.down.sql");
+const DOWN_CONTINUE_BODY: &str = include_str!("../migrations/0023_continue_body.down.sql");
 const VERSION: i32 = 23;
 /// The fence's SQLSTATE, raised by `attempts_fence`.
 const FENCED: &str = "XP409";
@@ -370,7 +371,7 @@ const MEMORY_KILLED: &str = "Your last turn ended in an error after the kernel's
 /// [`MEMORY_KILLED`] naming the processes killed, at most eight of their names, each as the kernel's log has it.
 #[must_use]
 pub fn memory_killed(names: &[String]) -> String {
-    let named: Vec<&str> = names
+    let shown: Vec<&str> = names
         .iter()
         .map(String::as_str)
         .filter(|n| {
@@ -380,10 +381,10 @@ pub fn memory_killed(names: &[String]) -> String {
         })
         .take(8)
         .collect();
-    if named.is_empty() {
+    if shown.is_empty() {
         return MEMORY_KILLED.to_owned();
     }
-    format!("{MEMORY_KILLED} Killed: {}.", named.join(", "))
+    format!("{MEMORY_KILLED} Killed: {}.", shown.join(", "))
 }
 
 /// The delay before each automatic continue after turns in a row that end in an error, no message in between: once
@@ -459,19 +460,25 @@ fn leave_continue(
         }
         Some(secs) => {
             // a remote runner may park into a queue its host has not migrated to 23 yet: the claim's text names none
-            let body = (reason == ParkReason::TurnMemoryKill
+            let named = reason == ParkReason::TurnMemoryKill
                 && tx
                     .query_one(
-                        "SELECT has_column_privilege('inbox', 'body', 'INSERT')",
+                        "SELECT to_regprocedure('continue_after(text, int8, text)') IS NOT NULL",
                         &[],
                     )?
-                    .try_get::<_, bool>(0)?)
-            .then(|| memory_killed(killed));
-            tx.execute(
-                "INSERT INTO inbox (task_id, kind, due_at, body) \
-                 VALUES ($1, 'continue', now() + $2::int8 * interval '1 second', $3)",
-                &[&task, &i64::from(secs), &body],
-            )?;
+                    .try_get::<_, bool>(0)?;
+            if named {
+                tx.execute(
+                    "SELECT continue_after($1, $2, $3)",
+                    &[&task, &i64::from(secs), &memory_killed(killed)],
+                )?;
+            } else {
+                tx.execute(
+                    "INSERT INTO inbox (task_id, kind, due_at) \
+                     VALUES ($1, 'continue', now() + $2::int8 * interval '1 second')",
+                    &[&task, &i64::from(secs)],
+                )?;
+            }
         }
         None => {}
     }
@@ -876,7 +883,7 @@ impl Store {
             None => Err(QueueError::NotMigrated),
             Some(v) if v > VERSION => Err(QueueError::SchemaAhead(v)),
             Some(_) => Ok(tx.batch_execute(&format!(
-                "{DOWN_TURN_ARM}{DOWN_SESSION_SUMMARIES}{DOWN_UNDELIVERED}{DOWN_TRANSCRIPT}{DOWN_PRIORITY}{DOWN_TURN_LOG}{DOWN_TIMER}{DOWN_DRAIN_REASON}{DOWN_CLAIM_HOST}{DOWN_SESSION_METRICS}{DOWN_SESSION}{DOWN_SLOTS}{DOWN_QUARANTINE}{DOWN_CANCEL}{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"
+                "{DOWN_CONTINUE_BODY}{DOWN_TURN_ARM}{DOWN_SESSION_SUMMARIES}{DOWN_UNDELIVERED}{DOWN_TRANSCRIPT}{DOWN_PRIORITY}{DOWN_TURN_LOG}{DOWN_TIMER}{DOWN_DRAIN_REASON}{DOWN_CLAIM_HOST}{DOWN_SESSION_METRICS}{DOWN_SESSION}{DOWN_SLOTS}{DOWN_QUARANTINE}{DOWN_CANCEL}{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"
             ))?),
         })
     }

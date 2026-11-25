@@ -2497,7 +2497,7 @@ fn exec(slot: &str) -> Result<(), String> {
     } = begin(slot)?;
     let mut result = ExecResult::begun(&manifest);
     let t = Instant::now();
-    let memory = MemoryWatch::start();
+    let memory = MemoryWatch::start(slot);
     let guest_home = var("EXEC_POOL_GUEST_HOME")?;
     let ws = manifest
         .workspace(&guest_home)
@@ -2589,9 +2589,7 @@ fn exec(slot: &str) -> Result<(), String> {
         let ready = (admitted, dock.is_some(), opened, resume.is_some());
         failed_preparing(slot, &mut result, ready);
     }
-    if let Some(m) = memory {
-        m.finish(slot, &mut result, &note);
-    }
+    MemoryWatch::finish(memory, slot, &mut result, &note);
     write_result(slot, &dir, result)
 }
 
@@ -2604,10 +2602,12 @@ struct MemoryWatch {
 }
 
 impl MemoryWatch {
-    /// `None` without the variable or a count to read: the run's kills go uncounted.
-    fn start() -> Option<Self> {
+    /// `None` without the variable or a count to read: the run's kills go uncounted. The slot's counter is written
+    /// at 0 first, so its first kill after a boot is an increase.
+    fn start(slot: &str) -> Option<Self> {
         let cgroup = std::env::var("EXEC_POOL_SLOT_CGROUP").ok()?;
         let kills = Self::kills(&cgroup)?;
+        Self::count(slot, 0);
         Some(Self {
             cgroup,
             kills,
@@ -2627,20 +2627,21 @@ impl MemoryWatch {
     /// in the slot's textfile, `exec_pool_memory_kills_total{slot}`. A guest restarted since (a lower count) counts
     /// none.
     fn finish(
-        self,
+        watch: Option<Self>,
         slot: &str,
         result: &mut ExecResult,
         note: &dyn Fn(&str, &dyn std::fmt::Display),
     ) {
-        let Some(now) = Self::kills(&self.cgroup) else {
+        let Some((watch, now)) = watch.and_then(|w| Self::kills(&w.cgroup).map(|now| (w, now)))
+        else {
             return;
         };
-        let n = now.saturating_sub(self.kills);
-        result.oom_kills = Some(n);
+        let n = now.saturating_sub(watch.kills);
         if n == 0 {
             return;
         }
-        let since = self
+        result.oom_kills = Some(n);
+        let since = watch
             .since
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -2659,7 +2660,8 @@ impl MemoryWatch {
             .output();
         match kmsg {
             Ok(o) => {
-                result.oom_victims = oom_victims(&String::from_utf8_lossy(&o.stdout), &self.cgroup)
+                result.oom_victims =
+                    oom_victims(&String::from_utf8_lossy(&o.stdout), &watch.cgroup);
             }
             Err(e) => note("kernel log", &e),
         }
@@ -2670,6 +2672,10 @@ impl MemoryWatch {
                 result.oom_victims
             ),
         );
+        Self::count(slot, n);
+    }
+
+    fn count(slot: &str, n: u64) {
         if let Some(dir) = std::env::var_os("EXEC_POOL_TEXTFILE") {
             let file = PathBuf::from(dir).join(format!("exec-pool-memory-{slot}.prom"));
             if let Err(e) = textfile::bump(&file, MEMORY_KILLS, &format!("slot=\"{slot}\""), n) {

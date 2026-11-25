@@ -630,7 +630,8 @@ pub struct ExecResult {
     /// park marks read with what the claim handed over.
     #[serde(default)]
     pub upto: Option<i64>,
-    /// Processes of the slot the kernel's OOM killer killed during the run, by its `memory.events`; `None`: not read.
+    /// Processes of the slot the kernel's OOM killer killed during the run, by its `memory.events`; `None`: none, or
+    /// not read (so a runner rolled back past this field still reads a result with no kill).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oom_kills: Option<u64>,
     /// Their names, as the kernel's log has them ([`oom_victims`]).
@@ -1350,29 +1351,6 @@ mod tests {
             turn(Some(&timed_out), "{\"is_error\":false}"),
             TurnSettle::Park(ParkReason::TurnTimeout)
         );
-        let killed = |kills| ExecResult {
-            oom_kills: Some(kills),
-            ..result(Stage::Run, None)
-        };
-        assert_eq!(
-            turn(Some(&killed(1)), ""),
-            TurnSettle::Park(ParkReason::TurnMemoryKill)
-        );
-        assert_eq!(
-            turn(Some(&killed(0)), ""),
-            TurnSettle::Park(ParkReason::TurnError)
-        );
-        assert_eq!(
-            turn(
-                Some(&ExecResult {
-                    exit_code: Some(0),
-                    ..killed(2)
-                }),
-                "{\"is_error\":false}"
-            ),
-            TurnSettle::Park(ParkReason::TurnEnd),
-            "a turn that outlived the kill ended as it would"
-        );
         assert_eq!(turn(None, ""), TurnSettle::Settle(Settle::NeedsReview));
         let unkept = ExecResult {
             unkept: Some("push: the remote hung up".to_owned()),
@@ -1427,6 +1405,34 @@ mod tests {
         assert_eq!(
             turn(Some(&cancelled), ""),
             TurnSettle::Settle(Settle::Cancelled)
+        );
+    }
+
+    #[test]
+    fn a_failed_turn_with_a_memory_kill_in_its_slot_parks_as_one() {
+        let turn = |r: Option<&ExecResult>, stdout: &str| decide_turn("t1.a", 3, r, stdout);
+        let killed = |kills| ExecResult {
+            oom_kills: Some(kills),
+            ..result(Stage::Run, None)
+        };
+        assert_eq!(
+            turn(Some(&killed(1)), ""),
+            TurnSettle::Park(ParkReason::TurnMemoryKill)
+        );
+        assert_eq!(
+            turn(Some(&killed(0)), ""),
+            TurnSettle::Park(ParkReason::TurnError)
+        );
+        assert_eq!(
+            turn(
+                Some(&ExecResult {
+                    exit_code: Some(0),
+                    ..killed(2)
+                }),
+                "{\"is_error\":false}"
+            ),
+            TurnSettle::Park(ParkReason::TurnEnd),
+            "a turn that outlived the kill ended as it would"
         );
     }
 
