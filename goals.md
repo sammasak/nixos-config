@@ -137,6 +137,22 @@ changed packages as before. lenovo's user.slice 8288M to 8032M, still above the 
 (4.6 GiB idle sessions plus the largest 3.0 GiB unit): 259M of budget left instead of 3M; a new 128M unit evaluates.
 Open: the 4.6 GiB idle figure predates the named workers moving to pool slots; re-measure lenovo's user slice. PR #799.
 
+**25 Nov, branch `pool/cli-651e53b8e000f3fd`** (deploy acer and msi for the pool, black-pi for the rule): three turns
+(acer 11:05 and 11:13, msi 11:24) ended as a bare `turn_error` when the kernel killed a slot's `nix eval` of a host
+toplevel at `environments.slice`'s limit (2 to 3.3 GiB resident, four sessions running): the guest's systemd stopped
+the whole task unit on the kill (DefaultOOMPolicy=stop). The task unit now runs with `OOMPolicy=continue`, so only the
+killed process dies and the agent sees its command fail. The exec helper reads the slot's `memory.events` `oom_kill`
+before and after each run and the kernel log's `task=` names for its cgroup: the result carries `oom_kills` and
+`oom_victims`, a failing turn with a kill parks as `turn_memory_kill` (counted in `exec_pool_session_turns_total` by
+host, stalled and backed off as an error), and its continue names what was killed (migration 23's `continue_after()`,
+so the runner still writes no message; a queue before it gets the generic text). `exec_pool_memory_kills_total{slot}` per slot host, and
+`ExecPoolSlotMemoryKills` fires at two kills on a node in 2 h with the `journalctl -k -g oom-kill` command. No
+per-slot MemoryMax or MemoryHigh: the slice's own comment records why (it killed or stalled builds the pool had room
+for). Also `ownRefsOnly` on for msi; acer's push filter journal (a push `passed`, one `refused`) was not readable
+from a slot: the coordinator glances at it before the msi deploy.
+Open: a kill that leaves the agent running is counted but not told to it beyond its command's exit; the slots still
+share one limit, so four heavy evaluations at once still kill one of them. PR #805.
+
 **25 Nov, branch `pool/cli-6a8cf03c11ffa376`** (no deploy: the skills store path and every toplevel drvPath are
 unchanged): the skills input is `git+ssh` like the other six private inputs (devenv-platform, factum, herman,
 llm-gateway, nix-audit, rf-proto), so `just deploy` as lukas fetches a new skills pin with lukas's SSH key instead of
@@ -260,8 +276,8 @@ acknowledgement); after 624-l deploys to black-pi, read the live rule list and t
 | 625-a | Read-only check of the hook JSONL on lenovo, schema decision | done: comment on #625 | |
 | 625-1 | Collector, fixture tests, NixOS wiring (nav-metrics pattern) | merged, enabled on no host yet | #638 |
 | 625-2 | Shunt section in the agent-harness dashboard, stale and failing alerts, collector on lenovo | merged, live: collector on lenovo, rules on black-pi | #644 |
-| 625-pilot | On/off on the running system (no benchmark, owner 23 Nov) | merged, live: on for lenovo and acer's `pool1` (moved from `a1` by #759), off for acer's other slots; read a day on 25 Nov | #678, #679 |
-| 625-3 | Hook overhead: `shunt_hook_time_ms{hook}` with validate-bash as the off side's control, ms per Bash call on and off (dashboard panel), `ShuntHookOverhead` (over 250 ms per call, at least 50 calls, a starting bound) | branch `pool/cli-273036d46c7d3230`; needs lenovo and acer, rules on black-pi; set the bound from the first day's reading | |
+| 625-pilot | On/off on the running system (no benchmark, owner 23 Nov) | merged, live: on for lenovo and acer's `pool1` (moved from `a1` by #759), off for acer's other slots; read 25 Nov: hooks about 10 ms per Bash call, context kept out small (lenovo 4.5% of Bash output chars, 12k read tokens; pool1 none), cost per turn not comparable (pool1 had 1 turn). Split kept: re-read 2 Dec, at least 20 Claude turns per arm on `variant="default"`; if fewer again, Shunt on for every slot | #678, #679 |
+| 625-3 | Hook overhead: `shunt_hook_time_ms{hook}` with validate-bash as the off side's control, ms per Bash call on and off (dashboard panel), `ShuntHookOverhead` (over 100 ms per call, at least 50 calls, set from the 25 Nov reading) | live on lenovo and acer; the 100 ms bound needs black-pi | #804 |
 
 ### #646 execution pool (v0.1)
 

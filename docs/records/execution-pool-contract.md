@@ -61,7 +61,9 @@ parks in `waiting` counts against `retry.max_attempts` (at least 1), so an expir
 A task with `tasks.session` (queued by `exec-pool start`; the queue's side is under Sessions below) is a session: one
 agent session (its id the queue's `session_uuid`) that lives across
 leases. Each lease is one **turn**, and a turn ends in a **park** to `waiting`, never in a settle: `turn_end` when the
-agent finished its turn, `turn_error` when its call failed or left no verdict, `turn_timeout` when it was stopped at
+agent finished its turn, `turn_error` when its call failed or left no verdict (`turn_memory_kill` when the kernel's
+OOM killer also killed a process of the slot during it: continued as an error is, told what was killed; the agent's
+unit runs with `OOMPolicy=continue`, so such a kill alone ends only that process), `turn_timeout` when it was stopped at
 the turn's time limit, `waiting_until` when it finished and asked for a timer (later also `host_draining`,
 `preempted`). A failed turn never fails the session. The time limit is `homelab.execPool.timeoutSecs`
 (default 1800 s, the same bound as a one-shot run). A timed-out turn leaves a `continue` row, so the session resumes
