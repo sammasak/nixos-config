@@ -239,12 +239,12 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
         .query_one("SELECT max(version) FROM schema_migrations", &[])
         .unwrap()
         .get(0);
-    assert_eq!(version, 25);
+    assert_eq!(version, 26);
     submit(&mut s, &task("t-1", 1));
     // a newer binary's additive migration keeps the floor: this one still serves the database, as after a rollback
     pg.sql()
         .execute(
-            "INSERT INTO schema_migrations (version, floor) VALUES (26, 25)",
+            "INSERT INTO schema_migrations (version, floor) VALUES (27, 26)",
             &[],
         )
         .unwrap();
@@ -252,17 +252,17 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
     assert!(s.claim(&slot("s0"), 60).unwrap().is_some());
     // one this binary would misread, or one that names no floor, is refused
     pg.sql()
-        .execute("INSERT INTO schema_migrations (version) VALUES (27)", &[])
+        .execute("INSERT INTO schema_migrations (version) VALUES (28)", &[])
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(27))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(28))));
     pg.sql()
         .execute(
-            "UPDATE schema_migrations SET floor = 27 WHERE version = 27",
+            "UPDATE schema_migrations SET floor = 28 WHERE version = 28",
             &[],
         )
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(27))));
-    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(27))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(28))));
+    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(28))));
 }
 
 #[test]
@@ -1469,7 +1469,9 @@ fn a_cancel_asked_of_a_dead_runner_still_expires_to_review() {
     ));
     assert_eq!(owner.reconcile().unwrap().len(), 1);
     assert_eq!(status(&pg, &a), ("needs_review".to_owned(), 2));
-    assert_eq!(s.cancel(&id).unwrap(), (a, Status::NeedsReview));
+    // the submitter settles the review itself
+    assert_eq!(s.cancel(&id).unwrap(), (a.clone(), Status::Cancelled));
+    assert_eq!(status(&pg, &a).0, "cancelled");
 }
 
 #[test]
