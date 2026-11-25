@@ -92,6 +92,11 @@ devenv-platform#141 and #129; pi-harness#26.
 6. lenovo cannot push nixos-config (stale devenv gate); its root rebuild trigger needs a GitHub SSH key for root.
 7. Re-measure lenovo's user slice now that the named workers are pool slots.
 8. The v0.1 acceptance script in a VM (PASS, FAIL or UNTESTED per criterion) is not written.
+9. Slot memory kills (PR #805, merged; deploy to acer and msi not confirmed): the slots share one
+   `environments.slice` limit, so four heavy evaluations at once still kill one, and a kill that leaves the agent
+   running is told to it only through its command's exit.
+10. msi's `ownRefsOnly` push filter (PR #805) is live only after the msi deploy; read acer's push filter journal (one
+    `passed`, one `refused`) before it.
 
 Credential items moved to #653 (item 7).
 
