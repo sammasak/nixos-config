@@ -376,8 +376,8 @@ in
         port = 4190;
         from = [ "msi-ms7758" ];
       };
-      # acer's ChatGPT route for msi's slots' Codex (modules/workers/default.nix): served only with acer's
-      # sam.workers.codexLogin.serveFleet, used only once msi's pool agents name codex; both off until acer's own work
+      # acer's Codex route for msi's slots (modules/workers/default.nix): served only with acer's
+      # sam.workers.codexEgress.serveFleet, used only once msi's pool agents name codex; both off until acer's own work
       codex-egress = {
         host = "acer-swift";
         port = 4191;

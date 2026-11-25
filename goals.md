@@ -74,10 +74,11 @@ devenv-platform#141 and #129; pi-harness#26.
 - Pi, one-shot on acer, no model: failed in 5 s, "No API key found for the selected model".
 - Pi with `--model homelab/auto`: failed in 6 s, model not found. Likely cause: the attempt's home has no Pi `models.json`
   (the workers module copies it into the guest user's home at activation, not into the attempt workspace).
-- Codex: `submit` refused, no slot offers Codex. #808 runs it on the owner's ChatGPT login instead of an API key
-  (acer, `sam.workers.codexLogin`, in review): after the deploy, the owner's one sign-in on acer
-  (docs/records/execution-pool-credentials.md, Codex), then one canary task. Metric:
-  `exec_pool_attempts{agent="codex",state="succeeded"}`, 0 today. Gate: `nixos:codex-egress-test` and the canary.
+- Codex: `submit` refused, no slot offers Codex. #808 runs it on the owner's ChatGPT login, the `codex login` as lukas
+  on acer (`sam.workers.codexAuthFile`, in review): after acer's deploy, the glance and one canary task
+  (docs/records/execution-pool-credentials.md, Codex), a usage-limit 429 until the quota returns on 26 Nov 23:28.
+  Metric: `exec_pool_attempts{agent="codex",state="succeeded"}`, 0 today, and
+  `host_status:codex_egress_refusals:count1m`. Gate: `nixos:codex-egress-test` and the canary.
 - Claude: 55 sessions, 37 merged, the numbers in the table above.
 - `increase()` over `exec_pool_session_cost_usd_total` over-reads (576 USD for a day whose sessions sum to 153 USD);
   read cost from `exec-pool sessions` until #806 fixes the series.
@@ -123,7 +124,6 @@ Credential items moved to #653 (item 7).
 
 | Issue | What is needed |
 |---|---|
-| [#808](https://github.com/sammasak/nixos-config/issues/808) | after acer's deploy, device code login on in ChatGPT's security settings and one `codex login --device-auth` on acer (the command in docs/records/execution-pool-credentials.md) |
 | [#653](https://github.com/sammasak/nixos-config/issues/653), slice 4 only | a GitHub App and its key, for per-task tokens |
 | [#645](https://github.com/sammasak/nixos-config/issues/645) | boot the gaming entry on asus once, at the machine and the TV |
 | [#601](https://github.com/sammasak/nixos-config/issues/601), PR #616 | a physical reboot of black-pi for the kernel fix |
@@ -135,7 +135,7 @@ Placement order: acer, then msi, asus last (it carries ollama, Paddock and the G
 
 | Host | Slots | Note |
 |------|-------|------|
-| acer-swift | `pool1` to `pool3` | Shunt on for `pool1`, a 300K compaction window for `pool2`; offers claude and pi, and codex once its ChatGPT login exists |
+| acer-swift | `pool1` to `pool3` | Shunt on for `pool1`, a 300K compaction window for `pool2`; offers claude and pi, and codex while the owner's ChatGPT login exists |
 | msi-ms7758 | `pool1` to `pool4` | offers claude; off 21:00 to 08:30 |
 | asus-b460m | none | ollama (one resident model, 130 W cap), agent `paddock`; off 21:00 to 08:30 |
 

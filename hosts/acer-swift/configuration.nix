@@ -52,8 +52,8 @@
     labelPrefix = "acer";
     pool.memory = "7G";
     ghHostsFile = "/home/${config.sam.profile.username}/.config/gh/hosts.yml";
-    # codex is offered only once the owner signed in (docs/records/execution-pool-credentials.md, Codex)
-    codexLogin.enable = true;
+    # the owner's own `codex login`; codex is offered while it holds one (docs/records/execution-pool-credentials.md)
+    codexAuthFile = "/home/${config.sam.profile.username}/.codex/auth.json";
     retired = [
       "herman"
       "a1"
@@ -70,7 +70,7 @@
       "claude"
       "pi"
     ]
-    ++ lib.optional config.sam.workers.codexLogin.enable "codex";
+    ++ lib.optional (config.sam.workers.codexAuthFile != null) "codex";
     # msi's runner claims from this queue over the fleet LAN (exec-pool-db listener)
     remoteRunners = true;
     ownRefsOnly = true;

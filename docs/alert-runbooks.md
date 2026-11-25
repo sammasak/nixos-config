@@ -379,17 +379,18 @@ Rollback: none; the alert clears when the session is woken or cancelled (`exec-p
 
 ## CodexLoginRefreshFailed
 
-Fires: the ChatGPT login the egress proxy signs the slots' Codex calls with (`sam.workers.codexLogin`, in
-`/var/lib/codex-egress` on `node`) failed or timed out on its last refresh (`codex_egress_refresh_failed`), or its access
-token expires within the hour while a login exists (`codex_egress_access_token_expiry_timestamp_seconds`), for 5
-minutes. `codex-egress-refresh.timer` lets upstream Codex refresh it once half the token's life is gone; a failure is
-never retried, as the refresh token may already be spent and a reused one fails for good (`refresh_token_reused`).
+Fires: the owner's ChatGPT login the egress proxy signs the slots' Codex calls with (`sam.workers.codexAuthFile`,
+`/home/lukas/.codex/auth.json` on `node`) failed or timed out on its last refresh (`codex_egress_refresh_failed`), or
+its access token expires within the hour while a login exists (`codex_egress_access_token_expiry_timestamp_seconds`),
+for 5 minutes. `codex-egress-refresh.timer` lets upstream Codex, as `lukas`, refresh it in place once half the token's
+life is gone; a failure is never retried, as the refresh token may already be spent and a reused one fails for good
+(`refresh_token_reused`).
 First: on `node`, `journalctl -u codex-egress-refresh.service -n 20` says why (no answer in time, or no new refresh
-recorded). Then the owner signs in again in a real terminal there:
-`cd / && sudo -u codex-egress env HOME=/var/lib/codex-egress CODEX_HOME=/var/lib/codex-egress /run/current-system/sw/bin/codex login --device-auth -c 'cli_auth_credentials_store="file"'`.
-The new login clears the failure at the timer's next run, within 15 minutes, and `codex-egress-token.path` hands the proxy its token at once.
-Do not: copy `auth.json` from another machine or run Codex as `codex-egress` for anything else: a second writer spends
-the same refresh token.
+recorded). Then the owner signs in again on `node` as `lukas`: `codex login --device-auth` (or the plain
+`codex login`), which rewrites that file. The new login clears the failure at the timer's next run, within 15
+minutes, and `codex-egress-token.path` hands the proxy the new token at once.
+Do not: copy `auth.json` to or from another machine, or point a second host's Codex at it: a second writer spends the
+same refresh token.
 Rollback: none; with no login the runners stop offering codex and submit refuses a Codex task.
 
 ## AlertInvestigationFailed

@@ -442,8 +442,7 @@ let
       };
     };
 
-    # acer's Caddyfile as deployed (realised, so caddy fmt has run) and the Caddy that runs it
-    # acer's slots' Codex on the owner's ChatGPT login (modules/workers/codex-login.nix): the proxy's route, the helpers
+    # acer's slots' Codex on the owner's own login (modules/workers/codex-auth.nix): the proxy's route, the helpers
     # the test runs against stubs, and every place a slot's environment could name the login
     codex-egress =
       let
@@ -454,18 +453,16 @@ let
         caddyfile = lib.last (lib.splitString " " svc.dev-env-egress.serviceConfig.ExecStart);
         egress = { inherit (svc.dev-env-egress.serviceConfig) User LoadCredential; };
         login = {
-          inherit (acer.sam.workers.codexLogin)
-            enable
-            home
-            tokens
-            loginCommand
-            ;
+          auth = acer.sam.workers.codexAuthFile;
+          inherit (acer.sam.workers.codexEgress) tokens;
+          owner = acer.services.devEnvironments.user;
+          ownerHome = acer.users.users.${acer.services.devEnvironments.user}.home;
         };
         derive = svc.codex-egress-token.serviceConfig.ExecStart;
         path = acer.systemd.paths.codex-egress-token.pathConfig;
         refresh = {
-          inherit (svc.codex-egress-refresh) environment;
-          inherit (svc.codex-egress-refresh.serviceConfig) ExecStart;
+          inherit (svc.codex-egress-refresh) environment onSuccess;
+          inherit (svc.codex-egress-refresh.serviceConfig) ExecStart ReadWritePaths;
           timer = acer.systemd.timers.codex-egress-refresh.timerConfig;
         };
         runner = {
@@ -490,7 +487,7 @@ let
         # turned on: acer serves the listener, msi's slots offer codex
         fleet =
           let
-            a = extend "acer-swift" [ { sam.workers.codexLogin.serveFleet = true; } ];
+            a = extend "acer-swift" [ { sam.workers.codexEgress.serveFleet = true; } ];
             m = extend "msi-ms7758" [ { homelab.execPool.agents = [ "codex" ]; } ];
             caddy = c: lib.last (lib.splitString " " c.systemd.services.dev-env-egress.serviceConfig.ExecStart);
           in
@@ -510,16 +507,24 @@ let
         );
         failing = {
           acer = failing acer;
-          withKey = failing (
-            extend "acer-swift" [ { sam.workers.codexAuthFile = "/home/lukas/.codex/auth.json"; } ]
+          noLogin = failing (
+            extend "acer-swift" [
+              (
+                { lib, ... }:
+                {
+                  sam.workers.codexAuthFile = lib.mkForce null;
+                  homelab.execPool.agents = lib.mkForce [ "codex" ];
+                }
+              )
+            ]
           );
           serveWithout = failing (
             extend "acer-swift" [
               (
                 { lib, ... }:
                 {
-                  sam.workers.codexLogin.enable = lib.mkForce false;
-                  sam.workers.codexLogin.serveFleet = true;
+                  sam.workers.codexAuthFile = lib.mkForce null;
+                  sam.workers.codexEgress.serveFleet = true;
                 }
               )
             ]
@@ -527,6 +532,7 @@ let
         };
       };
 
+    # acer's Caddyfile as deployed (realised, so caddy fmt has run) and the Caddy that runs it
     caddy-edge = {
       caddy = lib.getExe acer.services.caddy.package;
       inherit (acer.services.caddy) configFile enableReload;

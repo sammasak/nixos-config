@@ -996,7 +996,6 @@ POOL_CASES = [(name, without_msi_pool(case), want) for name, case, want in [
     ("a slot's name declared by hand", "{ homelab.execPool = { enable = true; slots = 1; }; sam.workers.instances.pool1 = { }; }", "pool1 is a pool slot's name"),
     ("a slot's name declared in the core", "{ homelab.execPool = { enable = true; slots = 1; }; services.devEnvironments.instances.pool1 = { }; }", "pool1 is a pool slot's name"),
     ("a slot's name retired", '{ homelab.execPool = { enable = true; slots = 1; }; sam.workers.retired = [ "pool1" ]; }', "pool1 is a pool slot's name"),
-    ("codex without a codex login", '{ homelab.execPool = { enable = true; slots = 1; agents = [ "codex" ]; }; }', "signed with the API key in sam.workers.codexAuthFile"),
     ("pi on a host without the Pi key", '{ homelab.execPool = { enable = true; slots = 1; agents = [ "pi" ]; }; }', "signed with the sops secret llm_gateway_pi_key"),
 ]]
 # acer (a pi host, the gateway's own) with every agent: one proxy route each, placeholders in the guest, no credential bound
@@ -1080,8 +1079,8 @@ def check_pool_compat():
               and not b.endswith(("/ssh_host_ed25519_key", ".pub"))]
     check(a.get("failing") == [] and a.get("sockets") == ["anthropic-egress", "github-egress", "llm-gateway-egress", "openai-egress", "otlp-egress"] and not leaked
           and a.get("codexKey") == "held-by-the-host" and a.get("codexUrl") == 'openai_base_url = "http://127.0.0.1:4103/v1"' and a.get("pi") is True
-          and {"llm_gateway_pi_key:/run/secrets/llm_gateway_pi_key", "codex-auth.json:/home/lukas/.codex/auth.json"} <= set(a.get("creds", [])),
-          f"homelab.execPool.agents = [ \"claude\" \"codex\" \"pi\" ] on acer: pool1 gets the anthropic, github, openai, llm-gateway and OTLP proxies, Codex and Pi pointed at them with placeholders, and the keys only in the proxy's credentials ({a.get('error') or {**a, 'leaked': leaked} })")
+          and "llm_gateway_pi_key:/run/secrets/llm_gateway_pi_key" in a.get("creds", []) and not any("codex" in c for c in a.get("creds", [])),
+          f"homelab.execPool.agents = [ \"claude\" \"codex\" \"pi\" ] on acer: pool1 gets the anthropic, github, openai, llm-gateway and OTLP proxies, Codex and Pi pointed at them with placeholders, the keys only in the proxy's credentials and Codex's login in none ({a.get('error') or {**a, 'leaked': leaked} })")
     # POOL_CASES were prefetched; a whole msi per type error, one at a time
     outs = [run_eval(fleet(c[1])) for c in POOL_CASES]
     typed = [subprocess.run(["nix", "eval", "--impure", "--json", "--expr", POOL_THROW % {"root": json.dumps(ROOT), "case": c[1]}], capture_output=True, text=True)

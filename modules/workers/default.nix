@@ -39,7 +39,6 @@ let
     );
   # The tokens are read at request time from the unit's credential and its private directory.
   githubToken = "${dev.paths.egress.private}/github-token";
-  openaiKey = "${dev.paths.egress.private}/openai-key";
   githubRewrite."http://127.0.0.1:${toString dev.egress.github.port}/".insteadOf = [
     "https://github.com/"
     "git@github.com:"
@@ -51,10 +50,10 @@ let
   hostName = config.networking.hostName;
   ghForward = ghFleet.host != hostName && lib.elem hostName ghFleet.from;
   ghServes = ghFleet.host == hostName;
-  # msi's slots' Codex through acer's ChatGPT route (sam.fleet.listeners.codex-egress): this host holds no login
+  # msi's slots' Codex through acer's route (sam.fleet.listeners.codex-egress): this host holds no login
   codexFleet = config.sam.fleet.listeners.codex-egress;
   codexForward = codexFleet.host != hostName && lib.elem hostName codexFleet.from;
-  codexServes = codexFleet.host == hostName && cfg.codexLogin.serveFleet;
+  codexServes = codexFleet.host == hostName && cfg.codexEgress.serveFleet;
   fleetFrom =
     l:
     toString (
@@ -187,24 +186,35 @@ let
     '';
   };
 
-  # `codex login --with-api-key` keeps the key in auth.json; a ChatGPT login's tokens refresh, so the proxy takes none.
-  openaiKeyFromAuth = pkgs.writeShellApplication {
-    name = "dev-env-egress-openai-key";
-    runtimeInputs = [ pkgs.jq ];
-    text = ''
-      key=$(jq -r '.OPENAI_API_KEY // empty' "$CREDENTIALS_DIRECTORY/codex-auth.json")
-      [[ -n $key ]] || echo "no OPENAI_API_KEY in the codex auth.json (a ChatGPT login?): OpenAI calls go unsigned" >&2
-      umask 077
-      printf '%s' "$key" > ${openaiKey}
-    '';
-  };
-
-  codexLogin = cfg.codexLogin;
-  # The ChatGPT backend for the slots' Codex (codex-login.nix): the token and account id read per request, the
-  # client's own values of both replaced, and no header added that the slot did not send.
+  inherit (cfg.codexEgress) tokens;
+  # The slots' Codex, signed from sam.workers.codexAuthFile (codex-auth.nix) with what was derived from it, read per
+  # request: a ChatGPT login goes to the ChatGPT backend with the client's own token and account id replaced and no
+  # header added that the slot did not send; an API key to api.openai.com. A 429 (the plan's usage limit) is
+  # passed through as it is: Caddy retries no POST.
   # The built-in provider cannot turn its WebSocket off: 426 sends Codex to HTTP at once (codex-rs core/src/client.rs,
   # UPGRADE_REQUIRED), where any other refusal costs it five retries first. It fetches no model list with a base_url.
-  chatgptSite = ''
+  codexSite = ''
+    @chatgpt file {
+      root /
+      try_files ${tokens}/account-id
+    }
+    @apikey file {
+      root /
+      try_files ${tokens}/openai-key
+    }
+    handle @chatgpt {
+      ${chatgptRoute}
+    }
+    handle @apikey {
+      @other not path /v1/*
+      respond @other 403
+      ${upstream "https://api.openai.com" "Bearer {file.${tokens}/openai-key}"}
+    }
+    handle {
+      respond "codex: no Codex login in sam.workers.codexAuthFile on this host" 503
+    }
+  '';
+  chatgptRoute = ''
     @websocket {
       path /v1/responses
       header Upgrade *
@@ -217,16 +227,11 @@ let
       method POST
     }
     handle @responses {
-      @nologin not file {
-        root /
-        try_files ${codexLogin.tokens}/access-token
-      }
-      respond @nologin "codex: no ChatGPT login on this host (sam.workers.codexLogin)" 503
       rewrite * /backend-api/codex/responses
       reverse_proxy https://chatgpt.com {
         header_up Host {upstream_hostport}
-        header_up Authorization "Bearer {file.${codexLogin.tokens}/access-token}"
-        header_up ChatGPT-Account-ID {file.${codexLogin.tokens}/account-id}
+        header_up Authorization "Bearer {file.${tokens}/access-token}"
+        header_up ChatGPT-Account-ID {file.${tokens}/account-id}
         header_up -Cookie
         header_up -X-Forwarded-For
         header_up -X-Forwarded-Proto
@@ -489,7 +494,7 @@ in
   imports = [
     ./core.nix
     ./execution-pool.nix
-    ./codex-login.nix
+    ./codex-auth.nix
     (lib.mkAliasOptionModule
       [ "sam" "workers" "instances" ]
       [ "services" "devEnvironments" "instances" ]
@@ -526,7 +531,7 @@ in
       type = types.nullOr types.externalPath;
       default = null;
       example = "/home/alice/.codex/auth.json";
-      description = "The host user's Codex `auth.json` from `codex login --with-api-key`, read by the proxy alone; null when the host user has no such login.";
+      description = "The host user's Codex `auth.json` (a ChatGPT login, or `codex login --with-api-key`), file store, which the slots' Codex calls are signed from; never bound into a guest or copied. null when the host user has no such login.";
     };
     ntfyUrl = mkOption {
       type = types.nullOr types.str;
@@ -641,7 +646,7 @@ in
             handle @outside {
               respond 403
             }
-            ${chatgptSite}
+            ${codexSite}
           }
         '';
       egress = {
@@ -705,9 +710,7 @@ in
           for = headless "codex";
           site =
             _:
-            if codexLogin.enable then
-              chatgptSite
-            else if codexForward then
+            if codexForward then
               ''
                 reverse_proxy ${codexFleet.url} {
                   header_up Host {upstream_hostport}
@@ -716,36 +719,26 @@ in
                 }
               ''
             else
-              ''
-                @other not path /v1/*
-                respond @other 403
-                ${upstream "https://api.openai.com" "Bearer {file.${openaiKey}}"}
-              '';
+              codexSite;
           port = 4103;
-          secrets = lib.optionalAttrs (!codexLogin.enable && !codexForward) {
-            "codex-auth.json" = cfg.codexAuthFile;
-          };
-          missing = "sam.workers: a codex instance's calls are signed with the ChatGPT login of sam.workers.codexLogin or the API key in sam.workers.codexAuthFile, and this host sets neither.";
-          prepare = lib.optional (!codexLogin.enable && !codexForward) (lib.getExe openaiKeyFromAuth);
+          missing = "sam.workers: the codex route loads no proxy credential.";
           guest.env.CODEX_API_KEY = "held-by-the-host";
-          # mkBefore: top-level keys, so ahead of the file's first table. On the ChatGPT route the web search tool
-          # (/v1/alpha/search) has no route, and analytics would go to chatgpt.com unsigned.
+          # mkBefore: top-level keys, so ahead of the file's first table. The web search tool (/v1/alpha/search) has
+          # no route on the ChatGPT backend, and analytics would go to chatgpt.com unsigned.
           guest.config.home-manager.users.${user}.home.file.".codex/config.toml".text = lib.mkMerge [
             (lib.mkBefore (
               ''
                 openai_base_url = "http://127.0.0.1:${toString dev.egress.openai.port}/v1"
               ''
-              + lib.optionalString (codexLogin.enable || codexForward) ''
+              + ''
                 web_search = "disabled"
               ''
             ))
-            (lib.mkIf (codexLogin.enable || codexForward) (
-              lib.mkAfter ''
+            (lib.mkAfter ''
 
-                [analytics]
-                enabled = false
-              ''
-            ))
+              [analytics]
+              enabled = false
+            '')
           ];
         };
         # Pi's own route: the gateway holds the provider keys, the proxy the host's project key.
@@ -937,8 +930,14 @@ in
         message = "sam.workers: an instance with egress.github.ownRefs pushes through the GitHub proxy, which it reaches only with egress.github.repos.";
       }
       {
-        assertion = cfg.codexLogin.serveFleet -> codexLogin.enable && codexFleet.host == hostName;
-        message = "sam.workers.codexLogin.serveFleet: this host serves sam.fleet.listeners.codex-egress with its own ChatGPT login, so it needs codexLogin.enable and to be the listener's host.";
+        assertion = cfg.codexEgress.serveFleet -> cfg.codexAuthFile != null && codexFleet.host == hostName;
+        message = "sam.workers.codexEgress.serveFleet: this host serves sam.fleet.listeners.codex-egress, signed with its own sam.workers.codexAuthFile, so it needs that and to be the listener's host.";
+      }
+      {
+        assertion =
+          lib.any (headless "codex") (lib.attrValues dev.instances)
+          -> codexForward || cfg.codexAuthFile != null;
+        message = "sam.workers: a codex instance's calls are signed from the host user's Codex login in sam.workers.codexAuthFile, which this host does not set.";
       }
       {
         assertion = ghServes -> lib.any onGithub (lib.attrValues dev.instances);
