@@ -250,7 +250,7 @@
         },
         "overrides": []
       },
-      "description": "homelab:health:score (rules/homelab.yaml): nodes ready, no critical alert, disk free, targets up, the dead man's switch; HomelabHealthScoreLow pages under 70."
+      "description": "homelab:health:score (rules/homelab.yaml): nodes ready, no critical alert, disk free, targets up, the dead man's switch. It pages no one; the alerts behind its KPIs do."
     },
     {
       "id": 7,
