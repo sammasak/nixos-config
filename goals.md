@@ -132,7 +132,7 @@ benchmark requirements: #776; epic: #491).
 |---|-------|----------|-------------------|
 | 1 | Pool platform | the open findings above | a pool session for the top open finding |
 | 2 | Deploy | asus behind main | asus in its power window |
-| 3 | Alerts | #624's unfinished alert work sits outside the pool | a1's patch at `/var/lib/worker-archive/a1` on acer |
+| 3 | Alerts | 624-i fixes the alerts nobody could act on; not yet read live (pool slots reach neither Prometheus nor Alertmanager) | merge and deploy 624-i, then read the live list; a1's patch at `/var/lib/worker-archive/a1` on acer |
 | 4 | Gates | first scheduled gate red on `shunt-metrics-test` only, fixed since | read the next scheduled gate result |
 | 5 | Live comparison | `ShuntCollectorStale` fires since the on side moved | read a day of Shunt on and off on 25 Nov, now on acer `pool1` |
 | 6 | Leftovers | one draft open | #616 (needs a physical reboot of black-pi) |
@@ -171,6 +171,13 @@ benchmark requirements: #776; epic: #491).
 | 624-f | Synthetic fire and resolve test through Alertmanager and alert-bridge | merged | #666 |
 | 624-g | Live delivery receipts | read 24 Nov (comment on #624): NodeOOMKill and the synthetic alert reached ntfy and resolved; no blindness alert has fired yet | |
 | 624-h | Query and runbook in the ntfy page | merged, live: Alertmanager posts straight to ntfy, alert-bridge removed | #672, #680 |
+| 624-i | Alerts red with nothing to do (25 Nov): DeployRolledBack per host until a good deploy of it; EscapeFound drops a reapplied revert (the live one, `78f4ee80`, reapplied as `ab8acd36`), one marked `Escape: no` and closed escape issues; the scheduled gate retries a red head once; RetroDueStepFailsRepeat clears on a scheduled green after the last failure; each text names its command | branch `pool/cli-273036d46c7d3230`; needs lenovo (collector) and acer (scheduled gate), rules on black-pi | |
+
+Open for #624, in pick-up order: after 624-i deploys, read the live list and confirm each alert cleared or names
+its command; the failing check behind the live ScheduledGateRed and RetroDueStepFailsRepeat (two series) is unknown
+from a pool slot, which reaches neither Prometheus nor Alertmanager: read it on acer (`journalctl -u scheduled-gate
+-n 200`) and fix it in the repo; an intentional revert that is never reapplied still counts for 24 h (no after-the-fact
+acknowledgement); `query` on TargetDown and the llm-gateway rules.
 
 ### #625 Shunt metrics
 
@@ -180,6 +187,7 @@ benchmark requirements: #776; epic: #491).
 | 625-1 | Collector, fixture tests, NixOS wiring (nav-metrics pattern) | merged, enabled on no host yet | #638 |
 | 625-2 | Shunt section in the agent-harness dashboard, stale and failing alerts, collector on lenovo | merged, live: collector on lenovo, rules on black-pi | #644 |
 | 625-pilot | On/off on the running system (no benchmark, owner 23 Nov) | merged, live: on for lenovo and acer's `pool1` (moved from `a1` by #759), off for acer's other slots; read a day on 25 Nov | #678, #679 |
+| 625-3 | Hook overhead: `shunt_hook_time_ms{hook}` with validate-bash as the off side's control, ms per Bash call on and off (dashboard panel), `ShuntHookOverhead` (over 250 ms per call, at least 50 calls, a starting bound) | branch `pool/cli-273036d46c7d3230`; needs lenovo and acer, rules on black-pi; set the bound from the first day's reading | |
 
 ### #646 execution pool (v0.1)
 
