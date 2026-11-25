@@ -239,12 +239,12 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
         .query_one("SELECT max(version) FROM schema_migrations", &[])
         .unwrap()
         .get(0);
-    assert_eq!(version, 19);
+    assert_eq!(version, 20);
     submit(&mut s, &task("t-1", 1));
     // a newer binary's additive migration keeps the floor: this one still serves the database, as after a rollback
     pg.sql()
         .execute(
-            "INSERT INTO schema_migrations (version, floor) VALUES (20, 19)",
+            "INSERT INTO schema_migrations (version, floor) VALUES (21, 20)",
             &[],
         )
         .unwrap();
@@ -252,17 +252,17 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
     assert!(s.claim(&slot("s0"), 60).unwrap().is_some());
     // one this binary would misread, or one that names no floor, is refused
     pg.sql()
-        .execute("INSERT INTO schema_migrations (version) VALUES (21)", &[])
+        .execute("INSERT INTO schema_migrations (version) VALUES (22)", &[])
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(21))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(22))));
     pg.sql()
         .execute(
-            "UPDATE schema_migrations SET floor = 21 WHERE version = 21",
+            "UPDATE schema_migrations SET floor = 22 WHERE version = 22",
             &[],
         )
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(21))));
-    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(21))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(22))));
+    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(22))));
 }
 
 #[test]
@@ -2876,6 +2876,85 @@ fn session_metrics_count_turns_wakes_and_tokens() {
         "exec_pool_sessions_parked_seconds_bucket{host=\"msi-ms7758\",agent=\"claude\",le=\"86400\"} 1",
     );
     assert!(!m.contains(&id), "no id in a label");
+}
+
+#[test]
+fn a_session_summary_splits_its_time_by_state_and_park_reason_and_sums_its_usage() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let (a, epoch, _) = started(&mut owner);
+    let mut reported = park(ParkReason::TurnEnd, 0);
+    reported.result.usage = Some(Usage {
+        input_tokens: 10,
+        output_tokens: 200,
+        cache_read_tokens: 3000,
+        cache_creation_tokens: 400,
+        cost_usd: Some(0.5),
+    });
+    owner.park(&a, epoch, &reported).unwrap();
+    s.send(&id, "next").unwrap();
+    let (_, epoch, turn) = started(&mut owner);
+    let mut second = park(ParkReason::TurnError, turn.upto);
+    second.result.usage = Some(Usage {
+        input_tokens: 1,
+        output_tokens: 2,
+        cache_read_tokens: 3,
+        cache_creation_tokens: 4,
+        cost_usd: Some(0.25),
+    });
+    owner.park(&a, epoch, &second).unwrap();
+    // every state left lasted a second: queued, leased, running and waiting once a turn, the first wait a turn_end
+    pg.sql()
+        .execute(
+            "UPDATE events SET in_state_ms = 1000 WHERE from_status IS NOT NULL",
+            &[],
+        )
+        .unwrap();
+
+    let all = s.session_summaries(None, 20).unwrap();
+    assert_eq!(all.len(), 1, "{all:?}");
+    let v = &all[0];
+    assert_eq!(
+        s.session_summaries(Some(&a), 20).unwrap()[0]["task"],
+        id.as_str(),
+        "by its attempt too"
+    );
+    assert!(
+        s.session_summaries(Some("cli-none"), 20)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(v["task"], id.as_str());
+    assert_eq!(v["state"], "waiting");
+    assert_eq!(v["agent"], "claude");
+    assert_eq!(v["last_host"], "msi-ms7758");
+    assert_eq!(v["turns"], 2);
+    assert_eq!(v["turns_reported"], 2);
+    assert_eq!(v["input_tokens"], 11);
+    assert_eq!(v["output_tokens"], 202);
+    assert_eq!(v["cache_read_tokens"], 3003);
+    assert_eq!(v["cache_creation_tokens"], 404);
+    assert_eq!(v["cost_usd"], 0.75);
+    let secs = |k: &str| v[k].as_f64().unwrap_or_else(|| panic!("{k}: {v}"));
+    // a lease is leased then running, twice
+    assert!((secs("running_seconds") - 4.0).abs() < 1e-9, "{v}");
+    assert!((secs("queued_seconds") - 2.0).abs() < 1e-9, "{v}");
+    assert!(secs("review_seconds").abs() < 1e-9, "{v}");
+    // the first wait, and the one it is still in, counted up to now
+    let by = &v["waiting_by_reason"];
+    assert!((by["turn_end"].as_f64().unwrap() - 1.0).abs() < 1e-9, "{v}");
+    let now = by["turn_error"].as_f64().unwrap();
+    assert!((0.0..60.0).contains(&now), "{v}");
+    assert!((secs("waiting_seconds") - 1.0 - now).abs() < 1e-6, "{v}");
+    assert!(secs("wall_seconds") >= 0.0);
+    // the runner reads no summary
+    let mut runner = Store::open(
+        &pg.conninfo()
+            .replace("user=exec_pool ", "user=exec_pool_runner "),
+    )
+    .unwrap();
+    assert!(runner.session_summaries(None, 20).is_err());
 }
 
 #[test]
