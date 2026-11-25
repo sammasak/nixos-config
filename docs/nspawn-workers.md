@@ -85,6 +85,12 @@ makes a session turn's home and checkout afresh there and removes them at the pa
 (`docs/records/execution-pool-contract.md`, Session state); reset, retire, the trash sweep and records never touch
 `.sessions`, and gcroots only reads it. Not with `rootInGuest`.
 
+A slot's user is in no group but its own and has no sudo (named instances keep the fleet's groups). What a slot binds
+from its host is pinned per slot by `scripts/test-workers-eval.py` (`check_slot_reach`): its home, caches and dock,
+its egress sockets, the lock lanes, an sshd host key (the environments' shared one, readable by guest root alone) and the
+host user's public key, beside the stock store, nix db, daemon socket and per-container profiles and roots; no secret,
+token or private key of the host user, and its container unit loads no credential.
+
 ## Sizing
 
 Reserved per environment, spiking allowed. Measured on both hosts (8 cores,

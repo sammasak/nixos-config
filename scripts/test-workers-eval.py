@@ -1,6 +1,7 @@
 """The developer-environment core (modules/workers/core.nix) rejects a wrong configuration at evaluation: each case is
 one small NixOS evaluation of only that module on a stub host. A valid host passes, and the agent's command line
 survives quotes, backslashes and newlines through the guest's login shell (fish and bash)."""
+import hashlib
 import json
 import os
 import pathlib
@@ -1073,6 +1074,72 @@ def check_session_dock():
     check(got.get("named") == {"dock": False, "bind": None}, f"a named worker binds no /session ({got.get('named') or got.get('error')})")
 
 
+# What a slot can read of its host: every bind of each committed slot (acer's, msi's), beside the stock store, nix db, daemon socket and per-container profile and roots
+# binds of nixpkgs' container module. A new bind fails here until it is listed. Its container unit loads no credential,
+# and its user has no group of the host user's and no sudo.
+SLOT_REACH = r"""
+let
+  flake = builtins.getFlake (toString %(root)s);
+  lib = flake.inputs.nixpkgs.lib;
+  c = (flake.nixosConfigurations.%(host)s.extendModules { modules = [ %(case)s ]; }).config;
+  dev = c.services.devEnvironments;
+  slots = builtins.filter (lib.hasPrefix "pool") (builtins.attrNames dev.instances);
+  g = c.containers.pool1.config;
+in {
+  failing = map (a: a.message) (builtins.filter (a: !a.assertion) c.assertions);
+  binds = lib.genAttrs slots (n: lib.mapAttrs (_: b: [ b.hostPath b.isReadOnly b.mountPoint ]) c.containers.${n}.bindMounts);
+  privateUsers = lib.genAttrs slots (n: c.containers.${n}.privateUsers);
+  units = lib.genAttrs slots (n: builtins.filter (k: lib.hasInfix "Credential" k) (builtins.attrNames c.systemd.services."container@${n}".serviceConfig));
+  start = c.systemd.services."container@pool1".serviceConfig.ExecStartPre;
+  groups = g.users.users.${dev.user}.extraGroups;
+  sudo = g.security.sudo.enable;
+  wrappers = builtins.attrNames g.security.wrappers;
+  allowed = c.nix.settings.allowed-users;
+}
+"""
+
+
+def slot_binds(n, own):
+    """The binds a slot `n` is expected to have: `own` (privateUsers) gives it its own sshd key and fetcher cache and
+    id-maps its read-only binds but that key."""
+    s, h, c = "/var/lib/workers", "/home/lukas", "/var/lib/host-credentials"
+    ro = lambda p: f"{p}:idmap" if own else p
+    return {
+        h: [f"{s}/{n}/home", False, h],
+        f"{h}/.cache/nix": [f"{s}/{n}/nix-cache" if own else f"{s}/.nix-cache", False, f"{h}/.cache/nix"],
+        f"{h}/.cache/nix/eval-cache-v6": [f"{s}/{n}/eval-cache", False, f"{h}/.cache/nix/eval-cache-v6"],
+        "/run/work-locks": ["/run/work-locks", True, ro("/run/work-locks")],
+        f"{c}/ssh_host_ed25519_key": [f"{s}/{n}/ssh_host_ed25519_key" if own else f"{s}/ssh_host_ed25519_key", True, f"{c}/ssh_host_ed25519_key"],
+        f"{c}/id_ed25519.pub": [f"{h}/.ssh/id_ed25519.pub", True, ro(f"{c}/id_ed25519.pub")],
+        "/run/egress": [f"/run/dev-env-egress/{n}", True, ro("/run/egress")],
+        "/session": [f"{s}/.sessions/dock/{n}", False, "/session"],
+    }
+
+
+def check_slot_reach():
+    # a whole host each, one at a time
+    for host, case, count, own in (("acer-swift", "{ }", 3, False), ("msi-ms7758", "{ }", 4, False)):
+        out = run_eval(SLOT_REACH % {"root": json.dumps(ROOT), "host": host, "case": case})
+        got = json.loads(out.stdout) if out.returncode == 0 else {"error": out.stderr.strip()[-600:]}
+        slots = [f"pool{i}" for i in range(1, count + 1)]
+        label = f"{host}{' with privateUsers' if own else ''}"
+        key = "slot's own" if own else "environments'"
+        want = {n: slot_binds(n, own) for n in slots}
+        check(got.get("failing") == [] and got.get("binds") == want,
+              f"{label}: {', '.join(slots)} each bind only their home, caches, dock, egress sockets, the lock lanes, the "
+              f"{key} sshd key and the user's public key: no secret, private key or token "
+              f"({got.get('error') or got.get('failing') or {n: {k: v for k, v in b.items() if want.get(n, {}).get(k) != v} for n, b in got.get('binds', {}).items()} })")
+        blocks = got.get("privateUsers", {})
+        check(all(v == ("no" if not own else 1879048192 + 65536 * (1 + int(hashlib.sha256(n.encode()).hexdigest()[:4], 16) % 254)) for n, v in blocks.items())
+              and len(blocks) == count and got.get("units") == {n: [] for n in slots},
+              f"{label}: {'each slot its own 65536 uids' if own else 'no user namespace'}, and no slot's container unit loads a credential ({blocks}, {got.get('units')})")
+        check(got.get("groups") == [] and got.get("sudo") is False and "sudo" not in got.get("wrappers", ["sudo"]),
+              f"{label}: the slot user has no group but its own and no sudo ({ {k: got.get(k) for k in ('groups', 'sudo', 'wrappers')} })")
+        if own:
+            check(all(f"vu-{n}-1000" in got.get("allowed", []) for n in slots) and "lukas" in got.get("allowed", []),
+                  f"{label}: the host daemon allows each slot's mapped user beside lukas ({got.get('allowed')})")
+
+
 # modules/homelab/exec-pool-runner.nix: on acer one runner per slot as the queue's role, its root helper, and a
 # polkit rule that lets that role start exactly the helpers and the resets of its slots, and clear those resets' failed
 # state; msi's four slots alike, its runner on acer's queue (exec-pool-db-acer-swift checks how it connects).
@@ -1560,6 +1627,7 @@ def main():
     check(out.returncode == 0 and json.loads(out.stdout) == [], f"msi-ms7758 as committed fails no assertion ({out.stdout.strip() or out.stderr.strip()[-600:]})")
     check_pool_compat()
     check_session_dock()
+    check_slot_reach()
     check_runner()
     out = run_eval(fleet(FLEET_INSTANCE, FLEET_FACTS))
     facts = json.loads(out.stdout) if out.returncode == 0 else {}

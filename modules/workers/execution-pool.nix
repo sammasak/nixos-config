@@ -88,6 +88,10 @@ in
         { devEnvironment, ... }:
         lib.mkIf (lib.elem devEnvironment.name slotNames) {
           environment.systemPackages = [ poolWait ];
+          # A slot runs task text: none of the host user's groups (wheel, kvm, input) and no sudo, whose setuid
+          # wrapper is host root's in a slot without privateUsers. mkForce: core/users.nix and rootInGuest add them.
+          users.users.${dev.user}.extraGroups = lib.mkForce [ ];
+          security.sudo.enable = false;
         }
       )
     ];
