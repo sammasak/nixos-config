@@ -19,8 +19,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use exec_pool::queue::{
-    Logs, METRICS_UNAVAILABLE, Park, QueueError, Store, Submitted, TRANSCRIPT_BYTES, Transcript,
-    Turn, TurnLog,
+    Arm, Logs, METRICS_UNAVAILABLE, Park, QueueError, Store, Submitted, TRANSCRIPT_BYTES,
+    Transcript, Turn, TurnLog,
 };
 use exec_pool::task_result::{TaskResult, Usage};
 use exec_pool::wake::Wake;
@@ -239,12 +239,12 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
         .query_one("SELECT max(version) FROM schema_migrations", &[])
         .unwrap()
         .get(0);
-    assert_eq!(version, 21);
+    assert_eq!(version, 22);
     submit(&mut s, &task("t-1", 1));
     // a newer binary's additive migration keeps the floor: this one still serves the database, as after a rollback
     pg.sql()
         .execute(
-            "INSERT INTO schema_migrations (version, floor) VALUES (22, 21)",
+            "INSERT INTO schema_migrations (version, floor) VALUES (23, 22)",
             &[],
         )
         .unwrap();
@@ -252,17 +252,17 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
     assert!(s.claim(&slot("s0"), 60).unwrap().is_some());
     // one this binary would misread, or one that names no floor, is refused
     pg.sql()
-        .execute("INSERT INTO schema_migrations (version) VALUES (23)", &[])
+        .execute("INSERT INTO schema_migrations (version) VALUES (24)", &[])
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(23))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(24))));
     pg.sql()
         .execute(
-            "UPDATE schema_migrations SET floor = 23 WHERE version = 23",
+            "UPDATE schema_migrations SET floor = 24 WHERE version = 24",
             &[],
         )
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(23))));
-    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(23))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(24))));
+    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(24))));
 }
 
 #[test]
@@ -1743,6 +1743,7 @@ fn park(reason: ParkReason, upto: i64) -> Park {
         undelivered: false,
         wake: None,
         transcript: None,
+        arm: None,
     }
 }
 
@@ -2833,6 +2834,7 @@ fn session_metrics_count_turns_wakes_and_tokens() {
         cache_creation_tokens: 400,
         cost_usd: Some(0.5),
     });
+    reported.arm = Some(Arm::parse(r#"{"variant": "300000", "shunt": "off"}"#).unwrap());
     owner.park(&a, epoch, &reported).unwrap();
     s.send(&id, "next").unwrap();
     // the next turn on another host
@@ -2868,10 +2870,30 @@ fn session_metrics_count_turns_wakes_and_tokens() {
     has("exec_pool_session_wake_seconds_count{host=\"msi-ms7758\",source=\"timer\"} 0");
     has("exec_pool_session_host_changes_total{host=\"asus-b460m\"} 1");
     has("exec_pool_session_host_changes_total{host=\"msi-ms7758\"} 1");
-    has("exec_pool_session_turns_reported_total{host=\"msi-ms7758\",agent=\"claude\"} 1");
-    has("exec_pool_session_cache_read_tokens_total{host=\"msi-ms7758\",agent=\"claude\"} 3000");
-    has("exec_pool_session_cost_usd_total{host=\"msi-ms7758\",agent=\"claude\"} 0.5");
-    has("exec_pool_session_cost_usd_total{host=\"asus-b460m\",agent=\"claude\"} 0");
+    // usage by the host and arm its turn ran under; a turn that reported none counts no session there, and a host
+    // with no turn under an arm reads zero only for its default one
+    let arm = "variant=\"300000\",shunt=\"off\"";
+    has(&format!(
+        "exec_pool_session_turns_reported_total{{host=\"msi-ms7758\",{arm},agent=\"claude\"}} 1"
+    ));
+    has(&format!(
+        "exec_pool_session_cache_read_tokens_total{{host=\"msi-ms7758\",{arm},agent=\"claude\"}} 3000"
+    ));
+    has(&format!(
+        "exec_pool_session_cost_usd_total{{host=\"msi-ms7758\",{arm},agent=\"claude\"}} 0.5"
+    ));
+    has(&format!(
+        "exec_pool_sessions_reported_last_day{{host=\"msi-ms7758\",{arm},agent=\"claude\"}} 1"
+    ));
+    has(
+        "exec_pool_session_turns_reported_total{host=\"asus-b460m\",variant=\"unknown\",shunt=\"unknown\",agent=\"claude\"} 0",
+    );
+    has(
+        "exec_pool_sessions_reported_last_day{host=\"msi-ms7758\",variant=\"default\",shunt=\"off\",agent=\"claude\"} 0",
+    );
+    assert!(!m.contains("host=\"asus-b460m\",variant=\"300000\""), "{m}");
+    // only the first turn reported usage, so no session ran under two arms
+    has("exec_pool_sessions_mixed_arms_last_day 0");
     has(
         "exec_pool_sessions_parked_seconds_bucket{host=\"msi-ms7758\",agent=\"claude\",le=\"86400\"} 1",
     );
@@ -3335,4 +3357,47 @@ fn a_turn_whose_input_never_reached_the_agent_hands_it_to_the_next() {
         "the undelivered message is handed again: {}",
         next.input
     );
+}
+
+#[test]
+fn an_arm_is_two_bounded_labels_and_nothing_else() {
+    assert_eq!(
+        Arm::parse(r#"{"variant": "default", "shunt": "on"}"#).unwrap(),
+        Arm {
+            variant: "default".to_owned(),
+            shunt: "on".to_owned()
+        }
+    );
+    for bad in [
+        r#"{"variant": "", "shunt": "off"}"#,
+        r#"{"variant": "300\"} 1", "shunt": "off"}"#,
+        r#"{"variant": "Default", "shunt": "off"}"#,
+        r#"{"variant": "12345678901234567", "shunt": "off"}"#,
+        r#"{"variant": "default", "shunt": "yes"}"#,
+        r#"{"variant": "default", "shunt": "off", "slot": "pool2"}"#,
+        r#"{"variant": "default"}"#,
+    ] {
+        assert!(Arm::parse(bad).is_err(), "{bad}");
+    }
+}
+
+#[test]
+fn a_park_with_an_arm_lands_in_a_queue_not_yet_migrated_to_record_it() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (_s, _id) = session(&pg);
+    // as a remote runner's park into a queue host still at 20
+    pg.sql()
+        .batch_execute("ALTER TABLE turns DROP COLUMN variant, DROP COLUMN shunt")
+        .unwrap();
+    let (a, epoch, _) = started(&mut owner);
+    let mut armed = park(ParkReason::TurnEnd, 0);
+    armed.arm = Some(Arm::parse(r#"{"variant": "300000", "shunt": "off"}"#).unwrap());
+    owner.park(&a, epoch, &armed).unwrap();
+    let turns: i64 = pg
+        .sql()
+        .query_one("SELECT count(*) FROM turns", &[])
+        .unwrap()
+        .get(0);
+    assert_eq!(turns, 1);
 }

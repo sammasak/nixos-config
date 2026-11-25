@@ -125,11 +125,12 @@ let
   # the limit in minutes; samples every 4 m, under the 5 m lookback. The last finished gate is at the epoch, promtool's 0
   overdueAt = a.ScheduledGateOverdue.hours.value * 60;
   gateNode = ''job="node-exporter",instance="acer-swift",node="acer-swift"'';
-  redSeries = ''homelab_scheduled_gate_red{${gateNode},head="aaaaaaaaaaaa",step="nixos-flake-check (checks.x86_64-linux.foo)",green="bbbbbbbbbbbb"}'';
+  redSeries = ''homelab_scheduled_gate_red{${gateNode},head="aaaaaaaaaaaa",step="nixos-flake-check",check="checks.x86_64-linux.foo",green="bbbbbbbbbbbb"}'';
   redLabels = {
     node = "acer-swift";
     head = "aaaaaaaaaaaa";
-    step = "nixos-flake-check (checks.x86_64-linux.foo)";
+    step = "nixos-flake-check";
+    check = "checks.x86_64-linux.foo";
     green = "bbbbbbbbbbbb";
     severity = "warning";
     team = "shipping";
@@ -175,7 +176,7 @@ let
     interval = "1m";
     input_series = [
       {
-        series = ''homelab_scheduled_gate_red{${gateNode},head="aaaaaaaaaaaa",step="nixos-flake-check (checks.x86_64-linux.foo)",green="${green}"}'';
+        series = ''homelab_scheduled_gate_red{${gateNode},head="aaaaaaaaaaaa",step="nixos-flake-check",check="checks.x86_64-linux.foo",green="${green}"}'';
         values = "1x${n (redFor + 10)}";
       }
     ];
@@ -190,12 +191,12 @@ let
             };
             exp_annotations =
               let
-                summary = "The scheduled full gate failed on main at aaaaaaaaaaaa, first failed step nixos-flake-check (checks.x86_64-linux.foo); ${range}. A red head runs once more by itself; red again, read it on acer with journalctl -u scheduled-gate -n 200 and reproduce with just full-gate aaaaaaaaaaaa. A later scheduled run that passes clears this.";
+                summary = "The scheduled full gate failed on main at aaaaaaaaaaaa, first failed step nixos-flake-check, check checks.x86_64-linux.foo; ${range}. Rerun it alone in a checkout of aaaaaaaaaaaa: nix build -L .#checks.x86_64-linux.foo; the run's log is journalctl -u scheduled-gate -n 200 on acer. A red head runs once more by itself; a later scheduled run that passes clears this.";
               in
               {
                 inherit summary;
                 description = "${summary} The threshold is in modules/homelab/monitoring/shipping-policy.json (alerts.ScheduledGateRed); change it by a PR that quotes the Shipping dashboard (docs/shipping.md).";
-                query = ''max by (node, head, step, green) (homelab_scheduled_gate_red{job="node-exporter"}) == 1'';
+                query = ''max by (node, head, step, check, green) (homelab_scheduled_gate_red{job="node-exporter"}) == 1'';
                 runbook_url = "https://github.com/sammasak/nixos-config/blob/main/docs/shipping.md#scheduledgatered";
               };
           }
@@ -209,6 +210,74 @@ let
     tests = [
       (redAnnotated "bbbbbbbbbbbb" "the commits since the last green run are bbbbbbbbbbbb..aaaaaaaaaaaa")
       (redAnnotated "none" "no scheduled run has passed yet, so the range starts at the first scheduled run")
+      # a step with no check is rerun by nixos:step, in either alert's text
+      {
+        name = "a failed step with no check names nixos:step as its rerun";
+        interval = "1m";
+        input_series = [
+          {
+            series = ''homelab_scheduled_gate_red{${gateNode},head="aaaaaaaaaaaa",step="shunt-metrics-test",green="bbbbbbbbbbbb"}'';
+            values = "1x${n (redFor + 10)}";
+          }
+          {
+            series = ''shipping_gate_step_failures{step="shunt-metrics-test",window="7d"}'';
+            values = "${n minFails}x${n (stepFor + 20)}";
+          }
+          {
+            series = ''shipping_gate_runs_counted{host="lenovo"}'';
+            values = "${n lastRuns}x${n (stepFor + 20)}";
+          }
+        ];
+        alert_rule_test = [
+          {
+            alertname = "ScheduledGateRed";
+            eval_time = "${n (redFor + 5)}m";
+            exp_alerts = [
+              {
+                exp_labels = removeAttrs redLabels [ "check" ] // {
+                  step = "shunt-metrics-test";
+                };
+                exp_annotations =
+                  let
+                    summary = "The scheduled full gate failed on main at aaaaaaaaaaaa, first failed step shunt-metrics-test; the commits since the last green run are bbbbbbbbbbbb..aaaaaaaaaaaa. Rerun it alone in a checkout of aaaaaaaaaaaa: NIXOS_STEP=shunt-metrics-test devenv tasks run nixos:step; the run's log is journalctl -u scheduled-gate -n 200 on acer. A red head runs once more by itself; a later scheduled run that passes clears this.";
+                  in
+                  {
+                    inherit summary;
+                    description = "${summary} The threshold is in modules/homelab/monitoring/shipping-policy.json (alerts.ScheduledGateRed); change it by a PR that quotes the Shipping dashboard (docs/shipping.md).";
+                    query = ''max by (node, head, step, check, green) (homelab_scheduled_gate_red{job="node-exporter"}) == 1'';
+                    runbook_url = "https://github.com/sammasak/nixos-config/blob/main/docs/shipping.md#scheduledgatered";
+                  };
+              }
+            ];
+          }
+          {
+            alertname = "RetroDueStepFailsRepeat";
+            eval_time = "${n (stepFor + 5)}m";
+            exp_alerts = [
+              {
+                exp_labels = {
+                  step = "shunt-metrics-test";
+                  severity = "warning";
+                  team = "shipping";
+                };
+                exp_annotations =
+                  let
+                    rule = lib.findFirst (r: r.alert or "" == "RetroDueStepFailsRepeat") null (
+                      lib.concatMap (g: g.rules) (builtins.fromJSON (builtins.readFile rules)).groups
+                    );
+                    summary = "Gate step shunt-metrics-test failed on ${n minFails} heads in 7 d: a retro is due (Shipping dashboard: failed gate steps; Platform health for the runs). Rerun it alone on main: NIXOS_STEP=shunt-metrics-test devenv tasks run nixos:step; a scheduled full gate on main that passes after the last failure clears this, as does ${n newFailFor} h with no new one.";
+                  in
+                  {
+                    inherit summary;
+                    description = "${summary} The threshold is in modules/homelab/monitoring/shipping-policy.json (alerts.RetroDueStepFailsRepeat); change it by a PR that quotes the Shipping dashboard (docs/shipping.md).";
+                    query = rule.expr;
+                    runbook_url = "https://github.com/sammasak/nixos-config/blob/main/docs/shipping.md#alerts";
+                  };
+              }
+            ];
+          }
+        ];
+      }
     ];
   };
   tests = {

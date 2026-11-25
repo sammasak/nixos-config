@@ -135,7 +135,9 @@ let
         drv() {
           local t=$SECONDS
           echo "nixos-flake-check: $1" >&2
+          cur=$1
           got=$(nix eval --raw --no-write-lock-file ".#$1.drvPath")
+          cur=""
           took "eval $1" "$t"
         }
         # each host's toplevel drvPath, "host drv" per line: seventh-host-test takes them as its unseeded baselines
@@ -164,6 +166,15 @@ let
           fi
         }
         me=$(uname -n)
+        # an output that fails to evaluate or dry-run fails the step without a build record: this one names it, or
+        # ScheduledGateRed and RetroDueStepFailsRepeat can name the step alone and rerun the whole gate
+        cur=""
+        failed_output() {
+          local rc=$?
+          [ "$rc" -eq 0 ] || [ -z "$cur" ] \
+            || ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check="$cur" owner="$me" seconds=0 result=fail head="''${NIXOS_QA_HEAD:-}"
+        }
+        trap failed_output EXIT
         cudahost=0
         if nix-store -qR /run/current-system 2>/dev/null | grep -qE -e "$heavy"; then cudahost=1; fi
         deferred=()
@@ -243,6 +254,7 @@ let
           IFS=. read -r kind s o <<<"$p"
           if [ "$kind.$s" = "checks.$here" ]; then
             c=checks.$s.$o
+            cur=$c
             t=$SECONDS
             drvpath "$c"
             took "eval $c" "$t"
@@ -271,6 +283,7 @@ let
                 if [ -n "''${NIXOS_FLAKE_CHECK_DRY:-}" ]; then
                   r=dry
                 elif ! nix build --no-link "$d^*"; then
+                  cur=""
                   ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check="$c" owner="$me" seconds=$((SECONDS - t)) eval_seconds=$ev eval_with="$with" compiled="$n" fetched="$m" result=fail head="''${NIXOS_QA_HEAD:-}" drv="$d"
                   exit 1
                 elif [ "$n" -gt 0 ]; then
@@ -282,21 +295,27 @@ let
                 fi
                 took "build $c" "$t"
                 ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check="$c" owner="$me" seconds=$((SECONDS - t)) eval_seconds=$ev eval_with="$with" compiled="$n" fetched="$m" result=$r head="''${NIXOS_QA_HEAD:-}" drv="$d"
+                cur=""
                 ;;
               foreign)
                 owner=''${o#deploy-*-}
                 deferred+=("$owner:$c")
                 echo "nixos-flake-check: deferred $c to $owner (compiles $n) $d: it would compile against $(grep -E -e "$heavy" <<<"$inputs" | sed 's|^/nix/store/[a-z0-9]*-||' | tr '\n' ' ')" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}" >&2
                 ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check="$c" owner="$owner" seconds=0 result=deferred head="''${NIXOS_QA_HEAD:-}" drv="$d"
+                cur=""
                 ;;
               nodeless)
+                # a refusal, not this check failing: a fail record would name a rerun that builds and passes
+                cur=""
                 echo "nixos-flake-check: $c would compile against CUDA on $me, whose system has none, and names no deploy node to defer to: name it deploy-*-<node> or run this gate on a CUDA host" >&2
                 exit 1
                 ;;
             esac
           elif [ "$kind" = checks ]; then
+            cur=$p
             t=$SECONDS
             drvpath "$p"
+            cur=""
             took "eval $p" "$t"
           else
             drv "$p"
@@ -965,6 +984,25 @@ let
     workersEvalTest
     alloyOtlpTest
   ];
+  # one nixos:qa step by the name its gate-step record gives (NIXOS_STEP), the rerun ScheduledGateRed and
+  # RetroDueStepFailsRepeat name: about twenty steps have no task of their own, and the rest not always step's name
+  qaSteps =
+    lints
+    ++ [
+      fmtCheck
+      secretsVerify
+      probe
+    ]
+    ++ sideBySide
+    ++ tests;
+  stepRun = gate "nixos-step" [ ] ''
+    case ''${NIXOS_STEP:?set NIXOS_STEP to a nixos:qa step name, as its gate-step record or alert gives it} in
+    ${lib.concatMapStrings (g: "  ${g.name}) exec ${lib.getExe g} ;;\n") qaSteps}
+      *) echo "nixos-step: $NIXOS_STEP is no nixos:qa step: ${
+        toString (map (g: g.name) qaSteps)
+      }" >&2; exit 1 ;;
+    esac
+  '';
   # the run's own record is written on every exit, so a failed or interrupted gate still shows
   # what this shell's gates were built from. The pre-push hook and a long-lived shell run the gates evaluated at
   # devenv entry: after a merge that changed these files they would check the new tree with the old test list. devenv
@@ -1590,6 +1628,8 @@ in
       task "acer's ak: lifecycle/ak as authentik in the server unit's sandbox and environment, the env file by path" authentikAkTest;
     "nixos:switch-safety-test" = task "A switch survives a bad ~/.claude.json" switchSafetyTest;
     "nixos:qa" = task "Every gate above, in order" qa;
+    "nixos:step" =
+      task "One nixos:qa step by its recorded name, NIXOS_STEP=<step>: the rerun a red gate's alert names" stepRun;
     "platform:scorecard" = {
       description = "Every metric in metrics/targets.json read from Prometheus and Loki: reading, target and pass, fail, stale or unknown per area; exits 2 when a backend is unreachable (SCORECARD_PROMETHEUS_URL, SCORECARD_LOKI_URL override sam.fleet's)";
       exec = "${lib.getExe scorecard} \"$DEVENV_ROOT/metrics/targets.json\"";

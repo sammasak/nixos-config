@@ -3,7 +3,7 @@
 # with dev environments a unit per declared instance does the same for its home, labelled worker. Every series
 # carries shunt="on|off", the declared sam.claude.bulkReader.enable of the host or that guest, so the two compare.
 # A static claude_auto_compact_window_info series per host and guest names its declared sam.claude.autoCompactWindow
-# (variant, "default" when null), for joining the compaction comparison (#626).
+# (variant, "default" when null) and its shunt, for joining the compaction comparison (#626) without the Shunt side.
 {
   config,
   lib,
@@ -28,13 +28,14 @@ let
       [
         "# HELP claude_auto_compact_window_info The declared Claude Code autoCompactWindow in tokens, or default."
         "# TYPE claude_auto_compact_window_info gauge"
-        ''claude_auto_compact_window_info{variant="${variant config.sam.claude.autoCompactWindow}"} 1''
+        ''claude_auto_compact_window_info{variant="${variant config.sam.claude.autoCompactWindow}",shunt="${onOff config.sam.claude.bulkReader.enable}"} 1''
       ]
       ++ map (
         n:
-        ''claude_auto_compact_window_info{worker="${n}",variant="${
-          variant config.containers.${n}.config.sam.claude.autoCompactWindow
-        }"} 1''
+        let
+          c = config.containers.${n}.config.sam.claude;
+        in
+        ''claude_auto_compact_window_info{worker="${n}",variant="${variant c.autoCompactWindow}",shunt="${onOff c.bulkReader.enable}"} 1''
       ) guests
     )
   );

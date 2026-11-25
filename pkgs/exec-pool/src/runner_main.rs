@@ -28,7 +28,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use exec_pool::queue::{Change, Claim, Park, QueueError, Store, TRANSCRIPT_BYTES, Transcript};
+use exec_pool::queue::{Arm, Change, Claim, Park, QueueError, Store, TRANSCRIPT_BYTES, Transcript};
 use exec_pool::runner::{
     CAPTURE_BYTES, DRAIN_REQUEST, ExecResult, Listed, Manifest, PARK_PUSH_FAILURES,
     PREPARE_FAILURES, ParkedAt, QUICK_SECS, Session, Stage, Step, TurnHint, TurnSettle, claim_fits,
@@ -165,6 +165,8 @@ struct Runner {
     off_timer: Option<(String, u32, u32)>,
     /// How long an idle session agent stays in its pane, and how long while work waits for a slot.
     grace_secs: (u64, u64),
+    /// The slot's declared settings (`EXEC_POOL_ARM`), recorded with each turn it parks.
+    arm: Option<Arm>,
 }
 
 impl Runner {
@@ -203,6 +205,10 @@ impl Runner {
                     .parse()
                     .map_err(|_| "EXEC_POOL_IDLE_GRACE_BUSY_SECS must be a number".to_owned())?,
             ),
+            arm: std::env::var("EXEC_POOL_ARM")
+                .ok()
+                .map(|a| Arm::parse(&a).map_err(|e| format!("EXEC_POOL_ARM: {e}")))
+                .transpose()?,
             slot,
         })
     }
@@ -584,6 +590,7 @@ impl Runner {
                         transcript.clone(),
                     ),
                     &task_result,
+                    self.arm.as_ref(),
                 )
             })
             .map(|()| false),
@@ -761,13 +768,14 @@ fn session_of(claim: &Claim) -> Option<Session> {
 }
 
 /// Parks the session turn `attempt` at `epoch` with its result, the inbox read up to `upto`, the checkpoint that
-/// names where the remote holds its work, the turn's `wake` and the agent's transcript.
+/// names where the remote holds its work, the turn's `wake`, the agent's transcript and the slot's arm.
 fn park(
     store: &mut Store,
     (attempt, epoch, task): (&str, u64, &TaskSpec),
     (reason, upto, undelivered): (ParkReason, i64, bool),
     (at, wake, transcript): (Option<&ParkedAt>, Option<Wake>, Option<Transcript>),
     result: &TaskResult,
+    arm: Option<&Arm>,
 ) -> Result<(), QueueError> {
     let (_, changes) = store.park(
         attempt,
@@ -780,6 +788,7 @@ fn park(
             undelivered,
             wake,
             transcript,
+            arm: arm.cloned(),
         },
     )?;
     changes.iter().for_each(log_change);

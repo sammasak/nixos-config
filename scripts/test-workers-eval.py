@@ -1017,18 +1017,18 @@ def check_pool_compat():
     s = on.get("slots", {}).get("pool1", {})
     extra = [x for x in s.get("sockets", []) if x.endswith("-egress")] + [b for b in s.get("binds", []) if b.startswith(("/run/secrets", "/run/user", "/run/credentials", "/run/egress", "/var/lib/host-credentials/")) and not b.endswith(("/ssh_host_ed25519_key", ".pub"))]
     check(on.get("failing") == [] and s.get("agent") == "none" and s.get("credentials") == [] and s.get("headlessAgents") == ["claude"]
-          and s.get("baseUrl") == "http://127.0.0.1:4100" and extra == ["anthropic-egress", "github-egress", "/run/egress"]
+          and s.get("baseUrl") == "http://127.0.0.1:4100" and extra == ["anthropic-egress", "github-egress", "otlp-egress", "/run/egress"]
           and on.get("agents") == named and on.get("shutdown") == absent.get("shutdown"),
-          f"homelab.execPool.agents = [ \"claude\" ]: pool1 stays agent none with no credential, gets only the anthropic and github egress and its ANTHROPIC_BASE_URL, and starts no session ({on.get('error') or on.get('failing') or {**s, 'extra': extra} })")
+          f"homelab.execPool.agents = [ \"claude\" ]: pool1 stays agent none with no credential, gets only the anthropic, github and OTLP egress and its ANTHROPIC_BASE_URL, and starts no session ({on.get('error') or on.get('failing') or {**s, 'extra': extra} })")
     out = run_eval(POOL_ALL % {"root": json.dumps(ROOT)})
     a = json.loads(out.stdout) if out.returncode == 0 else {"error": out.stderr.strip()[-600:]}
     # acer's pool1 pushes through the GitHub proxy (check_runner) and holds nothing of the host's
     leaked = [b for b in a.get("binds", []) if b.startswith(("/run/secrets", "/run/user", "/run/credentials", "/var/lib/host-credentials/"))
               and not b.endswith(("/ssh_host_ed25519_key", ".pub"))]
-    check(a.get("failing") == [] and a.get("sockets") == ["anthropic-egress", "github-egress", "llm-gateway-egress", "openai-egress"] and not leaked
+    check(a.get("failing") == [] and a.get("sockets") == ["anthropic-egress", "github-egress", "llm-gateway-egress", "openai-egress", "otlp-egress"] and not leaked
           and a.get("codexKey") == "held-by-the-host" and a.get("codexUrl") == 'openai_base_url = "http://127.0.0.1:4103/v1"' and a.get("pi") is True
           and {"llm_gateway_pi_key:/run/secrets/llm_gateway_pi_key", "codex-auth.json:/home/lukas/.codex/auth.json"} <= set(a.get("creds", [])),
-          f"homelab.execPool.agents = [ \"claude\" \"codex\" \"pi\" ] on acer: pool1 gets the anthropic, github, openai and llm-gateway proxies, Codex and Pi pointed at them with placeholders, and the keys only in the proxy's credentials ({a.get('error') or {**a, 'leaked': leaked} })")
+          f"homelab.execPool.agents = [ \"claude\" \"codex\" \"pi\" ] on acer: pool1 gets the anthropic, github, openai, llm-gateway and OTLP proxies, Codex and Pi pointed at them with placeholders, and the keys only in the proxy's credentials ({a.get('error') or {**a, 'leaked': leaked} })")
     # POOL_CASES were prefetched; a whole msi per type error, one at a time
     outs = [run_eval(fleet(c[1])) for c in POOL_CASES]
     typed = [subprocess.run(["nix", "eval", "--impure", "--json", "--expr", POOL_THROW % {"root": json.dumps(ROOT), "case": c[1]}], capture_output=True, text=True)
@@ -1074,8 +1074,8 @@ def check_session_dock():
     check(got.get("named") == {"dock": False, "bind": None}, f"a named worker binds no /session ({got.get('named') or got.get('error')})")
 
 
-# What a slot can read of its host: every bind of each committed slot (acer's, msi's) and of msi's with
-# homelab.execPool.slot.privateUsers, beside the stock store, nix db, daemon socket and per-container profile and roots
+# What a slot can read of its host: every bind of each committed slot (acer's, msi's under
+# homelab.execPool.slot.privateUsers) and of acer's with it on, beside the stock store, nix db, daemon socket and per-container profile and roots
 # binds of nixpkgs' container module. A new bind fails here until it is listed. Its container unit loads no credential,
 # and its user has no group of the host user's and no sudo.
 SLOT_REACH = r"""
@@ -1103,13 +1103,13 @@ in {
 
 
 def slot_binds(n, own):
-    """The binds a slot `n` is expected to have: `own` (privateUsers) gives it its own sshd key and fetcher cache and
-    id-maps its read-only binds but that key."""
+    """The binds a slot `n` is expected to have, its own fetcher cache in either case: `own` (privateUsers) gives it its
+    own sshd key and id-maps its read-only binds but that key."""
     s, h, c = "/var/lib/workers", "/home/lukas", "/var/lib/host-credentials"
     ro = lambda p: f"{p}:idmap" if own else p
     return {
         h: [f"{s}/{n}/home", False, h],
-        f"{h}/.cache/nix": [f"{s}/{n}/nix-cache" if own else f"{s}/.nix-cache", False, f"{h}/.cache/nix"],
+        f"{h}/.cache/nix": [f"{s}/{n}/nix-cache", False, f"{h}/.cache/nix"],
         f"{h}/.cache/nix/eval-cache-v6": [f"{s}/{n}/eval-cache", False, f"{h}/.cache/nix/eval-cache-v6"],
         "/run/work-locks": ["/run/work-locks", True, ro("/run/work-locks")],
         f"{c}/ssh_host_ed25519_key": [f"{s}/{n}/ssh_host_ed25519_key" if own else f"{s}/ssh_host_ed25519_key", True, f"{c}/ssh_host_ed25519_key"],
@@ -1122,12 +1122,13 @@ def slot_binds(n, own):
 def check_slot_reach():
     # a whole host each, one at a time
     declarations = []
-    for host, case, count, own in (("acer-swift", "{ }", 3, False), ("msi-ms7758", "{ }", 4, False),
-                                   ("msi-ms7758", "{ homelab.execPool.slot.privateUsers = true; }", 4, True)):
+    for host, case, count, own in (("acer-swift", "{ }", 3, False),
+                                   ("acer-swift", "{ homelab.execPool.slot.privateUsers = true; }", 3, True),
+                                   ("msi-ms7758", "{ }", 4, True)):
         out = run_eval(SLOT_REACH % {"root": json.dumps(ROOT), "host": host, "case": case})
         got = json.loads(out.stdout) if out.returncode == 0 else {"error": out.stderr.strip()[-600:]}
         slots = [f"pool{i}" for i in range(1, count + 1)]
-        label = f"{host}{' with privateUsers' if own else ''}"
+        label = f"{host}{' with privateUsers' if case != '{ }' else ''}"
         key = "slot's own" if own else "environments'"
         want = {n: slot_binds(n, own) for n in slots}
         check(got.get("failing") == [] and got.get("binds") == want,
@@ -1149,8 +1150,8 @@ def check_slot_reach():
             check(all(f"vu-{n}-1000" in got.get("allowed", []) for n in slots) and "lukas" in got.get("allowed", []),
                   f"{label}: the host daemon allows each slot's mapped user beside lukas ({got.get('allowed')})")
     # a declaration that moves restarts worker-pool1 and through PartOf its container: a reload would keep the old ids
-    check(None not in declarations and declarations[1] != declarations[2],
-          "msi: privateUsers moves each slot's declaration unit, so the switch restarts its container, not only reloads it")
+    check(None not in declarations and declarations[0] != declarations[1],
+          "acer: privateUsers moves each slot's declaration unit, so the switch restarts its container, not only reloads it")
 
 
 # modules/homelab/exec-pool-runner.nix: on acer one runner per slot as the queue's role, its root helper, and a

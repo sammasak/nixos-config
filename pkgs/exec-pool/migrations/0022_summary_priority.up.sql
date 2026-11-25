@@ -4,5 +4,5 @@ CREATE OR REPLACE VIEW task_summaries AS
     spec->'source'->'rev' AS rev, spec->'command'->'workdir' AS workdir, session, priority
   FROM tasks;
 
--- additive: a binary at 9 to 20 reads the columns it names and never this one
-INSERT INTO schema_migrations (version, floor) VALUES (21, 9);
+-- additive: a binary at 9 to 21 reads the columns it names and never this one
+INSERT INTO schema_migrations (version, floor) VALUES (22, 9);

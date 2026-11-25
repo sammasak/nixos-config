@@ -233,6 +233,9 @@ for mode, dryrun in dryruns.items():
         else:
             check(r.returncode != 0 and "the dry-run of checks.x86_64-linux.deploy-schema-asus-b460m failed" in r.stderr and not built,
                   f"seeded: a dry-run that {'exits non-zero' if dryrun is None else 'cannot find the derivation'} fails the step, not read as nothing to build ({r.returncode}, {r.stderr[-200:]!r})")
+            fails = [l for l in rec.read_text().splitlines() if "result=fail" in l]
+            check(len(fails) == 1 and "check=checks.x86_64-linux.deploy-schema-asus-b460m " in fails[0] and "head=0123abc" in fails[0],
+                  f"seeded: the failed dry-run's check gets one fail record ({fails})")
 
 # and the step's own dry-run parsing on this nix's real output: a fresh derivation (instantiated, never built) must be the
 # one line of "would compile", and a missing one must hit the step's failure test
@@ -266,6 +269,8 @@ plain_runs = {
     "built": ("these 2 derivations will be built:\\n  /nix/store/p-plain.drv\\n  /nix/store/q-dep.drv", 0),
     "fetched": ("these 3 paths will be fetched (1.0 MiB download, 4.0 MiB unpacked):\\n  /nix/store/r-a\\n  /nix/store/s-b\\n  /nix/store/t-c", 0),
     "fail": ("this derivation will be built:\\n  /nix/store/p-plain.drv", 1),
+    # its evaluation fails (a failed assertion): no build, and still one record that names the check
+    "evalfail": ("", 0),
 }
 for mode, (dryrun, build_rc) in plain_runs.items():
     with tempfile.TemporaryDirectory() as t:
@@ -280,6 +285,7 @@ for mode, (dryrun, build_rc) in plain_runs.items():
                                "elif '--expr' in a: print('x86_64-linux', end='')\n"
                                "elif any('? driver' in x for x in a): print(json.dumps([]))\n"
                                "elif 'builtins.attrNames' in a: print(json.dumps(names.get(attr, [])))\n"
+                               + ("elif a[:2] == ['eval', '--raw'] and attr.endswith('.drvPath'): print('error: Failed assertions', file=sys.stderr); sys.exit(1)\n" if mode == "evalfail" else "") +
                                "elif a[:2] == ['eval', '--raw'] and attr.endswith('.drvPath'): print('/nix/store/x-' + attr[:-8] + '.drv', end='')\n"
                                f"elif '--dry-run' in a: print({dryrun!r}.replace('\\\\n', '\\n'), file=sys.stderr)\n"
                                f"elif a[:1] == ['build']: sys.exit({build_rc})\n")
@@ -295,11 +301,11 @@ for mode, (dryrun, build_rc) in plain_runs.items():
                            env={**os.environ, "PATH": f"{t}:{os.environ['PATH']}", "NIXOS_QA_HEAD": "0123abc"})
         lines = rec.read_text().splitlines() if rec.exists() else []
         want = {"built": ("result=built", "compiled=2", "fetched=0"), "fetched": ("result=fetched", "compiled=0", "fetched=3"),
-                "fail": ("result=fail", "compiled=1", "fetched=0")}[mode]
+                "fail": ("result=fail", "compiled=1", "fetched=0"), "evalfail": ("result=fail", "head=0123abc")}[mode]
         check(len(lines) == 1 and all(w in lines[0] for w in want) and "check=checks.x86_64-linux.plain" in lines[0]
               and "owner=msi-ms7758" in lines[0] and "step=nixos-flake-check" in lines[0]
-              and (r.returncode != 0) == (mode == "fail"),
-              f"{mode}: one gate-step record for the plain check with {' '.join(want)}, and the step {'fails' if mode == 'fail' else 'passes'} ({r.returncode}, {lines})")
+              and (r.returncode != 0) == mode.endswith("fail"),
+              f"{mode}: one gate-step record for the plain check with {' '.join(want)}, and the step {'fails' if mode.endswith('fail') else 'passes'} ({r.returncode}, {lines})")
 
 # the deferral contract a gate step outside the flake check uses (scripts/gate_defer.py; scripts/test-ollama-gpu.py):
 # the same owner:check line and head=/drv= record the flake check writes, which scripts/deferred-checks.py reads

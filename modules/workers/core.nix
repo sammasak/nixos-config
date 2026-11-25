@@ -226,8 +226,10 @@ let
         install -d -m 0711 "$d/.sessions"
         install -d -m 0755 "$d/.sessions/dock" "$d/.sessions/dock/${w.name}"
       ''
-      + lib.optionalString w.rootInGuest ''
+      + lib.optionalString (ownCache w) ''
         [[ -d $d/${w.name}/nix-cache ]] || install -d -m 0700 -o ${o.u} -g ${o.g} "$d/${w.name}/nix-cache"
+      ''
+      + lib.optionalString w.rootInGuest ''
         [[ -e $d/${w.name}/ssh_host_ed25519_key ]] || ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "" -f "$d/${w.name}/ssh_host_ed25519_key"
         chown ${toString (baseOf w)}:${toString (baseOf w)} "$d/${w.name}/ssh_host_ed25519_key"
         echo "${aliasOf w} $(cut -d' ' -f1,2 "$d/${w.name}/ssh_host_ed25519_key.pub")" >> "$d/known_hosts"
@@ -245,6 +247,7 @@ let
     ${prepareDirs}
     exit "$rc"
   '';
+  ownCache = w: w.rootInGuest || w.ownNixCache;
   aliasOf = w: if w.rootInGuest then "${w.name}.${keyAlias}" else keyAlias;
   hostKeyOf =
     w:
@@ -430,10 +433,10 @@ let
       };
       # Nix's per-user fetcher and tarball caches, one per host: a fresh home re-downloads and re-unpacks every flake
       # input the store already holds (31 s against 7 s for the first devenv shell on acer).
-      # rootInGuest: its own, so its root cannot leave entries a neighbour cannot use
+      # ownNixCache: its own, so it plants no entry a neighbour reads, and under rootInGuest none a neighbour cannot use
       "${home}/.cache/nix" = {
         hostPath =
-          if w.rootInGuest then "${cfg.stateDir}/${w.name}/nix-cache" else "${cfg.stateDir}/.nix-cache";
+          if ownCache w then "${cfg.stateDir}/${w.name}/nix-cache" else "${cfg.stateDir}/.nix-cache";
         isReadOnly = false;
       };
       # Not the evaluation cache in it: its rows are unsigned, so a neighbour could plant the derivation another
@@ -734,6 +737,11 @@ let
         type = types.bool;
         default = false;
         description = "A read-write /session from the host's .sessions/dock/<name>, root's, where a session's home and work tree are moved in for one turn; adding it restarts the container once.";
+      };
+      ownNixCache = mkOption {
+        type = types.bool;
+        default = false;
+        description = "Its own Nix fetcher and tarball cache, emptied by every reset, instead of the host's shared one; always under rootInGuest.";
       };
       rootInGuest = mkOption {
         type = types.bool;

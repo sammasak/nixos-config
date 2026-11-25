@@ -49,6 +49,16 @@ let
       inherit (cfg) capabilities;
       agents = [ "none" ] ++ cfg.agents;
     };
+  # the slot's declared Claude settings, recorded with each turn so the session metrics split by them (#626)
+  arm =
+    n:
+    let
+      c = config.containers.${n}.config.sam.claude;
+    in
+    builtins.toJSON {
+      variant = if c.autoCompactWindow == null then "default" else toString c.autoCompactWindow;
+      shunt = if c.bulkReader.enable then "on" else "off";
+    };
   # a queue on another host, by scram over its sam.fleet listener; null: this host's own, by peer
   remote = cfg.queueListener != null;
   listener = config.sam.fleet.listeners.${cfg.queueListener};
@@ -202,6 +212,7 @@ in
           environment = {
             EXEC_POOL_DB = db;
             EXEC_POOL_SLOT = slot n;
+            EXEC_POOL_ARM = arm n;
             EXEC_POOL_LEASE_SECS = toString leaseSecs;
             EXEC_POOL_IDLE_GRACE_SECS = toString cfg.idleGraceSecs;
             EXEC_POOL_IDLE_GRACE_BUSY_SECS = toString cfg.idleGraceBusySecs;

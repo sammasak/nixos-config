@@ -117,7 +117,7 @@ id in a metric label. Follow-up: a runner restarted mid-turn takes its new start
 before the restart is not seen.
 
 **25 Nov, branch `pool/cli-5b06de3210ce90a1`** (deploy acer and msi for the pool, black-pi for the rules):
-`exec-pool status` and `list` show each task's priority (migration 0021, additive, floor 9). A turn waiting only on a
+`exec-pool status` and `list` show each task's priority (migration 0022, additive, floor 9). A turn waiting only on a
 detached job (`nohup`, `setsid`) stays busy: a process in the turn unit's cgroup that the container's init adopted,
 in a session not the agent's (so Chromium's crashpad is not one), the 30 minute limit still the bound; a job started outside the unit (`systemd-run`) still dies at the park
 (contract). ExecPoolSessionStalled: the metric covers a third timeout in a row (no continue left, nothing in the
@@ -139,11 +139,11 @@ second session stalling on the same host and reason is the same ExecPoolSessionS
 4. Not yet seen live: a drain started by `just deploy`, claim order by priority, the prepare failure counter,
    `coord:brief` against the real CLI.
 5. The drain starts before the build, so a long build keeps a host from claiming.
-6. Slot isolation, branch `pool/cli-89635bd687bfeb7c` (deploy acer and msi): a slot's user is in no group and has no
-   sudo; `homelab.execPool.slot.privateUsers` (off) puts each slot in its own uid block, a toggled slot's home reset at
-   its next start; `check_slot_reach` pins every bind of every slot. Open: privateUsers not yet booted (VM on msi, then
-   flip msi first); the other setuid wrappers (su, mount, newuidmap) stay host root's in a slot without it; the shared
-   `.nix-cache` lets one slot plant fetcher entries another reads until privateUsers is on.
+6. Slot isolation: `homelab.execPool.slot.privateUsers` booted in `execution-pool-vm` (both slots, ids, dock, GitHub
+   sidecar, daemon, the toggle reset) and on for msi's slots, #796 (deploy msi, then
+   acer for the per-slot fetcher cache); every slot now has its own fetcher cache, emptied by each reset. Open: acer's
+   slots, one line in `hosts/acer-swift/configuration.nix` once msi has run a day with it; what still runs as host
+   root for a slot is listed in `docs/nspawn-workers.md` (Execution pool).
 7. `status` and `list` do not show priority.
 8. `HostBehindMain` needs 24 h; black-pi lacked new alert rules for some hours unseen.
 9. lenovo cannot push nixos-config (stale devenv gate) or fetch a new private skills pin as a user.
@@ -178,8 +178,9 @@ benchmark requirements: #776; epic: #491).
 | 1 | Pool platform | the open findings above | a pool session for the top open finding |
 | 2 | Deploy | asus behind main | asus in its power window |
 | 3 | Alerts | 624-i fixes the alerts nobody could act on; not yet read live (pool slots reach neither Prometheus nor Alertmanager) | merge and deploy 624-i, then read the live list; a1's patch at `/var/lib/worker-archive/a1` on acer |
-| 4 | Gates | first scheduled gate red on `shunt-metrics-test` only, fixed since | read the next scheduled gate result |
+| 4 | Gates | scheduled gate red since 24 Nov on `checks.x86_64-linux.execution-pool-vm`, which failed to evaluate (slots' repos need `sam.workers.ghHostsFile`, the VM set none); fixed in branch `pool/cli-38a64f8b5b1d81f5` | merge, deploy acer (scheduled gate) and black-pi (rules), read the next scheduled gate result |
 | 5 | Live comparison | `ShuntCollectorStale` fires since the on side moved | read a day of Shunt on and off on 25 Nov, now on acer `pool1` |
+| 5b | Live comparison | #626 had no per-variant tokens, cost or compactions from the pool | deploy branch `pool/cli-950c25fbd3f89b7a` (acer, msi, black-pi), then read the "Compaction window on versus off" table a day later |
 | 6 | Leftovers | one draft open | #616 (needs a physical reboot of black-pi) |
 
 ## Priorities
@@ -200,7 +201,7 @@ benchmark requirements: #776; epic: #491).
 | P2 | skills [#132](https://github.com/sammasak/skills/issues/132), [#134](https://github.com/sammasak/skills/issues/134), [#135](https://github.com/sammasak/skills/issues/135) | Remaining specialists | all merged: skills#153, #154, #155 |
 | P1 | [#646](https://github.com/sammasak/nixos-config/issues/646) | Execution pool, v0.1 | split below; never ahead of a P0 item |
 | P1 | [paddock#2](https://github.com/sammasak/paddock/pull/2) | Paddock SSD-backed MoE expert streaming | one dedicated pool session; see the queue above |
-| P2 | [#626](https://github.com/sammasak/nixos-config/issues/626) | Auto-compaction benchmarks | matrix doc when idle; benchmark is token spend |
+| P2 | [#626](https://github.com/sammasak/nixos-config/issues/626) | Auto-compaction, live on/off | 300K on acer `pool2` only, branch `pool/cli-950c25fbd3f89b7a`; needs acer and msi (runner, migration 21), rules and dashboard on black-pi; read one day after deploy |
 
 ## Work items
 
@@ -221,9 +222,10 @@ benchmark requirements: #776; epic: #491).
 | 624-k | Alert to investigation with no human in between: an alert switched on in `homelab.alertInvestigations.alerts` (lenovo: `NodeSystemdUnitFailed` alone) that fired 15 minutes with none open starts one read-only incident-investigator pool session per firing (at most 3 a day per name), its prompt holding what lenovo read (alerts, Prometheus, the unit's journal); its report lands on the issue `Alert: <name>` (label `alert-investigation`, one per name). `homelab_alert_investigations_total{alertname,outcome}`, failures by reason; `AlertInvestigationFailed`, `AlertInvestigationsStale`. Read-only by prompt: the proxy cannot refuse a slot's push (item 13 of the pool list), so a pushed `pool/<id>` fails the investigation | branch `pool/cli-f7ad8047dbbfdc72`; needs lenovo (trigger), rules on black-pi | #792 |
 
 Open for #624, in pick-up order: after 624-k deploys, read the first live investigation on its issue and its counters; after 624-i deploys, read the live list and confirm each alert cleared or names
-its command; the failing check behind the live ScheduledGateRed and RetroDueStepFailsRepeat (two series) is unknown
-from a pool slot, which reaches neither Prometheus nor Alertmanager: read it on acer (`journalctl -u scheduled-gate
--n 200`) and fix it in the repo; an intentional revert that is never reapplied still counts for 24 h (no after-the-fact
+its command; the failing check behind the live ScheduledGateRed and RetroDueStepFailsRepeat was
+`checks.x86_64-linux.execution-pool-vm` failing to evaluate, which wrote no check record (branch
+`pool/cli-38a64f8b5b1d81f5`: the VM fixed, an eval failure now records its check, the red series carries `check`, and
+both alerts name one rerun command, `nix build -L .#<check>` or `NIXOS_STEP=<step> devenv tasks run nixos:step`); an intentional revert that is never reapplied still counts for 24 h (no after-the-fact
 acknowledgement); after 624-j deploys, read `count_over_time(ALERTS{alertstate="firing"}[14d])` by alertname on black-pi and cut what still never fired; the texts with no command: PrLeadTimeHigh, ReviewFirstPassLow, GateFailRateHigh, the llm-gateway pair, ShuntDelegationFailing, ShuntSilent, ClaudeCompactionLoop and the upstream node, Prometheus and Alertmanager rules.
 
 ### #625 Shunt metrics
@@ -261,7 +263,7 @@ Placement order: acer, then msi, asus last (it carries ollama and the heavier lo
 
 | Host | Worker | Item |
 |------|--------|------|
-| acer-swift | `pool1` to `pool3` | pool slots, Shunt on for `pool1`; `herman` and `a1` retired, their work in `/var/lib/worker-archive` |
+| acer-swift | `pool1` to `pool3` | pool slots, Shunt on for `pool1`, a 300K compaction window for `pool2` (#626, once deployed); `herman` and `a1` retired, their work in `/var/lib/worker-archive` |
 | msi-ms7758 | `pool1` to `pool4` | pool slots; `t1`, `m1` and `m2` retired, their work in `/var/lib/worker-archive` |
 | asus-b460m | none | `a624`, `s138`, `s130` retired |
 
