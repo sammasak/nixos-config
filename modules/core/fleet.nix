@@ -326,20 +326,22 @@ in
       alertmanager = {
         host = "black-pi";
         port = 9093;
-        # the cluster-watchdog reads /-/ready and the Watchdog alert, acer's pool slots the alerts (homelab.execPool.monitoring);
+        # the cluster-watchdog reads /-/ready and the Watchdog alert, acer's and msi's pool slots the alerts (homelab.execPool.monitoring);
         # Prometheus there arrives on loopback
         from = [
           "acer-swift"
           "lenovo-21CB001PMX"
+          "msi-ms7758"
         ];
       };
       prometheus = {
         host = "black-pi";
         port = 9090;
-        # acer's alloy-otlp pushes OTLP and its pool slots query, lenovo's watchdog and harness usage report read; Grafana there is loopback
+        # acer's alloy-otlp pushes OTLP, its and msi's pool slots query, lenovo's watchdog and harness usage report read; Grafana there is loopback
         from = [
           "acer-swift"
           "lenovo-21CB001PMX"
+          "msi-ms7758"
         ];
       };
       grafana = {

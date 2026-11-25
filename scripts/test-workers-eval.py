@@ -542,7 +542,7 @@ class GitHubRecorder(http.server.BaseHTTPRequestHandler):
         pass
 
 
-# acer's slots query black-pi's monitoring read only (homelab.execPool.monitoring); msi's switch is off
+# acer's and msi's slots query black-pi's monitoring read only (homelab.execPool.monitoring); msi with it off is the off case
 MONITORING = r"""
 let
   flake = builtins.getFlake (toString %(root)s);
@@ -550,9 +550,13 @@ let
   env = c: c.containers.pool1.config.environment.variables;
   acer = flake.nixosConfigurations.acer-swift.config;
   msi = flake.nixosConfigurations.msi-ms7758.config;
+  off = (flake.nixosConfigurations.msi-ms7758.extendModules {
+    modules = [ { homelab.execPool.monitoring = flake.inputs.nixpkgs.lib.mkForce false; } ];
+  }).config;
 in {
   acer = { caddy = caddy acer; env = env acer; };
-  msi = { caddy = caddy msi; env = env msi; };
+  msi = { env = env msi; };
+  off = { caddy = caddy off; env = env off; };
   urls = builtins.mapAttrs (n: _: acer.sam.fleet.listeners.${n}.url) { prometheus = 0; alertmanager = 0; loki = 0; };
 }
 """
@@ -594,11 +598,11 @@ MONITORING_ENV = {"PROMETHEUS_URL": "http://127.0.0.1:4105", "ALERTMANAGER_URL":
 def check_monitoring():
     out = run_eval(MONITORING % {"root": json.dumps(ROOT)})
     got = json.loads(out.stdout) if out.returncode == 0 else {}
-    acer, msi, urls = got.get("acer", {}), got.get("msi", {}), got.get("urls", {})
+    acer, msi, off, urls = got.get("acer", {}), got.get("msi", {}), got.get("off", {}), got.get("urls", {})
     sites = {b.split("\n", 2)[1].strip(): b for b in acer.get("caddy", "").split("http:// {")[1:]}
-    check({k: acer.get("env", {}).get(k) for k in MONITORING_ENV} == MONITORING_ENV
-          and not any(k in msi.get("env", {}) for k in MONITORING_ENV) and not any(f"/{n}.sock" in msi.get("caddy", "") for n in MONITORING_CASES),
-          f"acer's slots get PROMETHEUS_URL, ALERTMANAGER_URL and LOKI_ADDR on their loopback; msi's, its switch off, no route ({out.stderr.strip()[-300:]})")
+    check(all({k: h.get("env", {}).get(k) for k in MONITORING_ENV} == MONITORING_ENV for h in (acer, msi))
+          and not any(k in off.get("env", {}) for k in MONITORING_ENV) and not any(f"/{n}.sock" in off.get("caddy", "") for n in MONITORING_CASES),
+          f"acer's and msi's slots get PROMETHEUS_URL, ALERTMANAGER_URL and LOKI_ADDR on their loopback; msi with the switch off, no route ({out.stderr.strip()[-300:]})")
     for name, cases in MONITORING_CASES.items():
         site = sites.get(f"bind unix//run/dev-env-egress/pool1/{name}.sock", "")
         GitHubRecorder.seen = []
