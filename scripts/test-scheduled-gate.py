@@ -1,7 +1,7 @@
 """pkgs/scheduled-gate on a throwaway origin, without Nix: devenv is a stub that records where and how it ran and
 writes the platform records a gate would. The full gate runs once per new origin/main head, in a worktree at that
 head with mode=scheduled; a red run names its first failed step (a flake check's check included) and the last green
-head; a run with no failed record says unrecorded; a gate killed before it returns records nothing; the textfile
+head; a red head runs once more, then waits for a new head; a run with no failed record says unrecorded; a gate killed before it returns records nothing; the textfile
 carries exactly the names --list prints."""
 import json
 import os
@@ -108,8 +108,10 @@ esac
     check(r.returncode == 0 and len(ran) == 1 and reds == [want],
           f"C a red run names the first failed nixos-qa step, its check, and the last green head; the unit passes ({reds})")
     check(metrics()["homelab_scheduled_gate_main_behind"] == 0, "C a red run on main's head is not behind")
+    r, ran = run("fail-check")
+    check(len(ran) == 1 and h2 in ran[0] and red() == [want], f"D a red head runs once more, and red again stays red ({ran})")
     r, ran = run("pass")
-    check(ran == [] and red() == [want], "D the same head is not run again and stays red")
+    check(ran == [] and red() == [want], "D after its retry the same head is not run again and stays red")
 
     h3 = commit("3\n")
     r, ran = run("fail-bare")
@@ -125,12 +127,19 @@ esac
           f"F a gate killed mid-run records nothing: the last finished head stays, main reads behind ({s['head'][:12]})")
     r, ran = run("pass")
     check(len(ran) == 1 and h4 in ran[0] and red() == [], f"G the next run gates that head, green clears red ({ran})")
+    m = metrics()
+    check(m["homelab_scheduled_gate_green_timestamp_seconds"] == m["homelab_scheduled_gate_finished_timestamp_seconds"] > 0,
+          f"G the green time is the passing run's finish ({m})")
     check(json.loads((state / "state.json").read_text())["green"] == h4, "G the green head moves")
+    h5 = commit("4b\n")
+    run("fail-check")
+    r, ran = run("pass")
+    check(len(ran) == 1 and h5 in ran[0] and red() == [], f"G2 a red head that passes on its retry clears red ({ran})")
 
     listed = subprocess.run([sys.executable, "-I", str(GATE), "--list"], capture_output=True, text=True,
                             check=True).stdout.split()
     typed = re.findall(r"^# TYPE (\S+) gauge$", prom.read_text(), re.M)
-    check(listed == typed and len(listed) == 6, f"--list names exactly the series the textfile types ({listed})")
+    check(listed == typed and len(listed) == 7, f"--list names exactly the series the textfile types ({listed})")
     commit("5\n")
     run("fail-check")
     exposed = {re.split(r"[{ ]", line)[0] for line in prom.read_text().splitlines() if not line.startswith("#")}

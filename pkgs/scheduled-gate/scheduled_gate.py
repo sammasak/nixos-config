@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """The scheduled full gate on main (modules/homelab/scheduled-gate.nix): fetch origin/main into its own clone and, when
 main has moved since the last finished run, run `devenv tasks run nixos:qa` in a worktree just added at that commit.
+A red head is run once more on the next timer: a failure outside the tree (a fetch, the cache, the heavy lock's
+holder) clears itself, and only a red that repeats on that head waits for a fix on main.
 nixos:qa takes the heavy-work lock itself, waiting for it, and writes the gate and step records (mode=scheduled), as
 a push did. This program keeps the last finished run in STATE/state.json and writes the node-exporter textfile the
 ScheduledGateRed and ScheduledGateOverdue alerts read (modules/homelab/monitoring/rules/shipping.nix). A run killed
@@ -25,6 +27,8 @@ from datetime import datetime
 METRICS: dict[str, str] = {
     "homelab_scheduled_gate_checked_timestamp_seconds": "When the scheduled gate last read origin/main.",
     "homelab_scheduled_gate_finished_timestamp_seconds": "When the last scheduled full gate finished, 0 if none has.",
+    "homelab_scheduled_gate_green_timestamp_seconds": "When the last passing scheduled full gate finished, 0 if none "
+    "has.",
     "homelab_scheduled_gate_main_behind": "1 while origin/main is not the commit the last finished full gate ran on.",
     "homelab_scheduled_gate_behind_since_timestamp_seconds": "When a check first saw main move past the last finished "
     "gate, 0 while it has not.",
@@ -36,7 +40,8 @@ METRICS: dict[str, str] = {
 
 @dataclass
 class State:
-    """The last finished run. green is the newest head a run passed on, "" before any did."""
+    """The last finished run. green is the newest head a run passed on, "" before any did, green_at when that run
+    finished; retried is set when this red head was already run again."""
 
     head: str = ""
     result: str = ""
@@ -45,6 +50,8 @@ class State:
     step: str = ""
     green: str = ""
     behind_since: float = 0.0
+    green_at: float = 0.0
+    retried: bool = False
 
 
 def say(text: str) -> None:
@@ -78,6 +85,7 @@ def write_metrics(path: pathlib.Path, st: State, checked: float, main: str) -> N
     values: dict[str, list[tuple[str, float]]] = {
         "homelab_scheduled_gate_checked_timestamp_seconds": [("", checked)],
         "homelab_scheduled_gate_finished_timestamp_seconds": [("", st.finished)],
+        "homelab_scheduled_gate_green_timestamp_seconds": [("", st.green_at)],
         "homelab_scheduled_gate_main_behind": [("", float(main != st.head))],
         "homelab_scheduled_gate_behind_since_timestamp_seconds": [("", st.behind_since if main != st.head else 0.0)],
         "homelab_scheduled_gate_seconds": [("", st.seconds)],
@@ -134,7 +142,8 @@ def run(repo: str, state_dir: pathlib.Path, metrics: pathlib.Path) -> int:
         st.behind_since = time.time()
         save(state_file, st)
     write_metrics(metrics, st, time.time(), main)
-    if main == st.head:
+    retry = main == st.head and st.result == "fail" and not st.retried
+    if main == st.head and not retry:
         say(f"origin/main is {main[:12]}, gated already ({st.result}): nothing to run")
         return 0
     if tree.exists():
@@ -142,7 +151,7 @@ def run(repo: str, state_dir: pathlib.Path, metrics: pathlib.Path) -> int:
         shutil.rmtree(tree, ignore_errors=True)
     git("worktree", "prune", cwd=clone)
     git("worktree", "add", "--quiet", "--detach", str(tree), main, cwd=clone)
-    say(f"full gate on origin/main {main[:12]} (last finished: {st.head[:12] or 'none'})")
+    say(f"full gate on origin/main {main[:12]} ({'again, once: it was red' if retry else 'last finished: ' + (st.head[:12] or 'none')})")
     env = {
         **os.environ,
         "NIXOS_QA_MODE": "scheduled",
@@ -156,9 +165,9 @@ def run(repo: str, state_dir: pathlib.Path, metrics: pathlib.Path) -> int:
     finally:
         subprocess.run(["git", "worktree", "remove", "--force", str(tree)], cwd=clone, check=False)
     st.head, st.finished, st.seconds = main, time.time(), round(time.monotonic() - start)
-    st.behind_since = 0.0
+    st.behind_since, st.retried = 0.0, retry
     if rc == 0:
-        st.result, st.step, st.green = "pass", "", main
+        st.result, st.step, st.green, st.green_at = "pass", "", main, st.finished
     else:
         st.result, st.step = "fail", first_failed_step(spool, since, main)
     save(state_file, st)

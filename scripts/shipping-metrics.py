@@ -37,7 +37,7 @@ METRICS = {
     "shipping_review_first_pass_ratio": "Share of the last reviewed merged PRs whose first verdict met the policy grade.",
     "shipping_review_prs_counted": "Reviewed merged PRs behind the review ratio and rounds.",
     "shipping_review_unreviewed_prs": "Merged PRs in the review sample with no verdict comment.",
-    "shipping_escapes": "Reverts on default branches and issues labelled escape, in the window.",
+    "shipping_escapes": "Reverts on default branches not reapplied since and not marked Escape: no, and open issues labelled escape, in the window.",
     "shipping_gate_fail_ratio": "Share of the last full nixos-qa gate runs (push or scheduled mode) that failed, by the host that ran them.",
     "shipping_gate_runs_counted": "Full gate runs (push or scheduled mode) behind the fail ratio, by host.",
     "shipping_gate_seconds": "Duration of the last full gate runs (push or scheduled mode), by host and quantile.",
@@ -45,6 +45,7 @@ METRICS = {
     "shipping_gate_step_last_failure_timestamp_seconds": "Unix time of the newest of those failures, by step and check.",
     "shipping_deploys": "Recorded deploys in the last 7 d, by result.",
     "shipping_deploy_rollbacks": "Deploys deploy-rs rolled back, in the window.",
+    "shipping_deploy_rollbacks_open": "Per host, deploys rolled back in the last 24 h with no good deploy of that host since.",
     "shipping_deploy_lag_commits": "Commits on main the host's last good deploy does not have.",
     "shipping_deploy_lag_hours": "Hours since the oldest commit on main the host does not have was made (0 when current).",
     "shipping_pr_phase_hours": "Hours per phase of deploy-repo PRs merged in the last 7 d, by quantile: idle (last commit to the start of its passing push gate, gate queue wait included: the records carry none), gate, gate_to_merge, merge_to_deploy (to the end of the first good deploy containing the merge).",
@@ -280,13 +281,41 @@ def reviews(gh, out, merged, want, grade):
             out.add("shipping_review_rounds", quantile(rounds, q), quantile=str(q))
 
 
+def subject(c):
+    return c["commit"]["message"].split("\n", 1)[0]
+
+
+def unhandled_reverts(reverts, reapplies):
+    """The reverts' times, less those handled: a revert whose message has an `Escape: no` line (reverted on purpose),
+    and one a later commit of its repo reapplied (git's `Reapply "X"` or `Revert "Revert "X""`). A reapply pairs with
+    the revert of its own subject, else with the newest earlier one of its repo left unpaired: an edited subject still
+    clears one revert, never two."""
+    open_ = [c for c in reverts if not re.search(r"^Escape:\s*no\s*$", c["commit"]["message"], re.M | re.I)]
+    for c in sorted(reapplies, key=lambda c: ts(c["commit"]["committer"]["date"])):
+        t, repo = ts(c["commit"]["committer"]["date"]), c.get("repository", {}).get("full_name")
+        inner = re.sub(r'^(Reapply|Revert "Revert) "?|"+$', "", subject(c))
+        earlier = [r for r in open_ if r.get("repository", {}).get("full_name") == repo
+                   and ts(r["commit"]["committer"]["date"]) <= t]
+        same = [r for r in earlier if subject(r)[len('Revert "'):].rstrip('"') == inner]
+        pick = max(same or earlier, key=lambda r: ts(r["commit"]["committer"]["date"]), default=None)
+        if pick is not None:
+            open_.remove(pick)
+    return [ts(c["commit"]["committer"]["date"]) for c in open_]
+
+
 def escapes(gh, out, owner, now):
     since7 = now - timedelta(days=7)
     stamp = since7.strftime("%Y-%m-%dT%H:%M:%SZ")
     # commit search sees default branches only, which is what a revert on main means here
-    reverts, _ = gh.search("commits", f'user:{owner} committer-date:>={stamp} "Revert"')
-    reverts = [ts(c["commit"]["committer"]["date"]) for c in reverts if c["commit"]["message"].startswith('Revert "')]
-    labelled, _ = gh.search("issues", f"user:{owner} label:escape created:>={stamp}")
+    found, _ = gh.search("commits", f'user:{owner} committer-date:>={stamp} "Revert"')
+    applied, _ = gh.search("commits", f'user:{owner} committer-date:>={stamp} "Reapply"')
+    reverts = [c for c in found if subject(c).startswith('Revert "') and not subject(c).startswith('Revert "Revert ')]
+    # a commit both searches find is one reapply
+    reapplies = list({c.get("sha") or c["commit"]["message"]: c for c in found + applied
+                      if subject(c).startswith(('Reapply "', 'Revert "Revert '))}.values())
+    reverts = unhandled_reverts(reverts, reapplies)
+    # a closed escape issue is a handled one
+    labelled, _ = gh.search("issues", f"user:{owner} label:escape is:open created:>={stamp}")
     labelled = [ts(i["created_at"]) for i in labelled]
     for window, cut in (("24h", now - timedelta(hours=24)), ("7d", since7)):
         out.add("shipping_escapes", sum(t >= cut for t in reverts), kind="revert", window=window)
@@ -389,6 +418,16 @@ def deploys(loki, gh, out, owner, repo, hostnames, now):
         out.add("shipping_deploys", n, result=result, window="7d")
     for window, secs in (("24h", 86400), ("7d", 7 * 86400)):
         out.add("shipping_deploy_rollbacks", sum(d.get("rolled_back") == "1" for t, d in recs if t >= now.timestamp() - secs), window=window)
+    # a good deploy of the host after its rollback is the rollback handled: DeployRolledBack reads this one
+    good, rolled = {}, {}
+    for t, d in recs:
+        if d.get("result") == "ok" and d.get("rolled_back") != "1" and d.get("node"):
+            good.setdefault(d["node"], t)
+    for t, d in recs:
+        if d.get("rolled_back") == "1" and d.get("node") and t >= now.timestamp() - 86400 and t > good.get(d["node"], 0):
+            rolled[d["node"]] = rolled.get(d["node"], 0) + 1
+    for host in sorted(set(good) | set(rolled)):
+        out.add("shipping_deploy_rollbacks_open", rolled.get(host, 0), host=host, node=node_of(host, hostnames), window="24h")
     last = {}
     for _, d in recs:
         if d.get("result") == "ok" and d.get("sha") and d.get("node"):

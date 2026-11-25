@@ -84,7 +84,13 @@ GATES = [f"gate=nixos-qa seconds={100 + i} result={'fail' if i < 5 else 'pass'} 
 # compare), d0000002 the first after PR 10's that has it (0.5 h); nothing after PR 13's has it (not deployed)
 DEPLOYS = ["node=lenovo result=ok seconds=9 rolled_back=0 sha=abc1234",
            "node=acer-swift result=deploy-failed seconds=9 rolled_back=1 sha=def5678"] + [
-    (h, f"node=lenovo result=ok seconds=20 rolled_back=0 sha={s}") for h, s in ((1.5, "d0000000"), (0.9, "d0000001"), (0.5, "d0000002"))]
+    (h, f"node=lenovo result=ok seconds=20 rolled_back=0 sha={s}") for h, s in ((1.5, "d0000000"), (0.9, "d0000001"), (0.5, "d0000002"))] + [
+    # acer's rollback 3 h ago is handled by its good deploy 2 h ago; the newest one, a second old, is not
+    (3, "node=acer-swift result=deploy-failed seconds=9 rolled_back=1"), (2, "node=acer-swift result=ok seconds=9 rolled_back=0")]
+# reverts: x (30 h, 7 d only); y reapplied 4 h ago under an edited subject; z reverted on purpose (Escape: no); w open
+REVERTS = [('Revert "x"', 30), ('Revert "y in Herdr panes"', 5), ('Revert "z"\n\nWhy: on purpose.\nEscape: no', 3),
+           ('Revert "w"', 2)]
+REAPPLIES = [('Reapply "y in panes"', 4)]
 COMPARE = {(MERGES[10], "d0000000"): "ahead", (MERGES[10], "d0000001"): "behind", (MERGES[10], "d0000002"): "ahead",
            (MERGES[11], "d0000000"): "behind"}
 github_up = True
@@ -120,10 +126,14 @@ class Fake(http.server.BaseHTTPRequestHandler):
                     {"name": "skills", "archived": False}]
         elif u.path == "/search/issues":
             s = q["q"][0]
-            items = (OPEN if "is:open" in s else PRS if "is:merged" in s else [issue("nixos-config", 9, 2, ["escape"])] if "label:escape" in s else [])
+            # a closed escape issue (8) is left out by the query's is:open
+            items = ([issue("nixos-config", 9, 2, ["escape"])] + ([] if "is:open" in s else [issue("nixos-config", 8, 3, ["escape"])])
+                     if "label:escape" in s else OPEN if "is:open" in s else PRS if "is:merged" in s else [])
             body = {"total_count": len(items) if items else (7 if "created:" in s else 4), "items": items}
         elif u.path == "/search/commits":
-            body = {"total_count": 1, "items": [{"commit": {"message": 'Revert "x"', "committer": {"date": iso(30)}}}]}
+            items = [{"repository": {"full_name": "sammasak/nixos-config"}, "commit": {"message": msg, "committer": {"date": iso(h)}}}
+                     for msg, h in (REAPPLIES if '"Reapply"' in q["q"][0] else REVERTS)]
+            body = {"total_count": len(items), "items": items}
         elif m := re.match(r"/repos/sammasak/nixos-config/pulls/(\d+)/commits", u.path):
             commit_calls.append(int(m.group(1)))
             if int(m.group(1)) not in COMMITS:
@@ -209,6 +219,18 @@ check(sm.step_last_failures([(30, check_rec(DASH, H1)[1]), (20, step_rec("nixos-
       == {("nixos-flake-check", DASH): 30},
       "seeded: a unit's newest failure is its latest record's time; an umbrella record its inner check explains is not one")
 
+
+def commit_item(msg, h, repo="nixos-config"):
+    return {"repository": {"full_name": f"sammasak/{repo}"}, "commit": {"message": msg, "committer": {"date": iso(h)}}}
+
+
+# a reapply of a's subject clears a, not the newer b; skills' reapply clears nothing in nixos-config; a reapply older
+# than every revert clears none
+check(sorted(sm.unhandled_reverts([commit_item('Revert "a"', 6), commit_item('Revert "b"', 5)],
+                                  [commit_item('Reapply "a"', 4), commit_item('Reapply "b"', 4, "skills"),
+                                   commit_item('Revert "Revert "c""', 9)]))
+      == [sm.ts(iso(5))], "seeded: a reapply pairs with its own subject's revert, in its own repo, after it")
+
 with tempfile.TemporaryDirectory() as tmp:
     out = f"{tmp}/shipping.prom"
     rc, m = run(out)
@@ -253,9 +275,13 @@ with tempfile.TemporaryDirectory() as tmp:
     check(m.get('shipping_deploy_lag_commits{host="lenovo",node="lenovo-21CB001PMX"}') == 2
           and 4.9 < m.get('shipping_deploy_lag_hours{host="lenovo",node="lenovo-21CB001PMX"}', 0) < 5.1,
           "a deploy record's flake attribute joins its host; lag hours run from the oldest merge it lacks")
-    check(m.get('shipping_deploy_rollbacks{window="24h"}') == 1, "a rolled-back deploy is counted")
-    check(m.get('shipping_escapes{kind="revert",window="7d"}') == 1 and m.get('shipping_escapes{kind="revert",window="24h"}') == 0,
-          "a revert on a default branch is an escape in its window only")
+    check(m.get('shipping_deploy_rollbacks{window="24h"}') == 2, "a rolled-back deploy is counted")
+    check(m.get('shipping_deploy_rollbacks_open{host="acer-swift",node="acer-swift",window="24h"}') == 1
+          and m.get('shipping_deploy_rollbacks_open{host="lenovo",node="lenovo-21CB001PMX",window="24h"}') == 0,
+          "an open rollback is one with no good deploy of its host since: acer's older one is handled, lenovo has none")
+    check(m.get('shipping_escapes{kind="revert",window="7d"}') == 2 and m.get('shipping_escapes{kind="revert",window="24h"}') == 1,
+          "a revert on a default branch is an escape in its window only, unless reapplied since or marked Escape: no")
+    check(m.get('shipping_escapes{kind="label",window="24h"}') == 1, "a closed escape issue is handled: open ones count")
     sections = {k for k in m if k.startswith("shipping_collector_success_timestamp_seconds")}
     check(len(sections) == 7, f"every section is stamped ({len(sections)})")
     check(all(m.get(f'shipping_collector_section_failed{{section="{s}"}}') == 0 for s in SECTIONS),
