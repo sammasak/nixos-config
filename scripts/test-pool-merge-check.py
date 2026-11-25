@@ -2,7 +2,8 @@
 """scripts/pool_merge_check.py's choice of checks from changed paths, and its migration numbering, without Nix: a docs
 change runs nothing, a rule or dashboard change its own checks and no host, exec-pool its build and the pool's hosts,
 flake.lock and any unmapped path every host (seeded: a rule change beside an unmapped path still evaluates every
-host; two migrations on one number, and a gap, fail)."""
+host; two migrations on one number, and a gap, fail). Every evaluation takes the heavy lock, then the light one the
+push hook's evaluation takes, and a build compiles under the heavy one alone."""
 
 import importlib.util
 import pathlib
@@ -78,6 +79,14 @@ with tempfile.TemporaryDirectory() as t:
     (d / "0004_d.up.sql").touch()
     p = pmc.migrations_problem(d)
     check(p is not None and "0003" in p, f"seeded: a gap at 0003 fails ({p})")
+tree = pathlib.Path("/t")
+for kind, target in (("eval", "msi-ms7758"), ("build", "exec-pool"), ("check", "grafana-dashboards")):
+    argv = pmc.command(pmc.Check(kind, target), tree)
+    locks = [argv[i + 2] for i, a in enumerate(argv) if a == "flock"]
+    check(locks == [str(pmc.LOCK), str(pmc.LIGHT)] and argv[argv.index("nix") + 1] == "eval",
+          f"{kind} {target}: evaluated under the heavy lock, then the light one ({argv})")
+check(pmc.LIGHT.name == "light-work.lock" and "light-work.lock" in (HERE.parent / "devenv.nix").read_text(),
+      "the light lock is the one the push hook's nix flake show takes")
 repo = HERE.parent / "pkgs/exec-pool/migrations"
 check(pmc.migrations_problem(repo) is None, f"this tree's exec-pool migrations ({pmc.migrations_problem(repo)})")
 

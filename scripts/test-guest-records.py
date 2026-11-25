@@ -307,8 +307,10 @@ check('"--metrics"' in units and 'SupplementaryGroups = [ "dev-env-records-metri
       and "--collector.textfile.directory=${recordsMetrics}" in core
       and '"d ${recordsMetrics} 0775 root dev-env-records-metrics -"' in core,
       "the timer's run writes the textfile into node-exporter's directory for it, through its fixed group alone")
+USAGE = ["homelab_guest_memory_bytes", "homelab_guest_memory_peak_bytes", "homelab_guest_slice_memory_bytes",
+         "homelab_guest_slice_memory_max_bytes"]
 check(sorted(subprocess.run([sys.executable, "-I", str(SHIPPER), "--list"], capture_output=True, text=True).stdout.split())
-      == sorted([W, T]), "--list names every series the textfile holds (the grafana-dashboards check reads it)")
+      == sorted([W, T, *USAGE]), "--list names every series the textfile holds (the grafana-dashboards check reads it)")
 
 # --usage (#494): host-made kind=usage lines from the container cgroups and confs, never from a guest file
 check("usage" not in kinds, f"usage is not a guest kind: a guest cannot write one ({kinds})")
@@ -316,6 +318,9 @@ uu = re.search(r"\n  usageUnit =\n(.*?)\n  prepareDirs", core, re.S)
 uu = uu.group(1) if uu else ""
 check("recordsUnit names" in uu and '"--usage"' in uu and '"/sys/fs/cgroup/${slice}.slice"' in uu and '"/etc/nixos-containers"' in uu,
       "the usage unit is the shipper's own sandbox (recordsUnit), with --usage, the slice's cgroup and the containers' confs")
+check('"${recordsMetrics}/guest-usage.prom"' in uu and 'SupplementaryGroups = [ "dev-env-records-metrics" ];' in uu
+      and "ReadWritePaths = [ recordsMetrics ];" in uu,
+      "the usage unit writes its own textfile in node-exporter's directory, through the fixed group alone")
 cg, confs = tmp / "cg", tmp / "confs"
 confs.mkdir()
 SP = "/nix/store/" + "a" * 32 + "-nixos-system-acer-herman-26.11"
@@ -330,11 +335,11 @@ for n, conf in (("herman", f"PRIVATE_NETWORK=1\nSYSTEM_PATH={SP}\n"), ("t2", "SY
 write("herman", [rec(30, "gate", "from=spool")])
 
 
-def usage_run(*names):
+def usage_run(*names, metrics=()):
     Loki.pushes.clear()
     p = subprocess.run([sys.executable, "-I", str(SHIPPER), "--state-dir", str(state), "--progress", str(progress),
                         "--prefix", PREFIX, "--url", URL, "--kinds", ",".join(kinds), "--usage", "--cgroup", str(cg),
-                        "--containers", str(confs), *names], capture_output=True, text=True, timeout=30)
+                        "--containers", str(confs), *metrics, *names], capture_output=True, text=True, timeout=30)
     return p.returncode, p.stdout, p.stderr, [(s["stream"], v[0], v[1]) for _, b in Loki.pushes for s in b["streams"] for v in s["values"]]
 
 
@@ -347,6 +352,23 @@ check(rc == 0 and h is not None and h[0] == {"job": "platform", "kind": "usage",
 check(by.get(f"{PREFIX}-t2", (None, None, ""))[2].endswith(" toplevel=unknown"),
       f"seeded: a conf whose SYSTEM_PATH is not a store path gives toplevel=unknown, never its text ({by.get(f'{PREFIX}-t2')})")
 check(len(got) == 2 and not any("from=spool" in e[2] for e in got), f"usage mode ships no spool line ({got})")
+(cg / "memory.current").write_text("6442450944\n")
+(cg / "memory.max").write_text("7516192768\n")
+um = tmp / "guest-usage.prom"
+rc, out, err, got = usage_run("herman", "gone", metrics=("--metrics", str(um)))
+series = {l.rsplit(" ", 1)[0]: l.rsplit(" ", 1)[1] for l in um.read_text().splitlines() if not l.startswith("#")} if um.exists() else {}
+check(rc == 0 and series == {'homelab_guest_memory_bytes{worker="herman"}': "2015899648",
+                             'homelab_guest_memory_peak_bytes{worker="herman"}': "7518265344",
+                             "homelab_guest_slice_memory_bytes": "6442450944", "homelab_guest_slice_memory_max_bytes": "7516192768"},
+      f"--metrics: each running worker's current and peak memory, worker its only label, and the slice's current and limit ({series})")
+(cg / "memory.max").write_text("max\n")
+um.unlink()
+Loki.status = 500
+rc, out, err, got = usage_run("herman", metrics=("--metrics", str(um)))
+Loki.status = 204
+text = um.read_text() if um.exists() else ""
+check(rc == 1 and "\nhomelab_guest_slice_memory_max_bytes " not in text and 'homelab_guest_memory_bytes{worker="herman"}' in text,
+      f"Loki refusing the push still leaves the textfile written; an unlimited slice (memory.max reads max) has no limit series ({rc}, {text!r})")
 rc, out, err, got = usage_run("herman", "gone")
 check(rc == 0 and [e[0]["host"] for e in got] == [f"{PREFIX}-herman"] and "not running, skipped: gone" in out and err == "",
       f"an instance without a cgroup (stopped) is skipped and logged, rc 0, and the others still go ({rc}, {out.strip()}, {err.strip()})")

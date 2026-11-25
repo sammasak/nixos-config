@@ -192,7 +192,11 @@ let
           "/sys/fs/cgroup/${slice}.slice"
           "--containers"
           "/etc/nixos-containers"
+          "--metrics"
+          "${recordsMetrics}/guest-usage.prom"
         ];
+      SupplementaryGroups = [ "dev-env-records-metrics" ];
+      ReadWritePaths = [ recordsMetrics ];
     };
   # The activation and every slot's reset each prepare all instances: two at once both write a trashed home's
   # .id-base.new and one mv finds it gone, failing that reset and with it a deploy. Bounded, never failing.
