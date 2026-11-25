@@ -3525,6 +3525,18 @@ fn an_undelivered_turn_keeps_the_error_backoff_and_past_it_counts_as_stalled() {
     assert!(stalled(&metrics), "{metrics}");
     s.send(&id, "and this").unwrap();
     assert!(!stalled(&owner.metrics().unwrap()), "a message moves it");
+    let held: i64 = pg
+        .sql()
+        .query_one(
+            "SELECT count(*) FROM inbox WHERE consumed_epoch IS NULL AND due_at IS NOT NULL",
+            &[],
+        )
+        .unwrap()
+        .get(0);
+    assert_eq!(
+        held, 0,
+        "the message makes it due in the queue, for a runner at any version"
+    );
     let (a, epoch, turn) = started(&mut runner);
     assert!(
         turn.input.contains("the message") && turn.input.contains("and this"),
@@ -3592,7 +3604,7 @@ fn an_undelivered_park_lands_in_a_queue_not_yet_migrated_to_hold_it() {
     let (mut s, id) = session(&pg);
     // as a remote runner's park into a queue host still at 23
     pg.sql()
-        .batch_execute("DROP FUNCTION hold_input(text, int8, int8)")
+        .batch_execute("DROP FUNCTION hold_input(text, text, int8, int8, int8)")
         .unwrap();
     let (a, epoch, first) = started(&mut owner);
     owner

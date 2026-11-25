@@ -488,18 +488,19 @@ fn leave_continue(
     Ok(delay)
 }
 
-/// Holds the input an undelivered turn was handed (up to `upto`, still unread) until the park's continue is due
-/// (`delay`), or with none left until a message wakes the session, so it is not queued again at once. A queue not yet
+/// Holds the input an undelivered turn was handed (what [`mark_read`] would mark) until the park's continue is due
+/// (`delay`), or with none left until a message comes (the queue's `release_held_input` makes it due then), so it is not
+/// queued again at once. A queue not yet
 /// at 24 has no `hold_input`: there it wakes at once, as before.
 fn hold_input(
     tx: &mut Transaction<'_>,
-    (task, upto): (&str, i64),
+    (task, attempt, epoch, upto): (&str, &str, i64, i64),
     delay: Option<u32>,
 ) -> Result<(), QueueError> {
     if delay == Some(0)
         || !tx
             .query_one(
-                "SELECT to_regprocedure('hold_input(text, int8, int8)') IS NOT NULL",
+                "SELECT to_regprocedure('hold_input(text, text, int8, int8, int8)') IS NOT NULL",
                 &[],
             )?
             .try_get::<_, bool>(0)?
@@ -507,16 +508,11 @@ fn hold_input(
         return Ok(());
     }
     tx.execute(
-        "SELECT hold_input($1, $2, $3)",
-        &[&task, &upto, &delay.map(i64::from)],
+        "SELECT hold_input($1, $2, $3, $4, $5)",
+        &[&task, &attempt, &epoch, &upto, &delay.map(i64::from)],
     )?;
     Ok(())
 }
-
-/// The inbox rows a turn is handed, besides being unread: due ones, and those [`hold_input`] held (a message, or any
-/// row held past the backoff), which come with whatever wakes the session first.
-const HANDED: &str =
-    "(due_at IS NULL OR due_at <= now() OR kind = 'message' OR due_at = 'infinity')";
 
 /// What [`Store::logs`] found of a task's output.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1208,7 +1204,7 @@ impl Store {
                 (park.reason, &park.memory_killed),
             )?;
             if park.undelivered {
-                hold_input(tx, (&task, park.upto), delay)?;
+                hold_input(tx, (&task, attempt, epoch, park.upto), delay)?;
             }
             if let Some(w) = &wake {
                 tx.execute(
@@ -1807,10 +1803,8 @@ fn turn(
     let mut upto = 0;
     // a stopped turn's continue goes first, though what that turn was told is older than it
     for r in tx.query(
-        &format!(
-            "SELECT id, kind, body FROM inbox WHERE task_id = $1 AND consumed_epoch IS NULL AND {HANDED} \
-             ORDER BY kind <> 'continue', id"
-        ),
+        "SELECT id, kind, body FROM inbox WHERE task_id = $1 AND consumed_epoch IS NULL \
+         AND (due_at IS NULL OR due_at <= now()) ORDER BY kind <> 'continue', id",
         &[&task.id],
     )? {
         let (id, kind, body): (i64, &str, Option<&str>) =
@@ -1845,10 +1839,9 @@ fn mark_read(
         return Ok(());
     }
     tx.execute(
-        // what the claim handed over: up to upto, and due when it leased (its event's `at` is the claim's now()) or
-        // held (HANDED)
+        // what the claim handed over: up to upto, and due when it leased (its event's `at` is the claim's now())
         "UPDATE inbox SET consumed_epoch = $3 WHERE task_id = $1 AND id <= $2 AND consumed_epoch IS NULL \
-         AND (due_at IS NULL OR kind = 'message' OR due_at = 'infinity' OR due_at <= (SELECT max(e.at) FROM events e \
+         AND (due_at IS NULL OR due_at <= (SELECT max(e.at) FROM events e \
          WHERE e.attempt_id = $4 AND e.lease_epoch = $3 AND e.to_status = 'leased'))",
         &[&task, &park.upto, &epoch, &attempt],
     )?;
