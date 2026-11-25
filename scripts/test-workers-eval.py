@@ -1268,11 +1268,11 @@ def check_runner():
     rule = json.dumps([u for n in acer_slots for u in (f"exec-pool-exec@{n}.service", f"dev-env-reset@{n}.service")], separators=(",", ":"))
     check(got.get("acer") == ["exec-pool-exec@", "exec-pool-runner-password", *[f"exec-pool-runner-{n}" for n in acer_slots]]
           and got.get("msi") == ["exec-pool-exec@", *[f"exec-pool-runner-{n}" for n in msi_slots]] and got.get("user") == "exec_pool"
-          and got.get("wanted") == ["multi-user.target"] and got.get("slot", {}).get("id") == "pool1" and got.get("slot", {}).get("agents") == ["none", "claude", "pi"]
-          and got.get("slot2", {}).get("id") == "pool2" and got.get("slot2", {}).get("agents") == ["none", "claude", "pi"]
+          and got.get("wanted") == ["multi-user.target"] and got.get("slot", {}).get("id") == "pool1" and got.get("slot", {}).get("agents") == ["none", "claude", "pi", "codex"]
+          and got.get("slot2", {}).get("id") == "pool2" and got.get("slot2", {}).get("agents") == ["none", "claude", "pi", "codex"]
           and got.get("msiSlots") == [["none", "claude"]] * 4
           and got.get("exec", "").endswith("/bin/exec-pool-runner exec %i") and rule in got.get("polkit", "") and 'subject.user == "exec_pool"' in got.get("polkit", ""),
-          f"acer runs exec-pool-runner-pool1 to -pool3 as exec_pool with its root helper exec-pool-exec@, and polkit lets exec_pool start only {rule}; acer also sets the role's password, msi runs the same for its four slots, each claiming for none and claude ({ {k: got.get(k) for k in ('acer', 'msi', 'user', 'slot', 'slot2', 'msiSlots', 'exec')} or out.stderr.strip()[-300:]})")
+          f"acer runs exec-pool-runner-pool1 to -pool3 as exec_pool with its root helper exec-pool-exec@, and polkit lets exec_pool start only {rule}; acer also sets the role's password, acer's slots offering codex too (dropped at start while no login exists), msi runs the same for its four slots, each claiming for none and claude ({ {k: got.get(k) for k in ('acer', 'msi', 'user', 'slot', 'slot2', 'msiSlots', 'exec')} or out.stderr.strip()[-300:]})")
     polkit = got.get("polkit", "")
     resets = json.dumps([f"dev-env-reset@{n}.service" for n in acer_slots], separators=(",", ":"))
     check(f'var resets = {resets};' in polkit

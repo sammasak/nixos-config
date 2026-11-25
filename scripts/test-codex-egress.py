@@ -278,9 +278,9 @@ def check_refresh():
     env = r["environment"]
     check(f"--reuid={login['owner']} " in env["CODEX_EGRESS_CODEX"] and f"HOME={login['ownerHome']} " in env["CODEX_EGRESS_CODEX"]
           and f"CODEX_HOME={os.path.dirname(login['auth'])} " in env["CODEX_EGRESS_CODEX"] and 'cli_auth_credentials_store="file"' in env["CODEX_EGRESS_CODEX"]
-          and env["CODEX_EGRESS_AUTH"] == login["auth"] and os.path.dirname(login["auth"]) in r["ReadWritePaths"]
+          and env["CODEX_EGRESS_AUTH"] == login["auth"] and f"--reuid={login['owner']} " in env["CODEX_EGRESS_READ"] and os.path.dirname(login["auth"]) in r["ReadWritePaths"]
           and r["onSuccess"] == ["codex-egress-token.service"],
-          f"Codex refreshes as {login['owner']} in that user's own CODEX_HOME and file store, and every run derives again ({env['CODEX_EGRESS_CODEX'][-200:]!r})")
+          f"Codex refreshes as {login['owner']} in that user's own CODEX_HOME and file store, root reads the file only as {login['owner']}, and every run derives again ({env['CODEX_EGRESS_CODEX'][-200:]!r})")
     with tempfile.TemporaryDirectory() as d:
         d = pathlib.Path(d)
         auth, failed, textfile, log = d / "auth.json", d / "failed", d / "codex-egress.prom", d / "log"
@@ -289,7 +289,7 @@ def check_refresh():
 
         def run(mode, timeout="5"):
             e = {"PATH": os.environ["PATH"], "CODEX_EGRESS_AUTH": str(auth), "CODEX_EGRESS_FAILED": str(failed),
-                 "CODEX_EGRESS_TEXTFILE": str(textfile), "CODEX_EGRESS_CODEX": f"{sys.executable} {fake} -c x",
+                 "CODEX_EGRESS_TEXTFILE": str(textfile), "CODEX_EGRESS_CODEX": f"{sys.executable} {fake} -c x", "CODEX_EGRESS_READ": "cat --",
                  "CODEX_EGRESS_TIMEOUT": timeout, "FAKE_MODE": mode, "FAKE_LOG": str(log), "FAKE_AUTH": str(auth),
                  "FAKE_FAILED": str(failed)}
             return subprocess.run([P["refresh"]["ExecStart"]], capture_output=True, text=True, env=e, timeout=60)
@@ -335,12 +335,15 @@ def check_refresh():
         n = asked()
         run("ok")
         check(asked() - n == 1 and metrics().get("codex_egress_refresh_failed") == "0", f"a new login clears the failure and is refreshed again ({metrics()})")
-        real = d / "elsewhere.json"
-        auth.rename(real)
-        auth.symlink_to(real)
+        failed.unlink(missing_ok=True)
+        write(jwt(now - 10000, now + 100), refresh="r-kept")
+        run("silent", timeout="2")
+        a = json.loads(auth.read_text())
+        a["agent_identity"] = "rewritten"
+        auth.write_text(json.dumps(a))
         n = asked()
-        run("ok")
-        check(asked() == n and metrics().get("codex_egress_login_present") == "0", "a symlinked auth.json is not followed by root")
+        out = run("ok")
+        check(asked() == n and "not retried" in out.stderr, "a rewrite of auth.json that keeps the failed refresh token does not clear the failure")
 
 
 def check_runner():

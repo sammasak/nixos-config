@@ -81,7 +81,7 @@ let
   # Upstream Codex refreshes through its own auth manager: app-server's account/read with refreshToken forces a refresh
   # (codex-rs app-server account_processor.rs, refresh_token_if_requested), and calls no model. It reports no outcome,
   # so success is auth.json's last_refresh moving. The failure marker is written before the attempt: one that dies
-  # midway may have spent the refresh token too, and none is tried again until the login changes.
+  # midway may have spent the refresh token too, and none is tried again until the refresh token changes.
   refresh = pkgs.writers.writePython3Bin "codex-egress-refresh" { doCheck = false; } ''
     import base64
     import hashlib
@@ -97,16 +97,18 @@ let
     FAILED = pathlib.Path(os.environ["CODEX_EGRESS_FAILED"])
     TEXTFILE = pathlib.Path(os.environ["CODEX_EGRESS_TEXTFILE"])
     CODEX = os.environ["CODEX_EGRESS_CODEX"].split()
+    READ = os.environ["CODEX_EGRESS_READ"].split()
     TIMEOUT = int(os.environ.get("CODEX_EGRESS_TIMEOUT", "120"))
 
 
     def load():
+        """auth.json as its owner reads it: a link in the owner's home reaches nothing root alone may read."""
         try:
-            fd = os.open(AUTH, os.O_RDONLY | os.O_NOFOLLOW)
-            with os.fdopen(fd, "rb") as f:
-                data = f.read()
-            return data, json.loads(data)
-        except (OSError, ValueError):
+            out = subprocess.run(READ + [str(AUTH)], capture_output=True, timeout=30)
+            if out.returncode != 0:
+                return None, None
+            return out.stdout, json.loads(out.stdout)
+        except (OSError, ValueError, subprocess.TimeoutExpired):
             return None, None
 
 
@@ -213,13 +215,14 @@ let
 
 
     def main():
-        raw, a = load()
+        _, a = load()
         if a is None or not (a.get("tokens") or {}).get("refresh_token"):
             FAILED.unlink(missing_ok=True)
             metrics(False, False, None)
             print("no ChatGPT login to refresh", file=sys.stderr)
             return 0
-        digest = hashlib.sha256(raw).hexdigest()
+        # the refresh token alone: a rewrite that keeps it (a format migration, an edit) must not clear the failure
+        digest = hashlib.sha256(str(a["tokens"]["refresh_token"]).encode()).hexdigest()
         if FAILED.exists():
             if FAILED.read_text().strip() == digest:
                 metrics(True, True, a)
@@ -292,6 +295,7 @@ in
         CODEX_EGRESS_AUTH = auth;
         CODEX_EGRESS_FAILED = "/var/lib/${stateDir}/failed";
         CODEX_EGRESS_TEXTFILE = textfile;
+        CODEX_EGRESS_READ = "${asOwner} ${pkgs.coreutils}/bin/cat --";
         # the login's own user, home and file store, so Codex stays the one writer; root keeps the marker and the textfile
         CODEX_EGRESS_CODEX = "${asOwner} ${pkgs.coreutils}/bin/env -i HOME=${ownerHome} CODEX_HOME=${dirOf auth} SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt ${lib.getExe pkgs.codex} -c cli_auth_credentials_store=\"file\"";
       };

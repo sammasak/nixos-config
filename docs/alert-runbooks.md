@@ -383,7 +383,7 @@ Fires: the owner's ChatGPT login the egress proxy signs the slots' Codex calls w
 `/home/lukas/.codex/auth.json` on `node`) failed or timed out on its last refresh (`codex_egress_refresh_failed`), or
 its access token expires within the hour while a login exists (`codex_egress_access_token_expiry_timestamp_seconds`),
 for 5 minutes. `codex-egress-refresh.timer` lets upstream Codex, as `lukas`, refresh it in place once half the token's
-life is gone; a failure is never retried, as the refresh token may already be spent and a reused one fails for good
+life is gone; a failure is never retried while the refresh token is the same, as it may already be spent and a reused one fails for good
 (`refresh_token_reused`).
 First: on `node`, `journalctl -u codex-egress-refresh.service -n 20` says why (no answer in time, or no new refresh
 recorded). Then the owner signs in again on `node` as `lukas`: `codex login --device-auth` (or the plain

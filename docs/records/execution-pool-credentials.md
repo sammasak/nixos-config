@@ -86,8 +86,12 @@ rust-v0.172.0, and the fleet's Codex is 0.162.1, whose refresh and fallback path
   `codex app-server` and asks `account/read` with `refreshToken: true`, upstream's forced refresh, which calls no
   model (`codex login status` never refreshes; `codex exec` refreshes only within 5 minutes of expiry). Success is
   `auth.json`'s `last_refresh` moving. The attempt is marked failed before it starts and cleared only on success, so
-  one that fails, dies or does not answer in 120 s is never retried for that login: `codex_egress_refresh_failed`
+  one that fails, dies or does not answer in 120 s is never retried while the refresh token is the same: `codex_egress_refresh_failed`
   goes 1 and `CodexLoginRefreshFailed` fires with the re-login steps. Metrics carry no id label.
+- The owner's own Codex on acer shares the file. A long-lived session started before a timer refresh holds the old
+  refresh token in memory; whether upstream reloads `auth.json` before its own refresh was not checked against
+  codex-rs here. Until it is, keep no long-lived `codex` running as `lukas` on acer; if
+  `CodexLoginRefreshFailed` or a 401 follows one, sign in again.
 - Derive: `codex-egress-token.path` watches `auth.json`, and every refresh run starts the unit too.
   `codex-egress-token.service` (root, no network) reads the file as `lukas` and writes `access-token` and
   `account-id` (or `openai-key` for an API-key login) into `/run/codex-egress/tokens`, root's directory, each 0400
