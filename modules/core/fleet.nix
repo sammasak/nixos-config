@@ -401,6 +401,12 @@ in
         port = 11434;
         from = [ "acer-swift" ];
       };
+      # Paddock (modules/homelab/paddock.nix) serves with no key: acer's gateway is its one caller
+      paddock-asus = {
+        host = "asus-b460m";
+        port = 11540;
+        from = [ "acer-swift" ];
+      };
     }
     // scraped "node-exporter" 9100 (_: true)
     // scraped "nvidia-gpu" 9835 (h: h.gpu or null != null)

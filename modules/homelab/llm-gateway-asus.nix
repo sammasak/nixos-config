@@ -6,8 +6,9 @@
   base,
   fragment,
   address,
-  # sam.fleet.listeners.ollama-asus.port
+  # sam.fleet.listeners.ollama-asus.port and paddock-asus.port
   port,
+  paddockPort,
   enabledByDefault,
   # systemd.services.llm-gateway
   unit,
@@ -17,9 +18,12 @@ let
   catalog = builtins.fromTOML fragment;
   baseCatalog = builtins.fromTOML base;
   providers = catalog.providers or [ ];
-  p = if providers == [ ] then { } else lib.head providers;
+  byName = lib.listToAttrs (map (q: lib.nameValuePair (q.name or "") q) providers);
+  p = byName.asus or { };
+  paddock = byName.asus-paddock or { };
   models = catalog.models or [ ];
   url = path: "http://${address}:${toString port}${path}";
+  paddockUrl = path: "http://${address}:${toString paddockPort}${path}";
   # what could pull in, order or gate the gateway's start on asus
   links = lib.concatMap (f: unit.${f} or [ ]) [
     "requires"
@@ -50,11 +54,12 @@ in
   }
   {
     assertion =
-      lib.length providers == 1
-      && p.name or null == "asus"
-      && p.kind or null == "ollama"
-      && p.max_concurrency or null == 1;
-    message = "${where}: one provider, asus, of kind ollama with max_concurrency = 1: asus serves one request slot.";
+      lib.length providers == 2
+      && lib.all (q: q.kind or null == "ollama" && q.max_concurrency or null == 1) [
+        p
+        paddock
+      ];
+    message = "${where}: two providers, asus (Ollama) and asus-paddock, of kind ollama (no key, self-hosted) with max_concurrency = 1: each serves one request slot.";
   }
   {
     assertion = p.base_url or null == url "/v1" && p.health_url or null == url "/api/tags";
@@ -62,7 +67,20 @@ in
   }
   {
     assertion =
-      models != [ ] && lib.all (m: m.provider or null == "asus" && m.tier or null == 3) models;
+      paddock.base_url or null == paddockUrl "/v1" && paddock.health_url or null == paddockUrl "/healthz";
+    message = "${where}: asus-paddock's base_url and health_url must be ${paddockUrl "/v1"} and ${paddockUrl "/healthz"} (sam.fleet.listeners.paddock-asus); without the probe every request tries Paddock while it is stopped.";
+  }
+  {
+    assertion =
+      models != [ ]
+      && lib.all (
+        m:
+        lib.elem (m.provider or null) [
+          "asus"
+          "asus-paddock"
+        ]
+        && m.tier or null == 3
+      ) models;
     message = "${where}: its models are asus's and tier 3, beside msi: the local floor, below every free cloud tier.";
   }
   {

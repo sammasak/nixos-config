@@ -39,6 +39,7 @@ in
     ../../modules/hardware/windows-dual-boot.nix
     ../../modules/homelab/journal-collector.nix
     ../../modules/homelab/ollama-host.nix
+    ../../modules/homelab/paddock.nix
     ../../modules/homelab/monitoring/node-exporter.nix
     ../../modules/homelab/nav-metrics.nix
     ../../modules/homelab/shunt-metrics.nix
@@ -135,6 +136,9 @@ in
   // lib.optionalAttrs config.homelab.ollama.toolModel.enable {
     "qwen3.5:4b" = "d8b0f5e9760cd1682034f292d7ef72ec46f432149be0df7574bf2d6e92e38c04";
   };
+  # Qwen3.6-35B-A3B UD-Q4_K_XL, 20.8 GiB, sha256 707a55a8a4397ecde44de0c499d3e68c1ad1d240d1da65826b4949d1043f4450,
+  # staged at homelab.paddock.model by hand; it takes the GPU, and Ollama serves on the CPU while it is on
+  homelab.paddock.enable = true;
   # Host RAM only: the weights sit in VRAM, and cgroups neither cap nor reserve it. 8G holds gemma4:e4b's 6.1G
   # if it falls back to the CPU; CPUQuota keeps such a fallback off the workers' cores.
   systemd.services.ollama.serviceConfig = {

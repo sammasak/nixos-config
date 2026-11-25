@@ -216,6 +216,7 @@ in
     fragment = asusText;
     address = asusAddress;
     inherit (config.sam.fleet.listeners.ollama-asus) port;
+    paddockPort = config.sam.fleet.listeners.paddock-asus.port;
     enabledByDefault = options.homelab.llmGateway.asus.enable.default;
     unit = config.systemd.services.llm-gateway;
   };

@@ -18,6 +18,8 @@ pkgs/nix-audit/package.nix examples/policy.toml
 docs/pi.md docs/virtual-models.md
 docs/pi.md docs/pi-bench.md
 scripts/test-alloy-otlp-sanitizer.sh scripts/test-native-otlp-sanitizer.sh
+# sammasak/paddock, the asus/ssd-expert-backing branch
+modules/homelab/paddock.nix docs/ssd-expert-backing-progress.md
 # upstream sources (authentik, open-webui)
 modules/homelab/authentik.nix ./authentik/lib/default.yml
 modules/homelab/authentik.nix ./lifecycle/gunicorn.conf.py
