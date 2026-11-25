@@ -3221,3 +3221,24 @@ fn an_arm_is_two_bounded_labels_and_nothing_else() {
         assert!(Arm::parse(bad).is_err(), "{bad}");
     }
 }
+
+#[test]
+fn a_park_with_an_arm_lands_in_a_queue_not_yet_migrated_to_record_it() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (_s, _id) = session(&pg);
+    // as a remote runner's park into a queue host still at 19
+    pg.sql()
+        .batch_execute("ALTER TABLE turns DROP COLUMN variant, DROP COLUMN shunt")
+        .unwrap();
+    let (a, epoch, _) = started(&mut owner);
+    let mut armed = park(ParkReason::TurnEnd, 0);
+    armed.arm = Some(Arm::parse(r#"{"variant": "300000", "shunt": "off"}"#).unwrap());
+    owner.park(&a, epoch, &armed).unwrap();
+    let turns: i64 = pg
+        .sql()
+        .query_one("SELECT count(*) FROM turns", &[])
+        .unwrap()
+        .get(0);
+    assert_eq!(turns, 1);
+}
