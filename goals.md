@@ -128,6 +128,15 @@ Prometheus. Now `for: 5m` (about 8 minutes) and the text leads with `exec-pool s
 paged; an off host never matched (`up == 1`). Read the 14-day firing history once deployed. PR #797. Open: a
 second session stalling on the same host and reason is the same ExecPoolSessionStalled alert, so it pages nothing new.
 
+**25 Nov, branch `pool/cli-9e251aacbfa086ca`** (deploy lenovo): #792 merged a capped unit on lenovo and its
+deploy then failed the sam.memory assertion, as nothing before merge evaluates a host toplevel (the push hook runs
+`nix flake show`). `just pool-merge-check BRANCH` now evaluates every host's toplevel drvPath from the merge with
+origin/main, one nix process per host (all six in one process OOMed a slot's environments.slice), about 3 min on msi
+(acer-swift 63 s, msi 42 s, asus 38 s, black-pi 19 s, lenovo 15 s, naked-pi 8 s; peak 4.2 GB), then builds the
+changed packages as before. lenovo's user.slice 8288M to 8032M, still above the 7782M the build-bounds test asserts
+(4.6 GiB idle sessions plus the largest 3.0 GiB unit): 259M of budget left instead of 3M; a new 128M unit evaluates.
+Open: the 4.6 GiB idle figure predates the named workers moving to pool slots; re-measure lenovo's user slice.
+
 **Open, in pick-up order**
 
 1. Session turns are headless; the owner wants the same interactive Herdr panes the named workers had, with an idle
