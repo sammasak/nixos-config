@@ -35,7 +35,8 @@ head=$(git rev-parse HEAD)
 echo "$PWD $NIXOS_QA_MODE $head $* clean=$(git status --porcelain | wc -l)" >> {calls}
 now=$(date -Iseconds)
 case $(cat {t}/next) in
-  pass) echo "$now gate-step gate=nixos-qa step=nixos-lint seconds=1 result=pass sha=${{head:0:7}}" >> "$PLATFORM_RECORD_SPOOL" ;;
+  pass) {{ echo "$now gate-step gate=nixos-qa step=nixos-lint seconds=1 result=pass sha=${{head:0:7}}"
+      echo "$now gate-step gate=nixos-qa step=nixos-flake-check check=checks.x86_64-linux.cuda owner=asus-b460m seconds=0 result=deferred head=$head drv=/c.drv"; }} >> "$PLATFORM_RECORD_SPOOL" ;;
   fail-check)
     {{ echo "$now gate-step gate=nixos-qa step=nixos-lint seconds=1 result=pass sha=${{head:0:7}}"
       echo "$now gate-step gate=other step=x seconds=1 result=fail sha=${{head:0:7}}"
@@ -128,8 +129,10 @@ esac
     r, ran = run("pass")
     check(len(ran) == 1 and h4 in ran[0] and red() == [], f"G the next run gates that head, green clears red ({ran})")
     m = metrics()
-    check(m["homelab_scheduled_gate_green_timestamp_seconds"] == m["homelab_scheduled_gate_finished_timestamp_seconds"] > 0,
-          f"G the green time is the passing run's finish ({m})")
+    check(0 < m["homelab_scheduled_gate_green_timestamp_seconds"] <= m["homelab_scheduled_gate_finished_timestamp_seconds"],
+          f"G the green time is the passing run's start ({m})")
+    check(m.get('homelab_scheduled_gate_green_deferred{step="nixos-flake-check",check="checks.x86_64-linux.cuda"}') == 1,
+          f"G the check a green run deferred to its owner is named: that green does not clear it ({m})")
     check(json.loads((state / "state.json").read_text())["green"] == h4, "G the green head moves")
     h5 = commit("4b\n")
     run("fail-check")
@@ -139,7 +142,7 @@ esac
     listed = subprocess.run([sys.executable, "-I", str(GATE), "--list"], capture_output=True, text=True,
                             check=True).stdout.split()
     typed = re.findall(r"^# TYPE (\S+) gauge$", prom.read_text(), re.M)
-    check(listed == typed and len(listed) == 7, f"--list names exactly the series the textfile types ({listed})")
+    check(listed == typed and len(listed) == 8, f"--list names exactly the series the textfile types ({listed})")
     commit("5\n")
     run("fail-check")
     exposed = {re.split(r"[{ ]", line)[0] for line in prom.read_text().splitlines() if not line.startswith("#")}

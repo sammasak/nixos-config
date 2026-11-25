@@ -162,7 +162,8 @@ in
         # makes 2, so 3 is a pattern; the flake check's own count covers only failures no inner check explains. It
         # clears newFailureHours after the unit's last failure unless its count rose since (a failure Loki received
         # late, under its old time), and fires again on the next; with no timestamp (an older collector) the count
-        # alone decides. A scheduled full gate on main that passed after the last failure is the pattern handled
+        # alone decides. A scheduled full gate on main that started after the last failure is the pattern handled, unless
+        # it deferred that check to its owner host
         (alert "RetroDueStepFailsRepeat"
           (
             let
@@ -173,7 +174,7 @@ in
               }";
               rose = "${fails} > ${before} or ${fails} unless on (step, check) ${before}";
             in
-            "${fails} >= ${toString a.RetroDueStepFailsRepeat.minFailures.value} unless on (step, check) (${stale} unless on (step, check) (${rose})) and on () ${gateRuns} >= ${toString a.RetroDueStepFailsRepeat.lastRuns.value} unless on (step, check) (max by (step, check) (shipping_gate_step_last_failure_timestamp_seconds) < on () group_left max(homelab_scheduled_gate_green_timestamp_seconds{job=\"node-exporter\"}))"
+            "${fails} >= ${toString a.RetroDueStepFailsRepeat.minFailures.value} unless on (step, check) (${stale} unless on (step, check) (${rose})) and on () ${gateRuns} >= ${toString a.RetroDueStepFailsRepeat.lastRuns.value} unless on (step, check) (max by (step, check) (shipping_gate_step_last_failure_timestamp_seconds) < on () group_left max(homelab_scheduled_gate_green_timestamp_seconds{job=\"node-exporter\"}) unless on (step, check) max by (step, check) (homelab_scheduled_gate_green_deferred{job=\"node-exporter\"}))"
           )
           "Gate step {{ $labels.step }}{{ if $labels.check }}, check {{ $labels.check }},{{ end }} failed on {{ $value }} heads in 7 d: a retro is due (Shipping dashboard: failed gate steps; Platform health for the runs). Reproduce on main with {{ if $labels.check }}nix build -L .#{{ $labels.check }}{{ else }}devenv tasks run nixos:qa{{ end }}; a scheduled full gate on main that passes after the last failure clears this, as does ${toString newFailureHours} h with no new one."
           { }

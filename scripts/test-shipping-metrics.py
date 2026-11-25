@@ -230,6 +230,10 @@ check(sorted(sm.unhandled_reverts([commit_item('Revert "a"', 6), commit_item('Re
                                   [commit_item('Reapply "a"', 4), commit_item('Reapply "b"', 4, "skills"),
                                    commit_item('Revert "Revert "c""', 9)]))
       == [sm.ts(iso(5))], "seeded: a reapply pairs with its own subject's revert, in its own repo, after it")
+# the collector pairs over 30 d: a reapply of an 8-d-old revert finds it and leaves the newer escape counted
+check(sm.unhandled_reverts([commit_item('Revert "old"', 8 * 24), commit_item('Revert "new"', 2 * 24)],
+                           [commit_item('Reapply "old"', 24)]) == [sm.ts(iso(2 * 24))],
+      "seeded: a reapply of a revert older than the 7-d count does not clear a newer escape")
 
 with tempfile.TemporaryDirectory() as tmp:
     out = f"{tmp}/shipping.prom"

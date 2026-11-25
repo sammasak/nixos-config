@@ -312,7 +312,7 @@ let
         ];
       }
       {
-        name = "a step pattern clears once a scheduled full gate on main passes after its last failure";
+        name = "a step pattern clears once a scheduled full gate on main passes after its last failure, unless that gate deferred its check";
         interval = "1m";
         input_series = [
           {
@@ -332,6 +332,19 @@ let
             series = "homelab_scheduled_gate_green_timestamp_seconds{${gateNode}}";
             values = "30x${n (stepFor + 10)} ${n ((stepFor + 10) * 60)}x30";
           }
+          # bar: a check that green deferred to its owner host, which it says nothing about
+          {
+            series = ''shipping_gate_step_failures{check="checks.x86_64-linux.bar",step="nixos-flake-check",window="7d"}'';
+            values = "${n minFails}x${n (stepFor + 40)}";
+          }
+          {
+            series = ''shipping_gate_step_last_failure_timestamp_seconds{check="checks.x86_64-linux.bar",step="nixos-flake-check"}'';
+            values = "60x${n (stepFor + 40)}";
+          }
+          {
+            series = ''homelab_scheduled_gate_green_deferred{${gateNode},check="checks.x86_64-linux.bar",step="nixos-flake-check"}'';
+            values = "1x${n (stepFor + 40)}";
+          }
         ];
         alert_rule_test = [
           {
@@ -346,12 +359,29 @@ let
                   team = "shipping";
                 };
               }
+              {
+                exp_labels = {
+                  step = "nixos-flake-check";
+                  check = "checks.x86_64-linux.bar";
+                  severity = "warning";
+                  team = "shipping";
+                };
+              }
             ];
           }
           {
             alertname = "RetroDueStepFailsRepeat";
             eval_time = "${n (stepFor + 20)}m";
-            exp_alerts = [ ];
+            exp_alerts = [
+              {
+                exp_labels = {
+                  step = "nixos-flake-check";
+                  check = "checks.x86_64-linux.bar";
+                  severity = "warning";
+                  team = "shipping";
+                };
+              }
+            ];
           }
         ];
       }

@@ -306,9 +306,11 @@ def unhandled_reverts(reverts, reapplies):
 def escapes(gh, out, owner, now):
     since7 = now - timedelta(days=7)
     stamp = since7.strftime("%Y-%m-%dT%H:%M:%SZ")
+    # reverts and reapplies are paired over 30 d: a reapply of a revert older than the 7-d count must find that one
+    pair_stamp = (now - timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
     # commit search sees default branches only, which is what a revert on main means here
-    found, _ = gh.search("commits", f'user:{owner} committer-date:>={stamp} "Revert"')
-    applied, _ = gh.search("commits", f'user:{owner} committer-date:>={stamp} "Reapply"')
+    found, _ = gh.search("commits", f'user:{owner} committer-date:>={pair_stamp} "Revert"')
+    applied, _ = gh.search("commits", f'user:{owner} committer-date:>={pair_stamp} "Reapply"')
     reverts = [c for c in found if subject(c).startswith('Revert "') and not subject(c).startswith('Revert "Revert ')]
     # a commit both searches find is one reapply
     reapplies = list({c.get("sha") or c["commit"]["message"]: c for c in found + applied

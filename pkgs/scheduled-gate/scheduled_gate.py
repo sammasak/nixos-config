@@ -21,14 +21,16 @@ import shutil
 import subprocess
 import sys
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 
 METRICS: dict[str, str] = {
     "homelab_scheduled_gate_checked_timestamp_seconds": "When the scheduled gate last read origin/main.",
     "homelab_scheduled_gate_finished_timestamp_seconds": "When the last scheduled full gate finished, 0 if none has.",
-    "homelab_scheduled_gate_green_timestamp_seconds": "When the last passing scheduled full gate finished, 0 if none "
+    "homelab_scheduled_gate_green_timestamp_seconds": "When the last passing scheduled full gate started, 0 if none "
     "has.",
+    "homelab_scheduled_gate_green_deferred": "1 per step and check the last passing scheduled full gate deferred to "
+    "its owner host: that green says nothing about it.",
     "homelab_scheduled_gate_main_behind": "1 while origin/main is not the commit the last finished full gate ran on.",
     "homelab_scheduled_gate_behind_since_timestamp_seconds": "When a check first saw main move past the last finished "
     "gate, 0 while it has not.",
@@ -41,7 +43,8 @@ METRICS: dict[str, str] = {
 @dataclass
 class State:
     """The last finished run. green is the newest head a run passed on, "" before any did, green_at when that run
-    finished; retried is set when this red head was already run again."""
+    started (a failure recorded while it ran is not one it fixed) and green_deferred the "step\tcheck" units it
+    deferred to their owner host; retried is set when this red head was already run again."""
 
     head: str = ""
     result: str = ""
@@ -51,6 +54,7 @@ class State:
     green: str = ""
     behind_since: float = 0.0
     green_at: float = 0.0
+    green_deferred: list[str] = field(default_factory=list)
     retried: bool = False
 
 
@@ -90,7 +94,11 @@ def write_metrics(path: pathlib.Path, st: State, checked: float, main: str) -> N
         "homelab_scheduled_gate_behind_since_timestamp_seconds": [("", st.behind_since if main != st.head else 0.0)],
         "homelab_scheduled_gate_seconds": [("", st.seconds)],
         "homelab_scheduled_gate_red": [],
+        "homelab_scheduled_gate_green_deferred": [],
     }
+    for unit in sorted(set(st.green_deferred)):
+        step, _, check = unit.partition("\t")
+        values["homelab_scheduled_gate_green_deferred"].append((f'step="{label(step)}",check="{label(check)}"', 1.0))
     if st.result == "fail":
         labels = f'head="{st.head[:12]}",step="{label(st.step)}",green="{st.green[:12] or "none"}"'
         values["homelab_scheduled_gate_red"].append((labels, 1.0))
@@ -103,14 +111,14 @@ def write_metrics(path: pathlib.Path, st: State, checked: float, main: str) -> N
     tmp.replace(path)
 
 
-def first_failed_step(spool: pathlib.Path, since: datetime, head: str) -> str:
-    """The first gate-step record of this run that failed: a check inside the flake check names its check too. The
-    spool's lines are "STAMP KIND key=value..." (pkgs/platform-record); "unrecorded" when nixos:qa failed before its
-    first step (a devenv evaluation error, the devenv-fresh guard): its journal says why."""
+def records(spool: pathlib.Path, since: datetime, head: str) -> list[dict[str, str]]:
+    """This run's nixos-qa gate-step records of `head`, in order. The spool's lines are "STAMP KIND key=value..."
+    (pkgs/platform-record)."""
     try:
         lines = spool.read_text().splitlines()
     except OSError:
-        return "unrecorded"
+        return []
+    out = []
     for line in lines:
         parts = line.split(" ")
         if len(parts) < 3 or parts[1] != "gate-step":
@@ -122,10 +130,24 @@ def first_failed_step(spool: pathlib.Path, since: datetime, head: str) -> str:
             continue
         f = dict(p.split("=", 1) for p in parts[2:] if "=" in p)
         sha = f.get("sha") or f.get("head", "")
-        if f.get("gate") != "nixos-qa" or f.get("result") != "fail" or not sha or not head.startswith(sha[:7]):
-            continue
-        step = f.get("step", "unrecorded")
-        return f"{step} ({f['check']})" if f.get("check") else step
+        if f.get("gate") == "nixos-qa" and sha and head.startswith(sha[:7]):
+            out.append(f)
+    return out
+
+
+def deferred(spool: pathlib.Path, since: datetime, head: str) -> list[str]:
+    return [f"{f.get('step', '')}\t{f.get('check', '')}" for f in records(spool, since, head)
+            if f.get("result") == "deferred"]
+
+
+def first_failed_step(spool: pathlib.Path, since: datetime, head: str) -> str:
+    """The first gate-step record of this run that failed: a check inside the flake check names its check too;
+    "unrecorded" when nixos:qa failed before its first step (a devenv evaluation error, the devenv-fresh guard): its
+    journal says why."""
+    for f in records(spool, since, head):
+        if f.get("result") == "fail":
+            step = f.get("step", "unrecorded")
+            return f"{step} ({f['check']})" if f.get("check") else step
     return "unrecorded"
 
 
@@ -167,7 +189,8 @@ def run(repo: str, state_dir: pathlib.Path, metrics: pathlib.Path) -> int:
     st.head, st.finished, st.seconds = main, time.time(), round(time.monotonic() - start)
     st.behind_since, st.retried = 0.0, retry
     if rc == 0:
-        st.result, st.step, st.green, st.green_at = "pass", "", main, st.finished
+        st.result, st.step, st.green = "pass", "", main
+        st.green_at, st.green_deferred = st.finished - st.seconds, deferred(spool, since, main)
     else:
         st.result, st.step = "fail", first_failed_step(spool, since, main)
     save(state_file, st)
