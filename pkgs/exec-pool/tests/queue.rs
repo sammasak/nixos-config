@@ -19,8 +19,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use exec_pool::queue::{
-    Arm, Logs, METRICS_UNAVAILABLE, Park, QueueError, Store, Submitted, TRANSCRIPT_BYTES,
-    Transcript, Turn, TurnLog,
+    Arm, Logs, METRICS_UNAVAILABLE, Park, QueueError, Store, Submitted, TIMEOUTS_IN_A_ROW,
+    TRANSCRIPT_BYTES, Transcript, Turn, TurnLog,
 };
 use exec_pool::task_result::{TaskResult, Usage};
 use exec_pool::wake::Wake;
@@ -239,12 +239,12 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
         .query_one("SELECT max(version) FROM schema_migrations", &[])
         .unwrap()
         .get(0);
-    assert_eq!(version, 24);
+    assert_eq!(version, 25);
     submit(&mut s, &task("t-1", 1));
     // a newer binary's additive migration keeps the floor: this one still serves the database, as after a rollback
     pg.sql()
         .execute(
-            "INSERT INTO schema_migrations (version, floor) VALUES (25, 24)",
+            "INSERT INTO schema_migrations (version, floor) VALUES (26, 25)",
             &[],
         )
         .unwrap();
@@ -252,17 +252,17 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
     assert!(s.claim(&slot("s0"), 60).unwrap().is_some());
     // one this binary would misread, or one that names no floor, is refused
     pg.sql()
-        .execute("INSERT INTO schema_migrations (version) VALUES (26)", &[])
+        .execute("INSERT INTO schema_migrations (version) VALUES (27)", &[])
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(26))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(27))));
     pg.sql()
         .execute(
-            "UPDATE schema_migrations SET floor = 26 WHERE version = 26",
+            "UPDATE schema_migrations SET floor = 27 WHERE version = 27",
             &[],
         )
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(26))));
-    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(26))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(27))));
+    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(27))));
 }
 
 #[test]
@@ -3515,4 +3515,238 @@ fn a_park_with_an_arm_lands_in_a_queue_not_yet_migrated_to_record_it() {
         .unwrap()
         .get(0);
     assert_eq!(turns, 1);
+}
+
+#[test]
+fn an_undelivered_turn_keeps_the_error_backoff_and_past_it_counts_as_stalled() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let mut runner = runner(&pg);
+    let undelivered = |upto| Park {
+        undelivered: true,
+        ..park(ParkReason::TurnError, upto)
+    };
+    let stalled = |m: &str| {
+        m.lines()
+            .any(|l| l == "exec_pool_sessions_stalled{host=\"msi-ms7758\",reason=\"turn_error\"} 1")
+    };
+    let (a, epoch, first) = started(&mut runner);
+    runner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, first.upto))
+        .unwrap();
+    s.send(&id, "the message").unwrap();
+    for (n, secs) in exec_pool::queue::ERROR_BACKOFF_SECS.iter().enumerate() {
+        let (a, epoch, turn) = started(&mut runner);
+        assert!(
+            turn.input.contains("the message"),
+            "turn {n}: {}",
+            turn.input
+        );
+        let (_, changes) = runner.park(&a, epoch, &undelivered(turn.upto)).unwrap();
+        assert_eq!(
+            moves(&changes),
+            [(Status::Waiting, "turn_error")],
+            "turn {n}: not queued again at once"
+        );
+        let held: i64 = pg
+            .sql()
+            .query_one(
+                "SELECT extract(epoch FROM due_at - now())::int8 FROM inbox \
+                 WHERE kind = 'message' AND consumed_epoch IS NULL",
+                &[],
+            )
+            .unwrap()
+            .get(0);
+        assert!(
+            (i64::from(*secs) - 60..=i64::from(*secs)).contains(&held),
+            "turn {n}: the message held {held} s, not {secs}"
+        );
+        assert!(runner.claim(&claude_slot(), 60).unwrap().is_none());
+        assert!(owner.reconcile().unwrap().is_empty());
+        assert!(
+            !stalled(&owner.metrics().unwrap()),
+            "turn {n}: a continue is to come"
+        );
+        pg.sql()
+            .execute(
+                "UPDATE inbox SET due_at = now() - interval '1 second' WHERE consumed_epoch IS NULL",
+                &[],
+            )
+            .unwrap();
+        assert_eq!(
+            moves(&owner.reconcile().unwrap()),
+            [(Status::Queued, "wake")]
+        );
+    }
+    let (a, epoch, turn) = started(&mut runner);
+    let (_, changes) = runner.park(&a, epoch, &undelivered(turn.upto)).unwrap();
+    assert_eq!(moves(&changes), [(Status::Waiting, "turn_error")]);
+    assert!(
+        owner.reconcile().unwrap().is_empty(),
+        "held past the backoff"
+    );
+    let metrics = owner.metrics().unwrap();
+    assert!(stalled(&metrics), "{metrics}");
+    s.send(&id, "and this").unwrap();
+    assert!(!stalled(&owner.metrics().unwrap()), "a message moves it");
+    let unread = |cond: &str| -> i64 {
+        let sql = format!("SELECT count(*) FROM inbox WHERE consumed_epoch IS NULL {cond}");
+        pg.sql().query_one(&sql, &[]).unwrap().get(0)
+    };
+    assert_eq!(
+        unread("AND due_at > now()"),
+        0,
+        "the message makes it due in the queue, for a runner at any version"
+    );
+    let (a, epoch, turn) = started(&mut runner);
+    assert!(
+        turn.input.contains("the message") && turn.input.contains("and this"),
+        "the held message comes with the new one: {}",
+        turn.input
+    );
+    runner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, turn.upto))
+        .unwrap();
+    assert_eq!(unread(""), 0, "both read once delivered");
+}
+
+#[test]
+fn a_second_session_stalling_on_the_same_host_and_reason_is_its_own_series() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, first) = session(&pg);
+    let mut other = agent_task();
+    other["idempotency_key"] = json!("cli:2");
+    let (second, _) = s
+        .start_session(&serde_json::from_value(other).unwrap(), 0)
+        .unwrap();
+    let mut runner = runner(&pg);
+    let per_session = |m: &str| -> Vec<String> {
+        m.lines()
+            .filter(|l| l.starts_with("exec_pool_session_stalled{"))
+            .map(str::to_owned)
+            .collect()
+    };
+    // the two take turns: each continue queues its session behind the other
+    for _ in 0..2 * TIMEOUTS_IN_A_ROW {
+        time_out(&mut runner);
+    }
+    let mut ids = [&first, &second];
+    ids.sort();
+    assert_eq!(
+        per_session(&owner.metrics().unwrap()),
+        ids.iter()
+            .map(|t| format!(
+                "exec_pool_session_stalled{{host=\"msi-ms7758\",reason=\"turn_timeout\",task=\"{t}\"}} 1"
+            ))
+            .collect::<Vec<_>>(),
+        "each stalled session its own series, so the alert pages the second too"
+    );
+    s.send(&first, "go on").unwrap();
+    assert_eq!(
+        per_session(&owner.metrics().unwrap()).len(),
+        1,
+        "only while stalled"
+    );
+}
+
+#[test]
+fn an_undelivered_park_lands_in_a_queue_not_yet_migrated_to_hold_it() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    // as a remote runner's park into a queue host still at 24
+    pg.sql()
+        .batch_execute("DROP FUNCTION hold_input(text, text, int8, int8, int8)")
+        .unwrap();
+    let (a, epoch, first) = started(&mut owner);
+    owner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, first.upto))
+        .unwrap();
+    s.send(&id, "the message").unwrap();
+    let (a, epoch, turn) = started(&mut owner);
+    let undelivered = Park {
+        undelivered: true,
+        ..park(ParkReason::TurnError, turn.upto)
+    };
+    let (_, changes) = owner.park(&a, epoch, &undelivered).unwrap();
+    assert_eq!(
+        moves(&changes),
+        [(Status::Waiting, "turn_error"), (Status::Queued, "wake")],
+        "there it wakes at once, as before"
+    );
+}
+
+#[test]
+fn a_message_during_a_turn_releases_held_input_for_the_next_turn_not_that_one() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let (a, epoch, first) = started(&mut owner);
+    owner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, first.upto))
+        .unwrap();
+    s.send(&id, "held").unwrap();
+    let (a, epoch, turn) = started(&mut owner);
+    let undelivered = Park {
+        undelivered: true,
+        ..park(ParkReason::TurnError, turn.upto)
+    };
+    owner.park(&a, epoch, &undelivered).unwrap();
+    // a timer due now wakes it before the hold ends: its turn is handed the timer alone
+    pg.sql()
+        .execute(
+            "INSERT INTO inbox (task_id, kind, due_at) VALUES ($1, 'timer', now())",
+            &[&id],
+        )
+        .unwrap();
+    assert_eq!(
+        moves(&owner.reconcile().unwrap()),
+        [(Status::Queued, "wake")]
+    );
+    let (a, epoch, timer) = started(&mut owner);
+    assert!(!timer.input.contains("held"), "{}", timer.input);
+    s.send(&id, "later").unwrap();
+    owner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, timer.upto))
+        .unwrap();
+    let (_, _, next) = started(&mut owner);
+    assert!(
+        next.input.contains("held") && next.input.contains("later"),
+        "the turn that was not handed it did not mark it read: {}",
+        next.input
+    );
+}
+
+#[test]
+fn input_held_past_the_backoff_stalls_its_session_after_a_timer_turn_too() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (_s, id) = session(&pg);
+    let (a, epoch, first) = started(&mut owner);
+    owner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, first.upto))
+        .unwrap();
+    // as hold_input leaves it past the backoff, then a timer comes due
+    pg.sql()
+        .batch_execute(&format!(
+            "INSERT INTO inbox (task_id, kind, body, due_at) VALUES ('{id}', 'message', 'held', 'infinity'); \
+             INSERT INTO inbox (task_id, kind, due_at) VALUES ('{id}', 'timer', now())"
+        ))
+        .unwrap();
+    owner.reconcile().unwrap();
+    let (a, epoch, timer) = started(&mut owner);
+    assert!(!timer.input.contains("held"), "{}", timer.input);
+    owner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, timer.upto))
+        .unwrap();
+    let metrics = owner.metrics().unwrap();
+    assert!(
+        metrics.lines().any(|l| l
+            == format!(
+                "exec_pool_session_stalled{{host=\"msi-ms7758\",reason=\"turn_end\",task=\"{id}\"}} 1"
+            )),
+        "{metrics}"
+    );
 }

@@ -49,7 +49,7 @@ esac""",
 esac""",
     # the system profile's generation is the running one
     "bin/readlink": 'case "$*" in *override.conf) echo "$2" ;; -f*) echo /nix/store/sys/init ;; *) echo /nix/store/sys ;; esac',
-    "scripts/system-checks.sh": 'echo "system-checks $*" >> "$LOG"',
+    "scripts/system-checks.sh": 'echo "system-checks toplevel=${SYSTEM_CHECKS_TOPLEVEL:-0} $*" >> "$LOG"',
     "pkgs/platform-record/platform_record.py": 'echo "record $*" >> "$LOG"',
     "top/bin/switch-to-configuration": 'echo "would restart: x.service"; [ "$1" = dry-activate ]; exit "${DRY_RC:-0}"',
 }
@@ -113,10 +113,12 @@ if old.returncode == 0 and "shadowed-user-units" not in old.stdout:
 
 check("exec-pool-drain on" not in run("deploy")[2], "deploy: a host without exec-pool-drain is deployed without a drain")
 rc, out, log = run("deploy", pool=True)
-steps = [l.split()[0] + " " + l.split()[1] for l in log.splitlines() if l.startswith(("drain", "nix run"))]
-check(rc == 0 and "result=ok" in log and steps == ["drain on", "drain wait", "nix run", "drain off"]
+steps = [l.split()[0] + " " + l.split()[1] for l in log.splitlines() if l.startswith(("system-checks", "drain", "nix run"))]
+check(rc == 0 and "result=ok" in log
+      and steps == ["system-checks toplevel=1", "drain on", "drain wait", "nix run", "drain off"]
       and "sudo exec-pool-drain off" in log,
-      f"deploy: a pool host is drained and waited for before deploy-rs, and its drain cleared after (rc {rc}: {steps})")
+      f"deploy: a pool host's toplevel is built, then it is drained and waited for before deploy-rs, and its drain "
+      f"cleared after (rc {rc}: {steps})")
 rc, out, log = run("deploy", pool=True, DEPLOY_RC="1")
 check(rc == 1 and "result=deploy-failed" in log and log.splitlines().count("drain off") == 1,
       f"deploy: a failed or rolled back deploy clears the drain too, once (rc {rc}: {out.strip()[-200:]})")

@@ -26,7 +26,7 @@ pub const DOWN: &str = include_str!("../migrations/0001_queue.down.sql");
 /// From 7 each records its floor, the oldest VERSION whose reads and writes stay correct on it: an additive one keeps
 /// the previous floor, so a binary rolled back across it still serves; one an older binary would misread or break by
 /// its writes records its own version.
-const STEPS: [(i32, &str); 24] = [
+const STEPS: [(i32, &str); 25] = [
     (1, UP),
     (2, include_str!("../migrations/0002_submitter.up.sql")),
     (3, include_str!("../migrations/0003_result.up.sql")),
@@ -66,6 +66,7 @@ const STEPS: [(i32, &str); 24] = [
         24,
         include_str!("../migrations/0024_ledger_summaries.up.sql"),
     ),
+    (25, include_str!("../migrations/0025_hold_input.up.sql")),
 ];
 const DOWN_SUBMITTER: &str = include_str!("../migrations/0002_submitter.down.sql");
 const DOWN_RESULT: &str = include_str!("../migrations/0003_result.down.sql");
@@ -84,7 +85,8 @@ const DOWN_UNDELIVERED: &str = include_str!("../migrations/0018_undelivered.down
 const DOWN_SESSION_SUMMARIES: &str = include_str!("../migrations/0020_session_summaries.down.sql");
 const DOWN_TURN_ARM: &str = include_str!("../migrations/0021_turn_arm.down.sql");
 const DOWN_CONTINUE_BODY: &str = include_str!("../migrations/0023_continue_body.down.sql");
-const VERSION: i32 = 24;
+const DOWN_HOLD_INPUT: &str = include_str!("../migrations/0025_hold_input.down.sql");
+const VERSION: i32 = 25;
 /// The fence's SQLSTATE, raised by `attempts_fence`.
 const FENCED: &str = "XP409";
 const LIVE: &str = "('leased', 'running', 'checkpointing')";
@@ -434,12 +436,13 @@ fn unattended(
 /// The `continue` row a park for `reason` at `epoch` leaves, if any, after it retires any earlier one still unread (a
 /// backoff's, overtaken by a message or a timer), so a park sets at most one. At once after a preemption or a drain.
 /// After errors and timeouts in a row ([`unattended`], mixed or not): a timeout continues while the run is short of
-/// [`TIMEOUTS_IN_A_ROW`]; an error up to [`ERROR_BACKOFF_SECS`]'s length, due after that run's delay.
+/// [`TIMEOUTS_IN_A_ROW`]; an error up to [`ERROR_BACKOFF_SECS`]'s length, due after that run's delay. The delay it
+/// left, in seconds; `None`: no continue.
 fn leave_continue(
     tx: &mut Transaction<'_>,
     (task, attempt, epoch): (&str, &str, i64),
     (reason, killed): (ParkReason, &[String]),
-) -> Result<(), QueueError> {
+) -> Result<Option<u32>, QueueError> {
     tx.execute(
         "UPDATE inbox SET consumed_epoch = $2 WHERE task_id = $1 AND kind = 'continue' AND consumed_epoch IS NULL",
         &[&task, &epoch],
@@ -486,6 +489,32 @@ fn leave_continue(
         }
         None => {}
     }
+    Ok(delay)
+}
+
+/// Holds the input an undelivered turn was handed (what [`mark_read`] would mark) until the park's continue is due
+/// (`delay`), or with none left until a message comes (the queue's `release_held_input` makes it due then), so it is not
+/// queued again at once. A queue not yet
+/// at 25 has no `hold_input`: there it wakes at once, as before.
+fn hold_input(
+    tx: &mut Transaction<'_>,
+    (task, attempt, epoch, upto): (&str, &str, i64, i64),
+    delay: Option<u32>,
+) -> Result<(), QueueError> {
+    if delay == Some(0)
+        || !tx
+            .query_one(
+                "SELECT to_regprocedure('hold_input(text, text, int8, int8, int8)') IS NOT NULL",
+                &[],
+            )?
+            .try_get::<_, bool>(0)?
+    {
+        return Ok(());
+    }
+    tx.execute(
+        "SELECT hold_input($1, $2, $3, $4, $5)",
+        &[&task, &attempt, &epoch, &upto, &delay.map(i64::from)],
+    )?;
     Ok(())
 }
 
@@ -887,7 +916,7 @@ impl Store {
             None => Err(QueueError::NotMigrated),
             Some(v) if v > VERSION => Err(QueueError::SchemaAhead(v)),
             Some(_) => Ok(tx.batch_execute(&format!(
-                "{DOWN_CONTINUE_BODY}{DOWN_TURN_ARM}{DOWN_SESSION_SUMMARIES}{DOWN_UNDELIVERED}{DOWN_TRANSCRIPT}{DOWN_PRIORITY}{DOWN_TURN_LOG}{DOWN_TIMER}{DOWN_DRAIN_REASON}{DOWN_CLAIM_HOST}{DOWN_SESSION_METRICS}{DOWN_SESSION}{DOWN_SLOTS}{DOWN_QUARANTINE}{DOWN_CANCEL}{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"
+                "{DOWN_HOLD_INPUT}{DOWN_CONTINUE_BODY}{DOWN_TURN_ARM}{DOWN_SESSION_SUMMARIES}{DOWN_UNDELIVERED}{DOWN_TRANSCRIPT}{DOWN_PRIORITY}{DOWN_TURN_LOG}{DOWN_TIMER}{DOWN_DRAIN_REASON}{DOWN_CLAIM_HOST}{DOWN_SESSION_METRICS}{DOWN_SESSION}{DOWN_SLOTS}{DOWN_QUARANTINE}{DOWN_CANCEL}{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"
             ))?),
         })
     }
@@ -1173,11 +1202,14 @@ impl Store {
             put_transcript(tx, &task, epoch, park.transcript.as_ref())?;
             insert_turn(tx, attempt, epoch, park)?;
             mark_read(tx, (&task, attempt, epoch), park)?;
-            leave_continue(
+            let delay = leave_continue(
                 tx,
                 (&task, attempt, epoch),
                 (park.reason, &park.memory_killed),
             )?;
+            if park.undelivered {
+                hold_input(tx, (&task, attempt, epoch, park.upto), delay)?;
+            }
             if let Some(w) = &wake {
                 tx.execute(
                     "SELECT wake_at($1, $2::text::timestamptz, $3)",
@@ -2116,9 +2148,18 @@ fn sessions(
     session_totals(tx, out, hosts)
 }
 
-/// Waiting sessions that nothing wakes after a turn that ended in an error or a timeout, by host and that reason: the
-/// automatic continues ([`ERROR_BACKOFF_SECS`], [`TIMEOUTS_IN_A_ROW`]) are spent and only a message moves them.
+/// Waiting sessions that nothing wakes after a turn that ended in an error or a timeout, by host and that reason, and
+/// each one by its task (so a second stall pages on its own): the automatic continues ([`ERROR_BACKOFF_SECS`],
+/// [`TIMEOUTS_IN_A_ROW`]) are spent and only a message moves them. Input [`hold_input`] held past the backoff wakes
+/// nothing, and stalls its session whatever its last turn parked as (a timer's turn may end in between).
 fn stalled(tx: &mut Transaction<'_>, out: &mut String, hosts: &[String]) -> Result<(), QueueError> {
+    let from = "FROM attempts a JOIN tasks t ON t.id = a.task_id \
+        CROSS JOIN LATERAL (SELECT e.reason FROM events e WHERE e.attempt_id = a.id \
+        AND e.to_status = 'waiting' ORDER BY e.id DESC LIMIT 1) p WHERE t.session AND a.status = 'waiting' \
+        AND (p.reason IN ('turn_error', 'turn_timeout', 'turn_memory_kill') OR EXISTS (SELECT FROM inbox i \
+        WHERE i.task_id = t.id AND i.consumed_epoch IS NULL AND i.due_at = 'infinity')) \
+        AND NOT EXISTS (SELECT FROM inbox i WHERE i.task_id = t.id AND i.consumed_epoch IS NULL \
+        AND i.due_at IS DISTINCT FROM 'infinity')";
     out.push_str(
         "# HELP exec_pool_sessions_stalled Waiting sessions whose automatic continues are spent (turn_error, \
          turn_timeout, turn_memory_kill) and that nothing in their inbox wakes, by host and that reason.\n\
@@ -2126,13 +2167,7 @@ fn stalled(tx: &mut Transaction<'_>, out: &mut String, hosts: &[String]) -> Resu
     );
     for (host, why, n) in counted(
         tx,
-        &format!(
-            "SELECT {LAST_HOST}, p.reason, count(*) FROM attempts a JOIN tasks t ON t.id = a.task_id \
-             CROSS JOIN LATERAL (SELECT e.reason FROM events e WHERE e.attempt_id = a.id \
-             AND e.to_status = 'waiting' ORDER BY e.id DESC LIMIT 1) p WHERE t.session AND a.status = 'waiting' \
-             AND p.reason IN ('turn_error', 'turn_timeout', 'turn_memory_kill') \
-             AND NOT EXISTS (SELECT FROM inbox i WHERE i.task_id = t.id AND i.consumed_epoch IS NULL) GROUP BY 1, 2"
-        ),
+        &format!("SELECT {LAST_HOST}, p.reason, count(*) {from} GROUP BY 1, 2"),
         hosts,
         &[
             ParkReason::TurnError.as_str(),
@@ -2143,6 +2178,31 @@ fn stalled(tx: &mut Transaction<'_>, out: &mut String, hosts: &[String]) -> Resu
         let _ = writeln!(
             out,
             "exec_pool_sessions_stalled{{host=\"{host}\",reason=\"{why}\"}} {n}"
+        );
+    }
+    out.push_str(
+        "# HELP exec_pool_session_stalled A stalled session (as exec_pool_sessions_stalled counts it) by its task, \
+         present only while it is stalled.\n\
+         # TYPE exec_pool_session_stalled gauge\n",
+    );
+    for r in tx.query(
+        &format!("SELECT coalesce({LAST_HOST}, 'none'), p.reason, t.id {from} ORDER BY 3"),
+        &[],
+    )? {
+        let (host, why, mut task): (String, String, String) =
+            (r.try_get(0)?, r.try_get(1)?, r.try_get(2)?);
+        // an owner may submit any id; only the queue's own shape is a safe label
+        if task.is_empty()
+            || task.len() > 64
+            || !task
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+        {
+            "other".clone_into(&mut task);
+        }
+        let _ = writeln!(
+            out,
+            "exec_pool_session_stalled{{host=\"{host}\",reason=\"{why}\",task=\"{task}\"}} 1"
         );
     }
     Ok(())

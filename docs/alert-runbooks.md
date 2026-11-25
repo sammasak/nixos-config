@@ -364,13 +364,15 @@ Rollback: none; the increase ages out of the hour once prepares succeed.
 
 ## ExecPoolSessionStalled
 
-Fires: a session last run on `host` has waited for 5 minutes after a turn that parked as `reason` (`turn_error`,
-`turn_memory_kill` or `turn_timeout`) with no automatic continue left and nothing in its inbox
-(`exec_pool_sessions_stalled`, the queue's textfile on acer). A turn that ends in an error gets up to three continues in a row, due 10, 30 and 90 minutes after
+Fires: the session `task`, last run on `host`, has waited for 5 minutes after a turn that parked as `reason`
+(`turn_error`, `turn_memory_kill` or `turn_timeout`) with no automatic continue left and nothing in its inbox but input
+held past the backoff (`exec_pool_session_stalled`, one series per session, the queue's textfile on acer; so a second
+stall on the same host and reason pages on its own). A turn whose input never reached the agent (its pane or prompt
+failed) counts as an error turn, its input held until the next continue is due. A turn that ends in an error gets up to three continues in a row, due 10, 30 and 90 minutes after
 it (a rate limit is not met again at once); one stopped at its time limit up to two at once, the third waits. Each
 continue is a new turn told what happened, never a replay of its last action. Errors and timeouts mixed share one
 run, at most four turns. A message starts the count again.
-First: `exec-pool list` names it (parked `turn_error` or `turn_timeout`); `exec-pool status ID` has its turns and
+First: the alert names it (`task`); `exec-pool status ID` has its turns and
 `exec-pool logs ID` (`--turn N` for an older one) what the agent printed: a rate limit or expired login, a broken
 slot (`exec-pool result ID`), or a task too big for one turn. Fix that, then
 `exec-pool send ID --prompt TEXT` saying what happened and what to do next.
