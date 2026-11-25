@@ -405,20 +405,6 @@ not registered, e.g. a skills pin without them), then the results without any co
 the hooks it started with: restart it.
 Rollback: `sam.claude.bulkReader.enable = false` for that host or worker (acer: the guest module in its configuration).
 
-## ShuntHookOverhead
-
-Fires: on a `shunt="on"` host or worker, Shunt's own Bash hooks (shunt-bash, shunt-spill) took over 250 ms per
-Bash call in the collector's 24 h window (`shunt_hook_time_ms` over `shunt_bash_calls`), over at least 50 calls, for
-an hour. shunt-read runs per Read, not per Bash call, and bulk-read's child replaces a read: neither is counted. The off side's
-comparable is validate-bash's time per call (`shunt_hook_time_ms{hook="validate-bash"}`), which runs on or off, on
-the Agent harnesses dashboard; a host that is slow on both sides is load, not Shunt. 250 ms is a starting bound, to be
-set from the first day's readings.
-First: the hooks' p95 in the alert's query, then the slowest records without any content:
-`jq -c 'select(.hook | startswith("shunt-")) | {ts, hook, result, duration_ms}' .local/state/claude-hooks/$(date -u +%F).jsonl | sort -t: -k6 -n | tail`
-in the home it reads.
-Rollback: `sam.claude.bulkReader.enable = false` for that host or worker and switch, or `SHUNT_DISABLE=1` in the
-environment its sessions start from. The window is 24 h, so it resolves once the slow calls age out of it.
-
 ## LLMGatewayDown
 
 Fires: black-pi's Prometheus cannot scrape llm-gateway's admin port on acer (9091) for 5 minutes, or has no such
