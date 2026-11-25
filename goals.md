@@ -216,6 +216,43 @@ then cite it.
 | pool-merge-check: host evaluation | about 0.5 per host, about 3 for six; msi peaks at 4.2 GB | about 16 cited | lenovo's sam.memory budget (85ebfd25 in #794, 7d883001 in #799) | the host's modules and `hosts/<dir>/` |
 | pool-merge-check: package build | unknown | about 16 cited | c15a3024 (#795, ruff E501 before merge) | `pkgs/<dir>/` |
 
+### Where the time goes, and what a cache can save (Loki, read from a slot on 25 Nov)
+
+The latest scheduled run that reached every step: 24 Nov 15:20, head 191e1d1, 2232 s, red only on
+`shunt-metrics-test`. Its gate-step records:
+
+| Step | Seconds | Of which evaluation | Of which building | Derivations built / substituted / present |
+|---|---|---|---|---|
+| nixos-flake-check | 1373 | 531 (one `nix eval` per output, summed) | 500 over 15 checks; the other 342 s are `nix flake show`, the dry-runs and the per-output processes | 320 compiled, 0 substituted; 15 checks built, 25 already present, 2 deferred to asus |
+| workers-eval-test | 263 | all of it (its own host and guest evaluations) | 0 | none |
+| nixos-gate-probe | 206 | all of it (every host once) | 0 | none |
+| seventh-host-test | 171 | all of it (every host again, seeded) | 0 | none |
+| The other 45 steps | 208 | mostly | mostly none | none |
+
+The answer to "how much would a cache save": at most the 500 s of building, 22 % of the gate. Not one path was
+substituted, because everything not built was already in acer's store. The 320 compiled derivations were the
+deploy checks' systems (msi 132, acer 28, lenovo 15) and the VM tests, built for a head no host had built before.
+What a deploy built on msi or asus is the part the upload below makes present on acer. Evaluation is about 1170 s, more
+than half the gate: the probe, the flake check, workers-eval and seventh-host each evaluate the hosts on their own.
+
+pool-merge-check, 51 runs on 24 and 25 Nov: median 369 s (6.2 min), mean 401 s, max 1452 s; host evaluation is
+57 % of it, package builds 21 %, the named checks 22 %.
+
+Owner, 25 Nov: "anytime a worker builds something it should be put into the cache". What already held: acer's slots
+build through acer's daemon into the store its harmonia serves, and lenovo substitutes from acer. msi's and asus's
+builds were served only while they were up, and no host asks them (a sleeping cache costs every lookup the connect
+timeout). `modules/core/store-upload.nix` (this branch) closes that: a `post-build-hook` on msi and asus queues each
+built output. A path unit and a 10 min retry timer hand the queue over ssh (the host key, a forced command) to acer,
+which pulls the paths from the sender's harmonia, keeps them under gcroots, and roots its own builds the same way.
+Retention is 14 days and 100 GiB, oldest dropped first. Gauges: `store_upload_queue_paths`,
+`store_upload_sent_paths_total`, `store_upload_last_success_timestamp_seconds` on the senders;
+`store_upload_roots{host}`, `store_upload_roots_bytes{host}` and `store_upload_received_paths_total{host,result}` on acer.
+
+Follow-ups, in order: (1) the 26 Nov 03:20 run's numbers into the table above; (2) one evaluation of every host shared
+by the probe, the flake check and seventh-host (about 400 s); (3) the flake check's per-output `nix eval` processes
+as one `nix-eval-jobs` run; (4) an alert on `store_upload_queue_paths` growing while acer is up; (5) acer's
+max-jobs and cores (2 and 2) against the memory budget.
+
 ### Escapes: what reached main or a deploy unseen, and the smallest check
 
 | Escape | Seen at | Smallest check that would have caught it | Exists now |
