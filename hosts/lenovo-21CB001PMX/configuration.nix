@@ -32,7 +32,8 @@
 
   homelab.journalCollector.enable = true;
   homelab.shuntMetrics.enable = true;
-  homelab.alertInvestigations.alerts = [ "NodeSystemdUnitFailed" ];
+  # black-pi's Alertmanager reads the same file for the page's investigation link
+  homelab.alertInvestigations.alerts = lib.importJSON ../../modules/homelab/alert-investigations.json;
 
   sam.profile = {
     username = "lukas";

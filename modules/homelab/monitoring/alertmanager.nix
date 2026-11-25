@@ -32,7 +32,15 @@ let
     "{{ if gt (len .Alerts) 4 }}\n  … {{ len .Alerts }} in all{{ end }}"
     "{{ with .CommonAnnotations.query }}\nQuery: "
     ''{{ printf "%.600s" . }}{{ end }}''
+    investigation
   ];
+  # lenovo's alert-investigations posts each report on the issue titled `Alert: <name>` (docs/alert-runbooks.md)
+  investigated = lib.importJSON ../alert-investigations.json;
+  investigation = lib.optionalString (investigated != [ ]) (
+    ''{{ if match "^(${lib.concatStringsSep "|" investigated})$$" .CommonLabels.alertname }}''
+    + "\nInvestigation: https://github.com/${config.sam.userConfig.git.userName}/nixos-config/issues"
+    + "?q=is%3Aissue+label%3Aalert-investigation+%22Alert%3A+{{ .CommonLabels.alertname }}%22{{ end }}"
+  );
   # the shipping policy's quiet hours, in UTC: a location would need tzdata where amtool checks the file. 19:00 to
   # 07:30 covers 21:00 to 08:30 Stockholm in both seasons, and mutes one more hour: 20:00 to 21:00 in winter (CET),
   # 08:30 to 09:30 in summer (CEST)

@@ -398,7 +398,7 @@ Rollback: none; with no login the runners stop offering codex and submit refuses
 ## AlertInvestigationFailed
 
 Fires: on the host that runs `alert-investigations` (`modules/homelab/alert-investigations.nix`, lenovo, for the
-names in `homelab.alertInvestigations.alerts`), an investigation it started in the last 6 h failed, or for 15 minutes
+names in `modules/homelab/alert-investigations.json`, whose pages also link that alert's issue), an investigation it started in the last 6 h failed, or for 15 minutes
 it has not read Alertmanager. An investigation is one read-only incident-investigator pool session per firing that
 lasted 15 minutes, its report a comment on the issue titled `Alert: <name>` (label `alert-investigation`); it fails
 when `exec-pool start` refuses it, the session ends `failed`, `cancelled` or `needs_review`, its first turn ends
@@ -412,7 +412,8 @@ ID` and `exec-pool logs ID` show what it did. A pushed branch is left for the ow
 `alertname`, `curl -sf http://192.168.10.137:9093/-/ready` from lenovo.
 Do not: delete `/var/lib/alert-investigations/state.json` to clear it; the counters and the per-name issue numbers
 live there, and every firing still active would be investigated again.
-Rollback: `homelab.alertInvestigations.alerts = [ ];` on lenovo and deploy; started sessions stay in the pool.
+Rollback: `homelab.alertInvestigations.alerts = [ ];` on lenovo and deploy (or drop a name from the JSON and deploy lenovo
+and black-pi); started sessions stay in the pool.
 
 ## AlertInvestigationsStale
 
