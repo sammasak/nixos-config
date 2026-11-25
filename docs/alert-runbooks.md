@@ -23,7 +23,8 @@ The ntfy page (Alertmanager's webhook payload, `modules/homelab/monitoring/alert
 ## HostExpectedOff
 
 Fires: a sleeping host's node-exporter does not answer inside its planned power-off. Null route, never notifies; it
-feeds the inhibit rules in `modules/homelab/monitoring/alertmanager.nix`.
+feeds the inhibit rules in `modules/homelab/monitoring/alertmanager.nix`. TargetDown leaves out the targets of such a
+host through the same record, `homelab:node:off_as_planned`, so a planned power-off does not count as a target down.
 First: nothing to do. If the host should be on, check its power window in `modules/core/fleet.nix`.
 
 ## NodeChronicNotReady

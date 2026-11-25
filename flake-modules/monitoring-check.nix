@@ -27,11 +27,16 @@ let
     s.prometheus-blackbox-exporter.serviceConfig.ExecStart
   ];
 
-  nodeTargets = lib.concatMap (c: c.static_configs) (
-    lib.filter (c: c.job_name == "node-exporter")
-      (builtins.fromJSON (builtins.unsafeDiscardStringContext seeded.services.prometheus.configText))
-      .scrape_configs
-  );
+  targetsOf =
+    job:
+    lib.concatMap (c: c.static_configs) (
+      lib.filter (c: c.job_name == job)
+        (builtins.fromJSON (builtins.unsafeDiscardStringContext seeded.services.prometheus.configText))
+        .scrape_configs
+    );
+  jobTargets = lib.genAttrs [ "node-exporter" "nvidia-gpu" ] targetsOf;
+  nodeTargets = jobTargets.node-exporter;
+  gpuTargets = jobTargets.nvidia-gpu;
   node = t: t.labels.node;
   sleeping = lib.attrNames (lib.filterAttrs (_: h: h.sleeps) seeded.sam.fleet.hosts);
   # the scrape label is what the rules read; the fleet fact is what a new host sets
@@ -145,28 +150,62 @@ let
       HostExpectedOff = lib.optional planned host;
       NodeChronicNotReady = lib.optional (!planned) host;
     };
-  ruleTest = name: at: down: firing: {
+  # downBy: the nodes each job's target is down on; targetDown: the jobs TargetDown fires for
+  ruleCase = name: at: downBy: firing: targetDown: {
     inherit name;
     interval = "1m";
-    input_series = map (t: {
-      series = "up{${
-        lib.concatStringsSep "," (
-          lib.mapAttrsToList (k: v: "${k}=${builtins.toJSON v}") (t.labels // { job = "node-exporter"; })
-        )
-      }}";
-      values = if lib.elem (node t) down then "0x3700" else "1x3700";
-    }) nodeTargets;
-    promql_expr_test = lib.mapAttrsToList (alertname: nodes: {
-      expr = ''count by (node) (ALERTS{alertname="${alertname}",alertstate="firing"})'';
-      eval_time = at;
-      exp_samples = map (n: {
-        labels = ''{node="${n}"}'';
-        value = 1;
-      }) nodes;
-    }) firing;
+    input_series = lib.concatLists (
+      lib.mapAttrsToList (
+        job: targets:
+        map (t: {
+          series = "up{${
+            lib.concatStringsSep "," (
+              lib.mapAttrsToList (k: v: "${k}=${builtins.toJSON v}") (t.labels // { inherit job; })
+            )
+          }}";
+          values = if lib.elem (node t) (downBy.${job} or [ ]) then "0x3700" else "1x3700";
+        }) targets
+      ) jobTargets
+    );
+    promql_expr_test =
+      lib.mapAttrsToList (alertname: nodes: {
+        expr = ''count by (node) (ALERTS{alertname="${alertname}",alertstate="firing"})'';
+        eval_time = at;
+        exp_samples = map (n: {
+          labels = ''{node="${n}"}'';
+          value = 1;
+        }) nodes;
+      }) firing
+      ++ [
+        {
+          expr = ''count by (job) (ALERTS{alertname="TargetDown",alertstate="firing"})'';
+          eval_time = at;
+          exp_samples = map (job: {
+            labels = ''{job="${job}"}'';
+            value = 1;
+          }) targetDown;
+        }
+      ];
   };
+  # A host's GPU exporter goes down with its node-exporter. TargetDown counts a job's down targets only on a host
+  # NodeChronicNotReady also fires for (down outside its planned power-off; its for is the longer).
+  ruleTest =
+    name: at: down: firing:
+    ruleCase name at
+      {
+        node-exporter = down;
+        nvidia-gpu = down;
+      }
+      firing
+      (
+        lib.optional (firing.NodeChronicNotReady != [ ]) "node-exporter"
+        ++ lib.optional (lib.any (t: lib.elem (node t) firing.NodeChronicNotReady) gpuTargets) "nvidia-gpu"
+      );
   ruleTests = {
-    rule_files = [ homelabRules.file ];
+    rule_files = [
+      homelabRules.file
+      ../modules/homelab/monitoring/rules/general.yaml
+    ];
     tests =
       lib.concatMap (h: [
         (ruleTest "${h} sleeps, off alone at night" night [ h ] {
@@ -202,6 +241,14 @@ let
         (windowCase "asus off Thursday 10:00 UTC is planned" "10h" "asus-b460m" true)
         (windowCase "asus off Friday 12:00 UTC is planned" "36h" "asus-b460m" true)
       ]
+      # a host that is up with its GPU exporter down, inside its planned power-off: no plan hides it
+      ++ map (
+        t:
+        ruleCase "${node t} up, GPU exporter down at night" night { nvidia-gpu = [ (node t) ]; } {
+          GpuTelemetryDown = [ (node t) ];
+          HostExpectedOff = [ ];
+        } [ "nvidia-gpu" ]
+      ) gpuTargets
       ++ lib.concatMap (h: [
         (ruleTest "${h} does not sleep, off" night [ h ] {
           HostExpectedOff = [ ];

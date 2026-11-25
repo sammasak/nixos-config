@@ -83,7 +83,7 @@ See [the measured improvement cycle](monitoring-improvement-cycle.md) for the fl
 - Alertmanager publishes every alert to lenovo's ntfy except Watchdog, InfoInhibitor, HostExpectedOff, any alert
   labelled `notify="none"` and any `severity="info"` alert (NodeCPUHighUsage): those go to a null receiver. The shipping team's alerts are muted at night.
 - HostExpectedOff marks a sleeping host that is off as planned. Inhibit rules keyed on it silence what the power-off
-  causes (`alertmanager.nix`).
+  causes (`alertmanager.nix`); TargetDown leaves that host's targets out itself (`homelab:node:off_as_planned`).
 - lenovo's watchdog (`cluster-watchdog.nix`) checks the pipeline from outside: Prometheus and Alertmanager ready, and
   Watchdog firing.
 - Host pages in `homelab.yaml`, beside the reachability ones:

@@ -2,16 +2,18 @@
 # (no namespace or service label off Kubernetes). Watchdog is what the lenovo watchdog
 # reads from Alertmanager (modules/homelab/cluster-watchdog.nix).
 # Each alert's query (docs/alert-runbooks.md) is a copy of its expr, TargetDown's aside: change both.
+# TargetDown leaves out the targets of a node off as planned (homelab:node:off_as_planned, homelab.yaml), which
+# upstream's does not: a sleeping host powered off at night is not a target down.
 groups:
   - name: general.rules
     rules:
       - alert: TargetDown
         annotations:
           description: '{{ printf "%.4g" $value }}% of the {{ $labels.job }} targets are down.'
-          query: up == 0
+          query: up == 0 unless on (node) homelab:node:off_as_planned
           runbook_url: https://runbooks.prometheus-operator.dev/runbooks/general/targetdown
           summary: One or more targets are unreachable.
-        expr: 100 * (count(up == 0) BY (cluster, job, namespace, service) / count(up) BY (cluster, job, namespace, service)) > 10
+        expr: 100 * (count(up == 0 unless on (node) homelab:node:off_as_planned) BY (cluster, job, namespace, service) / count(up unless on (node) homelab:node:off_as_planned) BY (cluster, job, namespace, service)) > 10
         for: 10m
         labels:
           severity: warning
