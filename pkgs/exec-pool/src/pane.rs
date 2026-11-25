@@ -114,10 +114,20 @@ pub fn tool_shell(cgroup: &str, cmdline: &[u8], (slot, unit): (&str, &str)) -> b
     ours && cmdline.windows(TOOL_SHELL.len()).any(|w| w == TOOL_SHELL)
 }
 
-/// When the agent is idle: settled after the prompt, waiting for input, with no Bash tool command of its running.
+/// Whether a Claude subagent's `meta.json` (`~/.claude/projects/<project>/<session>/subagents/agent-<id>.meta.json`)
+/// is one still running: Claude writes it at the spawn and again with `"finished": true` once the subagent ends. A
+/// background subagent has no process of its own, so Herdr shows its agent idle while it works.
+#[must_use]
+pub fn subagent_running(meta: &str) -> bool {
+    serde_json::from_str::<Value>(meta)
+        .is_ok_and(|v| v.is_object() && v.get("finished") != Some(&Value::Bool(true)))
+}
+
+/// When the agent is idle: settled after the prompt, waiting for input, with no Bash tool command or subagent of its
+/// running.
 ///
 /// That is a state Herdr reached after the prompt, held for [`SETTLE_MS`]. A blocked or working agent, one Herdr does
-/// not see, one waiting on its own background command ([`tool_shell`]), or a message the owner types in the pane makes
+/// not see, one waiting on its own background command ([`tool_shell`]) or subagent ([`subagent_running`]), or a message the owner types in the pane makes
 /// it busy again; only the time limit ends a turn that never settles.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TurnWatch {
@@ -138,7 +148,7 @@ impl TurnWatch {
 
     /// How long the agent has been idle once Herdr shows `seen` at `now_ms`, counted from when it settled.
     ///
-    /// `None` while it is not, and while `jobs`: a Bash tool command of its runs.
+    /// `None` while it is not, and while `jobs`: a Bash tool command or a subagent of its runs.
     pub const fn idle_ms(&mut self, seen: Option<Seen>, jobs: bool, now_ms: u64) -> Option<u64> {
         match seen {
             Some(s) if s.settled && !jobs && s.seq > self.before => {
@@ -434,6 +444,21 @@ mod tests {
         assert!(!tool_shell(cg, tool, ("pool3", "exec-pool-probe")));
         assert!(!tool_shell(&cg.replace("pool3", "pool30"), tool, at));
         assert!(!tool_shell("", tool, at));
+    }
+
+    #[test]
+    fn a_subagent_runs_until_its_meta_says_finished() {
+        // as Claude Code 2.1 writes them: at the spawn, and once the subagent ended
+        let spawned = r#"{"agentType":"general-purpose","isBuiltIn":true,"description":"x","toolUseId":"toolu_1","spawnDepth":1,"requestShape":"background","requestNonInteractive":true,"model":"haiku"}"#;
+        assert!(subagent_running(spawned));
+        assert!(!subagent_running(&spawned.replace(
+            r#""model":"haiku"}"#,
+            r#""model":"haiku","finished":true}"#
+        )));
+        // half written, or not a meta at all: not a running subagent
+        assert!(!subagent_running(r#"{"agentType":"#));
+        assert!(!subagent_running("[]"));
+        assert!(!subagent_running(""));
     }
 
     #[test]

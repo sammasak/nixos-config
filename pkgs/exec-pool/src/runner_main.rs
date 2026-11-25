@@ -1539,6 +1539,8 @@ struct PaneTurn<'a> {
     grace_secs: u64,
     phase: Phase,
     started: Instant,
+    /// When the turn started, against which a subagent's meta is told to be this turn's ([`subagents`]).
+    since: SystemTime,
     polled: Option<Instant>,
     last: Watch,
     lost: Option<Instant>,
@@ -1575,6 +1577,7 @@ impl<'a> PaneTurn<'a> {
             grace_secs: GRACE_SECS,
             phase: Phase::Open,
             started: Instant::now(),
+            since: SystemTime::now(),
             polled: None,
             last: Watch::Busy,
             lost: None,
@@ -1657,7 +1660,8 @@ impl<'a> PaneTurn<'a> {
                 self.take_hint(&p, seen, note);
                 let now = u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX);
                 // the host's /proc is read only once Herdr shows the agent settled
-                let jobs = seen.is_some_and(|s| s.settled) && self.jobs();
+                let jobs = seen.is_some_and(|s| s.settled)
+                    && (self.jobs() || subagents(self.home, self.uuid, self.since));
                 let idle = self.watch.as_mut().and_then(|w| w.idle_ms(seen, jobs, now));
                 self.idle = idle.is_some();
                 let waiting = self.home.join(wake::FILE).symlink_metadata().is_ok();
@@ -1795,6 +1799,29 @@ fn home_file(home: &Path, guest_path: &str) -> PathBuf {
             .unwrap_or(guest_path)
             .trim_start_matches('/'),
     )
+}
+
+/// Whether a subagent the session `uuid`'s agent started since `since` still runs ([`pane::subagent_running`]), by
+/// its meta in the transcript directory under the docked tree's `home`. An older meta is a turn's that was closed
+/// with it running, which no process carries on.
+fn subagents(home: &Path, uuid: &str, since: SystemTime) -> bool {
+    let Ok(projects) = fs::read_dir(home.join(".claude").join("projects")) else {
+        return false;
+    };
+    projects
+        .filter_map(Result::ok)
+        .filter_map(|d| fs::read_dir(d.path().join(uuid).join("subagents")).ok())
+        .flat_map(|d| d.filter_map(Result::ok))
+        .any(|e| {
+            let p = e.path();
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("agent-") && n.ends_with(".meta.json"))
+                && p.symlink_metadata()
+                    .and_then(|m| m.modified())
+                    .is_ok_and(|t| t >= since)
+                && read_regular(&p).is_ok_and(|m| pane::subagent_running(&m))
+        })
 }
 
 /// The session's transcript in the docked tree's `home`, if Claude has written one.
@@ -2638,6 +2665,47 @@ mod tests {
         };
         assert_eq!(run(false), ("parked", GRACE_SECS * 1000));
         assert_eq!(run(true), ("cut", limit_secs * 1000 + 2000));
+    }
+
+    #[test]
+    fn a_subagent_started_this_turn_keeps_the_agent_busy_until_it_finishes() {
+        let home = std::env::temp_dir().join(format!("exec-pool-subagents-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&home);
+        let uuid = "c3d69fdc-2343-4532-a7dc-46ef64b5040a";
+        let dir = home
+            .join(".claude/projects/-session-cur-work")
+            .join(uuid)
+            .join("subagents");
+        fs::create_dir_all(&dir).unwrap();
+        let since = SystemTime::now() - Duration::from_secs(1);
+        assert!(!subagents(&home, uuid, since));
+        let meta = dir.join("agent-a1.meta.json");
+        fs::write(
+            &meta,
+            r#"{"agentType":"general-purpose","requestShape":"background"}"#,
+        )
+        .unwrap();
+        fs::write(dir.join("agent-a1.jsonl"), "{}\n").unwrap();
+        assert!(subagents(&home, uuid, since));
+        // another session's, or one from before the turn, does not count
+        assert!(!subagents(&home, "another", since));
+        assert!(!subagents(
+            &home,
+            uuid,
+            SystemTime::now() + Duration::from_secs(60)
+        ));
+        fs::write(
+            &meta,
+            r#"{"agentType":"general-purpose","requestShape":"background","finished":true}"#,
+        )
+        .unwrap();
+        assert!(!subagents(&home, uuid, since));
+        // a link is not read
+        let link = dir.join("agent-a2.meta.json");
+        std::os::unix::fs::symlink(home.join("elsewhere.json"), &link).unwrap();
+        fs::write(home.join("elsewhere.json"), "{}").unwrap();
+        assert!(!subagents(&home, uuid, since));
+        fs::remove_dir_all(&home).unwrap();
     }
 
     /// A herdr that answers as Herdr 0.9.5 does: one JSON object for `workspace` and `agent list`, nothing at all
