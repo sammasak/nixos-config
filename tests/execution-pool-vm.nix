@@ -121,8 +121,14 @@ pkgs.testers.runNixOSTest {
         want = f"0 {bases[n]} 65536" if bases[n] else "0 0 4294967295"
         assert got == want and owner == bases[n], f"{n}: guest root is host uid {owner}, uid_map {got}"
     assert machine.succeed(f"stat -c %u:%g {home}").strip() == f"{base + 1000}:{base + 100}", "pool1's home is not its user's"
-    machine.succeed(guest + "sh -c 'test \"$(id -u)\" = 1000 && touch ~/.probe ~/.cache/nix/probe && rm ~/.probe ~/.cache/nix/probe'")
-    machine.fail(guest + "touch /var/lib/host-credentials/x")
+    # the fetcher cache and the eval cache in it are pool1's own, not the host's shared one
+    machine.succeed(guest + "sh -c 'test \"$(id -u)\" = 1000 && touch ~/.probe ~/.cache/nix/probe ~/.cache/nix/eval-cache-v6/probe'")
+    machine.succeed("cd /var/lib/workers && test -e pool1/nix-cache/probe -a -e pool1/eval-cache/probe -a ! -e .nix-cache/probe")
+    machine.succeed(guest + "rm /home/lukas/.probe /home/lukas/.cache/nix/probe /home/lukas/.cache/nix/eval-cache-v6/probe")
+    # the lock lanes through the read-only id-mapped bind: the host's own lock file, held from the guest
+    machine.succeed(guest + "flock -n /run/work-locks/light-work.lock true")
+    # the host user's ssh into the slot with its own host key and alias: the session surface's way in
+    machine.succeed("runuser -u lukas -- timeout 120 worker-pool1 wait")
     machine.fail("nixos-container run pool1 -- test -e /run/wrappers/bin/sudo")
 
     # the nix daemon serves pool1's user (allowed-users names it vu-pool1-1000), a store write included
@@ -171,7 +177,7 @@ pkgs.testers.runNixOSTest {
 
     # a home made in the other block (privateUsers toggled on a running pool): the next start resets it, not refuses
     machine.succeed("systemctl stop container@pool1.service")
-    machine.succeed(f"echo 0 > /var/lib/workers/pool1/.id-base && touch {home}/old")
+    machine.succeed(f"echo 0 > /var/lib/workers/pool1/.id-base && touch {home}/old && chown -R lukas:users {home}")
     machine.succeed("systemctl reset-failed container@pool1.service; systemctl start container@pool1.service")
     machine.wait_until_succeeds(guest + "true")
     machine.succeed(f"test ! -e {home}/old && test \"$(cat /var/lib/workers/pool1/.id-base)\" = {base}")

@@ -96,6 +96,16 @@ its egress sockets, the lock lanes, an sshd host key (the environments' shared o
 own, readable by guest root alone) and the host user's public key, beside the stock store, nix db, daemon socket and per-container profiles and roots; no secret,
 token or private key of the host user, and its container unit loads no credential.
 
+What still runs as host root for a slot under `slot.privateUsers` (nothing inside it does: its root, its setuid
+wrappers and its user are uids of its own block): systemd-nspawn's supervisor and the container unit's start steps
+(the id check and `dev-env-fresh-on-toggle`); `dev-env-reset@`, which renames and deletes the slot's guest-owned home
+(`mv -T --no-copy`, `rm --one-file-system`); the runner's helper `exec-pool-exec@`, which makes and clears the dock,
+writes files into the slot home and dock (new file, then rename, no link followed) and starts the task in the guest
+through `systemd-run -M` as the guest user; the nix-daemon, which serves the slot's requests and runs its builds as
+`nixbld` users in its sandbox; and `nixos-container run`, the reload's way in, which enters the slot's user namespace
+and so acts as its guest root. Without `slot.privateUsers` (acer) the guest's root and its setuid wrappers (su, mount,
+newuidmap, passwd) are host root's as well.
+
 ## Sizing
 
 Reserved per environment, spiking allowed. Measured on both hosts (8 cores,
