@@ -6,7 +6,7 @@ One section per alert in `modules/homelab/monitoring/rules/homelab.yaml`, `modul
 rules, `modules/homelab/monitoring/loki-rules/fake/homelab.yaml`; each alert's `runbook_url` points at its heading here.
 The shipping alerts point at [shipping.md](shipping.md#alerts). The kube-prometheus-stack rules (`general.yaml`,
 `node-exporter.yaml`, `alertmanager.yaml`, `prometheus.yaml` there) keep upstream's runbook,
-`https://runbooks.prometheus-operator.dev/runbooks/<area>/<alert in lower case>`, and their `query` is their `expr`;
+`https://runbooks.prometheus-operator.dev/runbooks/<area>/<alert in lower case>`, their `query` is their `expr` and their `description` ends with this fleet's first command;
 TargetDown, the one of them that fires with every outage, has its own section here.
 
 Every alert in a rule file black-pi's Prometheus loads, and every Loki-ruler alert, carries the same annotations, held
@@ -472,10 +472,3 @@ failed, has no `state.sqlite3` (the header of `modules/homelab/llm-gateway.nix`)
 Fires: every tier-2 (free floor) quota group has under 10 % of its daily allowance left, for 10 minutes. Requests fall
 to msi or get a 429 until 00:00 UTC.
 First: from lenovo, `curl -s http://acer-swift:9091/status | jq .quota_groups` for which group is spent.
-
-## LLMGatewayBatchHittingReserve
-
-Fires: llm-gateway refused a batch project's request in the last 15 minutes because only the interactive reserve of
-the free quota is left (`interactive_reserve`).
-First: from lenovo, `curl -s http://acer-swift:9091/status | jq '.projects, .quota_groups'`; the batch work waits for
-00:00 UTC or moves to a paid tier.

@@ -89,7 +89,7 @@ in
         )
         (alert "PrLeadTimeHigh"
           ''shipping_pr_lead_time_hours{quantile="0.5"} > ${toString a.PrLeadTimeHigh.medianHours.value}''
-          "The median PR lead time over the last 7 d is {{ $value | humanize }} h."
+          "The median PR lead time over the last 7 d is {{ $value | humanize }} h. The Shipping dashboard (https://grafana.sammasak.dev/d/shipping, where a PR's time goes) names the phase that waits; list the open PRs oldest first with gh search prs --owner sammasak --state open --sort created --order asc and merge, close or unblock the oldest."
           { }
         )
         # an API-wide error leaves the prs section fresh, and the lead time quietly open-to-merge
@@ -100,12 +100,14 @@ in
         )
         (alert "ReviewFirstPassLow"
           "shipping_review_first_pass_ratio < ${toString a.ReviewFirstPassLow.minRatio.value} and on () shipping_review_prs_counted >= ${toString a.ReviewFirstPassLow.lastVerdicts.value}"
-          "Only {{ $value | humanizePercentage }} of the last ${toString a.ReviewFirstPassLow.lastVerdicts.value} reviewed PRs passed their first review."
+          "Only {{ $value | humanizePercentage }} of the last ${toString a.ReviewFirstPassLow.lastVerdicts.value} reviewed PRs passed their first review. List them with gh search prs --owner sammasak --merged --sort updated --limit ${
+            toString (2 * a.ReviewFirstPassLow.lastVerdicts.value)
+          } and read what each first review found (gh pr view URL --comments); the Shipping dashboard (https://grafana.sammasak.dev/d/shipping, review rounds) shows the trend. A retro names the finding that repeats."
           { }
         )
         (alert "GateFailRateHigh"
           "${gateFailRatio} > ${toString a.GateFailRateHigh.maxRatio.value} and on () ${gateRuns} >= ${toString a.GateFailRateHigh.lastRuns.value}"
-          "{{ $value | humanizePercentage }} of the last ${toString a.GateFailRateHigh.lastRuns.value} push gates failed."
+          "{{ $value | humanizePercentage }} of the last ${toString a.GateFailRateHigh.lastRuns.value} push gates failed. The Shipping dashboard (https://grafana.sammasak.dev/d/shipping, failed gate steps, last 7 d, and gate fail rate) names the step and host; rerun that step alone on main with NIXOS_STEP=STEP devenv tasks run nixos:step, and fix what it names before the next push."
           { }
         )
         # the full gate runs on main only, on a schedule (modules/homelab/scheduled-gate.nix): a red run names its first
@@ -158,7 +160,7 @@ in
         # alone is no reason for a retro (a bigger change gates longer): its gates must also fail more than their average
         (alert "RetroDueGateSlower"
           "${gateMedian} > ${toString a.RetroDueGateSlower.factor.value} * avg_over_time(${gateMedian}[7d]) and on (host) shipping_gate_fail_ratio > avg_over_time(shipping_gate_fail_ratio[7d]) and ${gateMedian} offset 5d"
-          "The median push gate on {{ $labels.host }} takes {{ $value | humanizeDuration }}, over ${toString a.RetroDueGateSlower.factor.value}x its own 7-d average, and its gates fail more than their 7-d average: a retro is due (Shipping dashboard: failed gate steps, where a PR's time goes)."
+          "The median push gate on {{ $labels.host }} takes {{ $value | humanizeDuration }}, over ${toString a.RetroDueGateSlower.factor.value}x its own 7-d average, and its gates fail more than their 7-d average: a retro is due (https://grafana.sammasak.dev/d/shipping: where a gate's time goes, by gate step, and failed gate steps)."
           { }
         )
         # one step, or one check inside the flake check, failing on 3 heads over a full sample: one bad change on two hosts

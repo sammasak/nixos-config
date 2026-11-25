@@ -42,7 +42,7 @@ groups:
           team: homelab
         annotations:
           summary: "Bulk-read delegations on {{ $labels.node }}{{ with $labels.worker }} for worker {{ . }}{{ end }} are failing"
-          description: "{{ $value | humanizePercentage }} of the bulk-read delegations on {{ $labels.node }} in the last 24 h failed (auth, rate_limited, model_unavailable, timeout or error), over at least 10 attempts; sessions fall back to reading the files themselves. The count is a 24 h window, so it can stay firing up to 24 h after a fix. Read the outcomes in the hook log there."
+          description: "{{ $value | humanizePercentage }} of the bulk-read delegations on {{ $labels.node }} in the last 24 h failed (auth, rate_limited, model_unavailable, timeout or error), over at least 10 attempts; sessions fall back to reading the files themselves. The count is a 24 h window, so it can stay firing up to 24 h after a fix. Run jq -c 'select(.hook == \"bulk-read\") | {ts, result, exit_status, claude_exit, model}' ~/.local/state/claude-hooks/$(date -u +%F).jsonl in the home it reads (a worker's is /var/lib/workers/WORKER/home on the host, as root); auth is the OAuth token, rate_limited or model_unavailable the model's quota."
           query: 'sum by (result) (shunt_events{job="node-exporter",node="{{ $labels.node }}",worker="{{ $labels.worker }}",hook="bulk-read"})'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#shuntdelegationfailing"
 
@@ -63,7 +63,7 @@ groups:
           team: homelab
         annotations:
           summary: "Shunt on {{ $labels.node }}{{ with $labels.worker }} for worker {{ . }}{{ end }} is silent or failing"
-          description: "Shunt is declared on for {{ $labels.node }}{{ with $labels.worker }} worker {{ . }}{{ end }}, yet its agent ran Bash in the last hour with no Shunt hook record for 2 h, or a Shunt hook logged error or nostate in the last 24 h; the on/off comparison is then not measuring Shunt. A session started before Shunt was switched on keeps its old hooks until restarted. An error stays in the 24 h window, so it can stay firing up to 24 h after a fix."
+          description: "Shunt is declared on for {{ $labels.node }}{{ with $labels.worker }} worker {{ . }}{{ end }}, yet its agent ran Bash in the last hour with no Shunt hook record for 2 h, or a Shunt hook logged error or nostate in the last 24 h; the on/off comparison is then not measuring Shunt. Run jq -r '.hooks.PreToolUse[].hooks[].command' .claude/settings.json | grep shunt in the home it reads (a worker's is /var/lib/workers/WORKER/home on the host, as root): no line means the hooks are not registered; then jq -c 'select(.hook | startswith(\"shunt-\")) | {ts, hook, result}' .local/state/claude-hooks/$(date -u +%F).jsonl | tail. A session started before Shunt was switched on keeps its old hooks until restarted. An error stays in the 24 h window, so it can stay firing up to 24 h after a fix."
           query: 'shunt_events{job="node-exporter",node="{{ $labels.node }}",worker="{{ $labels.worker }}",hook=~"shunt-.*"}'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#shuntsilent"
 
