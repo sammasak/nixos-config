@@ -47,15 +47,21 @@ pkgs.testers.runNixOSTest {
         before = [ "dev-env-egress.service" ];
         requiredBy = [ "dev-env-egress.service" ];
         serviceConfig.Type = "oneshot";
+        # once: dev-env-egress-gh.path restarts the proxy, and so this, at every change of the file
         script = ''
+          [ -e /var/lib/stub-gh/hosts.yml ] && exit 0
           install -d -m 0700 -o lukas -g users /var/lib/stub-gh
           printf 'github.com:\n    oauth_token: stub\n' > /var/lib/stub-gh/hosts.yml
           chown lukas:users /var/lib/stub-gh/hosts.yml
         '';
       };
       virtualisation.memorySize = 5120;
-      # an image, not the 9p host store: privateUsers binds /nix/store id-mapped, which 9p refuses ("Failed to clone")
-      virtualisation.useNixStoreImage = true;
+      # the store on the disk image's ext4, as on the hosts: privateUsers binds it id-mapped, which 9p and overlayfs
+      # refuse ("Failed to clone /nix/store")
+      virtualisation.useBootLoader = true;
+      virtualisation.useEFIBoot = true;
+      # no sops here: the GitHub sidecar's InaccessiblePaths names it
+      systemd.tmpfiles.rules = [ "d /run/secrets.d 0751 root root -" ];
       # a VM has no client key for the named guest to bind (the hosts have lukas's own)
       systemd.services.stub-client-key = {
         before = [ "container@t.service" ];
