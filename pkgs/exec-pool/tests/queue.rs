@@ -239,12 +239,12 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
         .query_one("SELECT max(version) FROM schema_migrations", &[])
         .unwrap()
         .get(0);
-    assert_eq!(version, 26);
+    assert_eq!(version, 27);
     submit(&mut s, &task("t-1", 1));
     // a newer binary's additive migration keeps the floor: this one still serves the database, as after a rollback
     pg.sql()
         .execute(
-            "INSERT INTO schema_migrations (version, floor) VALUES (27, 26)",
+            "INSERT INTO schema_migrations (version, floor) VALUES (28, 27)",
             &[],
         )
         .unwrap();
@@ -252,17 +252,17 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
     assert!(s.claim(&slot("s0"), 60).unwrap().is_some());
     // one this binary would misread, or one that names no floor, is refused
     pg.sql()
-        .execute("INSERT INTO schema_migrations (version) VALUES (28)", &[])
+        .execute("INSERT INTO schema_migrations (version) VALUES (29)", &[])
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(28))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(29))));
     pg.sql()
         .execute(
-            "UPDATE schema_migrations SET floor = 28 WHERE version = 28",
+            "UPDATE schema_migrations SET floor = 29 WHERE version = 29",
             &[],
         )
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(28))));
-    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(28))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(29))));
+    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(29))));
 }
 
 #[test]
@@ -503,8 +503,16 @@ fn the_runner_claims_and_settles_and_writes_nothing_else() {
     let out = |exit: i32, output: &str| TaskResult::new(None, Some(exit), output);
     let mut pushed = out(0, "done");
     pushed.branch = Some("pool/t-1".to_owned());
+    pushed.head = Some("1f2e".repeat(10));
     assert!(runner.record_result(&a, 1, &pushed).unwrap());
     assert!(!runner.record_result(&a, 1, &out(0, "again")).unwrap());
+    // the commit it pushed, which a merged pull request's head is held to (exec-pool sessions' rescued)
+    let head: Option<String> = pg
+        .sql()
+        .query_one("SELECT head FROM results WHERE attempt_id = $1", &[&a])
+        .unwrap()
+        .get(0);
+    assert_eq!(head, Some("1f2e".repeat(10)));
     runner.claim(&slot("s1"), 60).unwrap().unwrap();
     // a slot's next claim updates its row as this role
     assert!(runner.claim(&slot("s0"), 60).unwrap().is_none());

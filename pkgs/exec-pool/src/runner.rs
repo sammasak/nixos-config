@@ -605,6 +605,10 @@ pub struct ExecResult {
     /// The task's branch, `pool/<task id>`, when the repository shows it after the run.
     #[serde(default)]
     pub branch: Option<String>,
+    /// The commit `branch` was at once this run pushed it: what the task wrote, so a merged pull request whose head
+    /// is another was finished by someone else.
+    #[serde(default)]
+    pub head: Option<String>,
     /// Where a run that never reached its agent failed: a prepare step's unit, or `admit`, `dock`, `list`, `manifest`,
     /// `herdr`, `prompt` or
     /// `turn` outside one; `None` once its agent started, or for a run stopped by a cancel or a drain.
@@ -658,6 +662,7 @@ impl ExecResult {
             timed_out: false,
             cancelled: false,
             branch: None,
+            head: None,
             failed_step: None,
             parked_at: None,
             unkept: None,
@@ -989,6 +994,7 @@ mod tests {
             timed_out: false,
             cancelled: false,
             branch: None,
+            head: None,
             failed_step: None,
             parked_at: None,
             unkept: None,
