@@ -8,8 +8,9 @@ Every run reads Alertmanager's active alerts. An alert whose name is switched on
 session (`exec-pool start`) whose prompt holds what this host read: the alerts, the Prometheus series behind them and
 the unit's journal. Its first turn's final message is the report, which this run posts as a comment on the issue for
 that alert name (found by its title, else created; one per name, never one per firing). A session that pushed a branch,
-failed, ended without a report or outlived --turn-timeout fails its investigation, and every investigation counts in
-the textfile by outcome. The session is read-only by its prompt (the slots' GitHub proxy would let it push), so a
+failed, ended without a report or outlived --turn-timeout fails its investigation (one cancelled after its turn
+ended keeps that turn's report), and every investigation counts in the textfile by outcome. A name reported less than
+--quiet-after seconds ago starts none. The session is read-only by its prompt (the slots' GitHub proxy would let it push), so a
 pushed branch is checked for and counts as failed.
 """
 
@@ -174,12 +175,15 @@ Agent tool with subagent_type incident-investigator and this input: issue_url \
 https://github.com/{cfg.repo}/issues/{issue}, alert_name {name}, the host from the alert labels, time_window the \
 hour before {utc(now)}, baseline_json_path that file, source_sha_or_unknown the checkout's HEAD. The repository's \
 rules (modules/homelab/monitoring/rules), docs/alert-runbooks.md and the modules behind the alert are in the \
-checkout; read them with Read where the role needs them.
+checkout; read them with Read where the role needs them. The routes this slot may read, Loki for journals and gate \
+records and the Prometheus rules API among them, are in docs/alert-runbooks.md#reading-an-alert-from-a-slot: read \
+what the evidence below lacks before you list it as not checked. Look in the checkout's git log of origin/main for a \
+merged fix of the cause: if there is one, the Verdict says so and names its pull request.
 
 Your final message is the report and nothing else, at most 12 KB of Markdown: alert-investigations posts it on \
 {cfg.repo}#{issue}, a public issue, so quote no credential and no log line that holds one. It has the role's six \
-sections: Verdict, Evidence, Active generation, Hypotheses (cause \
-unproven, two, each with the check that tells them apart), Recommended owner, Not checked.
+sections: Verdict, Evidence, Active generation, Hypotheses (only when the \
+cause is unproven: two, each with the check that tells them apart), Recommended owner, Not checked.
 
 # Evidence
 
@@ -202,6 +206,7 @@ class State:
         self.issues: dict[str, int] = data.get("issues", {})
         self.starts: dict[str, list[float]] = data.get("starts", {})
         self.last_success: float = data.get("last_success", 0.0)
+        self.reported: dict[str, float] = data.get("reported", {})
 
     def count(self, name: str, outcome: str, reason: str | None = None) -> None:
         c = self.counts.setdefault(name, {})
@@ -219,6 +224,7 @@ class State:
             "issues": self.issues,
             "starts": self.starts,
             "last_success": self.last_success,
+            "reported": self.reported,
         }
         # 0600: an unknown start keeps its prompt here, which holds journal lines
         write_atomic(self.path, json.dumps(data, indent=1, sort_keys=True), 0o600)
@@ -332,7 +338,9 @@ def finish(
         got = json.loads(out)
     status, parked = got.get("status"), got.get("parked")
     result = got.get("result") or {}
-    over = status == "succeeded" or (status == "waiting" and parked in DONE_PARKED)
+    # a cancel or review after the turn ended keeps that turn's result: its report stands
+    ended = status in ("cancelled", "needs_review") and result.get("outcome") == "succeeded"
+    over = status == "succeeded" or (status == "waiting" and parked in DONE_PARKED) or ended
     if not over and status not in ("failed", "cancelled", "needs_review") and not late:
         return
     try:
@@ -370,6 +378,8 @@ def finish(
         if not late:
             return
         reason = reason or "not_posted"
+    if reason is None:
+        state.reported[name] = now
     settle(state, name, inv, reason, log)
 
 
@@ -377,6 +387,11 @@ def start(
     cfg: argparse.Namespace, tools: Tools, state: State, name: str, firing: list[Json], now: float, log: list[str]
 ) -> None:
     keys = [firing_key(a) for a in firing]
+    age = now - state.reported.get(name, -cfg.quiet_after)
+    if age < cfg.quiet_after:
+        # not seen: a firing still active once the report is older is investigated then
+        log.append(f"{name}: its last report is {int(age) // 60} minutes old: none started for {keys}")
+        return
     state.seen.setdefault(name, []).extend(keys)
     recent = [t for t in state.starts.get(name, []) if now - t < DAY]
     if len(recent) >= cfg.max_per_day:
@@ -498,6 +513,7 @@ def parse(argv: Sequence[str]) -> argparse.Namespace:
     p.add_argument("--min-firing", type=int, default=900)
     p.add_argument("--turn-timeout", type=int, default=10800)
     p.add_argument("--max-per-day", type=int, default=3)
+    p.add_argument("--quiet-after", type=int, default=21600, help="seconds after a report with no new start")
     cfg = p.parse_args(argv)
     cfg.alerts = [a for a in cfg.alerts.split(",") if a]
     return cfg

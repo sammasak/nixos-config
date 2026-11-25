@@ -148,6 +148,8 @@ def setup(*extra: str) -> tuple[World, Path, list[str]]:
         "--repo", REPO, "--clone-url", f"https://github.com/{REPO}", "--host", "lenovo", "--pool", "/fake/exec-pool",
         "--gh", "/fake/gh", "--state", str(d / "state.json"), "--out", str(d / "out.prom"), *extra,
     ]  # fmt: skip
+    if "--quiet-after" not in extra:
+        argv += ["--quiet-after", "0"]
     return World(), d / "out.prom", argv
 
 
@@ -312,6 +314,35 @@ check(failed(out5, "timed_out") == 0, "an unparsable answer before the timeout w
 tick(w5, argv5, T0 + 31000 + 10801)
 check(failed(out5, "timed_out") == 1, "past the timeout any error settles it")
 w5.gh = real_gh  # type: ignore[method-assign]
+
+# a session cancelled seconds after its turn ended (another client) keeps its report: reported, not failed
+w6, out6, argv6 = setup("--quiet-after", "21600")
+w6.alerts = [alert(NAME, "aa01", T0)]
+tick(w6, argv6, T0 + 1000)
+w6.sessions["cli-0000000000000000"].update(
+    status="cancelled", parked=None, result={"outcome": "succeeded", "output": "## Verdict\ncause", "branch": None}
+)
+tick(w6, argv6, T0 + 1100)
+check(total(out6, "reported") == 1 and total(out6, "failed") == 0, "cancelled after a finished turn is reported")
+check("## Verdict\ncause" in w6.comments[-1][1] and "**failed**" not in w6.comments[-1][1], "its report is posted")
+# a cancel mid-turn has no succeeded outcome: still a failed session
+w6.alerts = [alert(NAME, "aa01", T0 + 30000)]
+tick(w6, argv6, T0 + 31000)
+w6.sessions["cli-0000000000000001"].update(status="needs_review", result={"outcome": None, "output": "half"})
+tick(w6, argv6, T0 + 31100)
+check(failed(out6, "session_failed") == 1, "needs_review without a finished turn fails")
+
+# within six hours of a report the name starts no second investigation; after them a still-active firing does
+w7, out7, argv7 = setup("--quiet-after", "21600")
+w7.alerts = [alert(NAME, "aa01", T0)]
+tick(w7, argv7, T0 + 1000)
+w7.sessions["cli-0000000000000000"].update(status="waiting", parked="turn_end", result={"output": "r", "branch": None})
+tick(w7, argv7, T0 + 1100)
+w7.alerts = [alert(NAME, "aa01", T0 + 2000)]
+tick(w7, argv7, T0 + 3000)
+check(len(w7.started) == 1, "a new firing an hour after the report starts nothing")
+tick(w7, argv7, T0 + 1100 + 21601)
+check(len(w7.started) == 2, "six hours after the report the same firing, still active, starts one")
 
 print(f"{failures} failure(s)")
 sys.exit(1 if failures else 0)
