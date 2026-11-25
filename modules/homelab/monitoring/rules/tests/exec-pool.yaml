@@ -190,6 +190,29 @@ tests:
               query: 'increase(exec_pool_park_push_failures_total{job="node-exporter",node="msi-ms7758"}[1h])'
               runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolparkpushfailing"
 
+  # one kill on msi is quiet; acer's slots lose a process at 10m and two at 20m: firing at once
+  - interval: 1m
+    input_series:
+      - series: 'exec_pool_memory_kills_total{job="node-exporter",node="msi-ms7758",slot="pool1"}'
+        values: '0x10 1x80'
+      - series: 'exec_pool_memory_kills_total{job="node-exporter",node="acer-swift",slot="pool1"}'
+        values: '0x10 1x10 2x70'
+      - series: 'exec_pool_memory_kills_total{job="node-exporter",node="acer-swift",slot="pool2"}'
+        values: '0x20 1x70'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: ExecPoolSlotMemoryKills
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: ExecPoolSlotMemoryKills
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: acer-swift}
+            exp_annotations:
+              summary: "The kernel keeps killing processes in execution pool slots on acer-swift"
+              description: "3 process(es) in the slots on acer-swift were killed by the OOM killer at the slots' shared memory limit in the last 2 hours. On acer-swift run journalctl -k -g oom-kill --since -2h for each killed task and its slot (task_memcg), and exec-pool list for sessions parked turn_memory_kill (runbook)."
+              query: 'increase(exec_pool_memory_kills_total{job="node-exporter",node="acer-swift"}[2h])'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolslotmemorykills"
+
   # clones fail on acer three times between 10m and 30m: firing; two checkouts on msi never do
   - interval: 1m
     input_series:

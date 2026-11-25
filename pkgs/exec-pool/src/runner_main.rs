@@ -30,11 +30,11 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use exec_pool::queue::{Arm, Change, Claim, Park, QueueError, Store, TRANSCRIPT_BYTES, Transcript};
 use exec_pool::runner::{
-    CAPTURE_BYTES, DRAIN_REQUEST, ExecResult, Listed, Manifest, PARK_PUSH_FAILURES,
+    CAPTURE_BYTES, DRAIN_REQUEST, ExecResult, Listed, MEMORY_KILLS, Manifest, PARK_PUSH_FAILURES,
     PREPARE_FAILURES, ParkedAt, QUICK_SECS, Session, Stage, Step, TurnHint, TurnSettle, claim_fits,
-    decide, decide_turn, drain_holds, guest_exit, handed_back, holds_tree, parks_undelivered,
-    read_bytes, read_regular, read_regular_up_to, receipt, relink, remote_head, session_checkpoint,
-    tail, tree_check, while_unavailable,
+    decide, decide_turn, drain_holds, guest_exit, handed_back, holds_tree, oom_victims,
+    parks_undelivered, read_bytes, read_regular, read_regular_up_to, receipt, relink, remote_head,
+    session_checkpoint, tail, tree_check, while_unavailable,
 };
 use exec_pool::snapshot::{self, Git, Plan, Resume, landed, listed, plan};
 use exec_pool::task_result::TaskResult;
@@ -589,7 +589,10 @@ impl Runner {
                         result.and_then(|r| r.wake.clone()),
                         transcript.clone(),
                     ),
-                    &task_result,
+                    (
+                        &task_result,
+                        result.map(|r| r.oom_victims.clone()).unwrap_or_default(),
+                    ),
                     self.arm.as_ref(),
                 )
             })
@@ -742,6 +745,8 @@ impl Runner {
             "stopped_for": stopping,
             "exit_code": result.as_ref().and_then(|r| r.exit_code),
             "timed_out": result.as_ref().map(|r| r.timed_out),
+            "oom_kills": result.as_ref().and_then(|r| r.oom_kills),
+            "oom_victims": result.as_ref().map(|r| r.oom_victims.as_slice()),
             "failed_step": result.as_ref().and_then(|r| r.failed_step.as_deref()),
             "stdout_tail": result.as_ref().map(|r| r.stdout_tail.as_str()),
             "stderr_tail": result.as_ref().map(|r| r.stderr_tail.as_str()),
@@ -768,13 +773,14 @@ fn session_of(claim: &Claim) -> Option<Session> {
 }
 
 /// Parks the session turn `attempt` at `epoch` with its result, the inbox read up to `upto`, the checkpoint that
-/// names where the remote holds its work, the turn's `wake`, the agent's transcript and the slot's arm.
+/// names where the remote holds its work, the turn's `wake`, the agent's transcript, what the OOM killer killed in the
+/// slot and the slot's arm.
 fn park(
     store: &mut Store,
     (attempt, epoch, task): (&str, u64, &TaskSpec),
     (reason, upto, undelivered): (ParkReason, i64, bool),
     (at, wake, transcript): (Option<&ParkedAt>, Option<Wake>, Option<Transcript>),
-    result: &TaskResult,
+    (result, memory_killed): (&TaskResult, Vec<String>),
     arm: Option<&Arm>,
 ) -> Result<(), QueueError> {
     let (_, changes) = store.park(
@@ -789,6 +795,7 @@ fn park(
             wake,
             transcript,
             arm: arm.cloned(),
+            memory_killed,
         },
     )?;
     changes.iter().for_each(log_change);
@@ -931,6 +938,9 @@ impl Guest {
                 // a stop is the command's SIGTERM alone, so the agent ends its turn before its children are killed
                 "-p",
                 "KillMode=mixed",
+                // the kernel's OOM kill of one process (a nix eval) fails that command, not the agent's whole turn
+                "-p",
+                "OOMPolicy=continue",
                 "-p",
                 &format!("TimeoutStopSec={}", STOP_WAIT.as_secs()),
                 "-E",
@@ -2125,6 +2135,7 @@ impl<'a> Dock<'a> {
                     &file,
                     PARK_PUSH_FAILURES,
                     &format!("slot=\"{}\"", self.slot),
+                    1,
                 ) {
                     eprintln!("exec-pool-exec: {}: {e}", file.display());
                 }
@@ -2486,6 +2497,7 @@ fn exec(slot: &str) -> Result<(), String> {
     } = begin(slot)?;
     let mut result = ExecResult::begun(&manifest);
     let t = Instant::now();
+    let memory = MemoryWatch::start();
     let guest_home = var("EXEC_POOL_GUEST_HOME")?;
     let ws = manifest
         .workspace(&guest_home)
@@ -2577,7 +2589,94 @@ fn exec(slot: &str) -> Result<(), String> {
         let ready = (admitted, dock.is_some(), opened, resume.is_some());
         failed_preparing(slot, &mut result, ready);
     }
+    if let Some(m) = memory {
+        m.finish(slot, &mut result, &note);
+    }
     write_result(slot, &dir, result)
+}
+
+/// The slot's OOM kills as a run began: its cgroup on the host (`EXEC_POOL_SLOT_CGROUP`), its `memory.events`
+/// `oom_kill` count then, and when.
+struct MemoryWatch {
+    cgroup: String,
+    kills: u64,
+    since: SystemTime,
+}
+
+impl MemoryWatch {
+    /// `None` without the variable or a count to read: the run's kills go uncounted.
+    fn start() -> Option<Self> {
+        let cgroup = std::env::var("EXEC_POOL_SLOT_CGROUP").ok()?;
+        let kills = Self::kills(&cgroup)?;
+        Some(Self {
+            cgroup,
+            kills,
+            since: SystemTime::now(),
+        })
+    }
+
+    fn kills(cgroup: &str) -> Option<u64> {
+        let events = fs::read_to_string(format!("/sys/fs/cgroup{cgroup}/memory.events")).ok()?;
+        events
+            .lines()
+            .find_map(|l| l.strip_prefix("oom_kill "))
+            .and_then(|n| n.trim().parse().ok())
+    }
+
+    /// Records in `result` the kills since the run began and the names the kernel's log gives them, and counts them
+    /// in the slot's textfile, `exec_pool_memory_kills_total{slot}`. A guest restarted since (a lower count) counts
+    /// none.
+    fn finish(
+        self,
+        slot: &str,
+        result: &mut ExecResult,
+        note: &dyn Fn(&str, &dyn std::fmt::Display),
+    ) {
+        let Some(now) = Self::kills(&self.cgroup) else {
+            return;
+        };
+        let n = now.saturating_sub(self.kills);
+        result.oom_kills = Some(n);
+        if n == 0 {
+            return;
+        }
+        let since = self
+            .since
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let kmsg = Command::new("journalctl")
+            .args([
+                "-k",
+                "-q",
+                "-o",
+                "cat",
+                "--no-pager",
+                &format!("--since=@{since}"),
+            ])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output();
+        match kmsg {
+            Ok(o) => {
+                result.oom_victims = oom_victims(&String::from_utf8_lossy(&o.stdout), &self.cgroup)
+            }
+            Err(e) => note("kernel log", &e),
+        }
+        note(
+            "memory kill",
+            &format!(
+                "the OOM killer killed {n} process(es) of the slot: {:?}",
+                result.oom_victims
+            ),
+        );
+        if let Some(dir) = std::env::var_os("EXEC_POOL_TEXTFILE") {
+            let file = PathBuf::from(dir).join(format!("exec-pool-memory-{slot}.prom"));
+            if let Err(e) = textfile::bump(&file, MEMORY_KILLS, &format!("slot=\"{slot}\""), n) {
+                eprintln!("exec-pool-exec: {}: {e}", file.display());
+            }
+        }
+    }
 }
 
 /// Names the step a run that never reached its agent failed at when no prepare step did, from `ready` (the home
@@ -2598,7 +2697,7 @@ fn failed_preparing(slot: &str, result: &mut ExecResult, ready: (bool, bool, boo
     let step = result.failed_step.get_or_insert_with(|| unready.to_owned());
     if let Some(dir) = std::env::var_os("EXEC_POOL_TEXTFILE") {
         let file = PathBuf::from(dir).join(format!("exec-pool-prepare-{slot}.prom"));
-        let counted = textfile::bump(&file, PREPARE_FAILURES, &format!("step=\"{step}\""));
+        let counted = textfile::bump(&file, PREPARE_FAILURES, &format!("step=\"{step}\""), 1);
         if let Err(e) = counted {
             eprintln!("exec-pool-exec: {}: {e}", file.display());
         }

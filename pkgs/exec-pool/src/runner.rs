@@ -38,6 +38,30 @@ pub const PARK_PUSH_FAILURES: (&str, &str) = (
     "exec_pool_park_push_failures_total",
     "Tries to push a parked session turn's work to its remote that failed.",
 );
+/// The slot's processes the kernel's OOM killer killed while a run was in it, from its `memory.events`.
+pub const MEMORY_KILLS: (&str, &str) = (
+    "exec_pool_memory_kills_total",
+    "Processes of a slot the kernel's OOM killer killed during a run, by slot.",
+);
+
+/// The names of the processes in `cgroup` (`/environments.slice/container@pool1.service`) that the kernel's
+/// `oom-kill:` lines in `kmsg` say it killed, in order, each once.
+#[must_use]
+pub fn oom_victims(kmsg: &str, cgroup: &str) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for line in kmsg.lines().filter(|l| l.contains("oom-kill:")) {
+        let field = |key: &str| line.split([',', ' ']).find_map(|f| f.strip_prefix(key));
+        let ours = field("task_memcg=").is_some_and(|m| {
+            m == cgroup || m.strip_prefix(cgroup).is_some_and(|r| r.starts_with('/'))
+        });
+        if let (true, Some(task)) = (ours, field("task=")) {
+            if !names.iter().any(|n| n == task) {
+                names.push(task.to_owned());
+            }
+        }
+    }
+    names
+}
 pub const CAPTURE_BYTES: u64 = 1 << 20;
 /// The largest manifest or result read: both are a few KiB.
 const READ_LIMIT: u64 = 1 << 20;
@@ -440,7 +464,8 @@ pub enum TurnSettle {
 /// `cancelled`; a turn that never reached the agent goes back to `queued`, except one whose pane or prompt failed
 /// ([`PANE_STEPS`]), which parks as `turn_error` with its input left unread. Every end of the agent's
 /// call parks the session: `turn_timeout` for a call stopped at the time limit, `turn_end` for Claude's verdict of
-/// success, `turn_error` otherwise. A failed turn never fails the session.
+/// success, `turn_memory_kill` when the OOM killer killed a process of the slot during it, `turn_error` otherwise. A
+/// failed turn never fails the session.
 #[must_use]
 pub fn decide_turn(
     attempt: &str,
@@ -475,6 +500,7 @@ pub fn decide_turn(
     }
     match agent::outcome(Agent::Claude, r.exit_code, stdout) {
         Outcome::Succeeded => TurnSettle::Park(ParkReason::TurnEnd),
+        _ if r.oom_kills.is_some_and(|n| n > 0) => TurnSettle::Park(ParkReason::TurnMemoryKill),
         _ => TurnSettle::Park(ParkReason::TurnError),
     }
 }
@@ -604,6 +630,12 @@ pub struct ExecResult {
     /// park marks read with what the claim handed over.
     #[serde(default)]
     pub upto: Option<i64>,
+    /// Processes of the slot the kernel's OOM killer killed during the run, by its `memory.events`; `None`: not read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oom_kills: Option<u64>,
+    /// Their names, as the kernel's log has them ([`oom_victims`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub oom_victims: Vec<String>,
     /// `container@<slot>` was active when the command ended; a guest that went away leaves the outcome unknown.
     pub container_active: bool,
     pub stdout_tail: String,
@@ -633,6 +665,8 @@ impl ExecResult {
             wake: None,
             upto: None,
             drained: false,
+            oom_kills: None,
+            oom_victims: Vec::new(),
             container_active: true,
             stdout_tail: String::new(),
             stderr_tail: String::new(),
@@ -962,6 +996,8 @@ mod tests {
             wake: None,
             upto: None,
             drained: false,
+            oom_kills: None,
+            oom_victims: Vec::new(),
             container_active: true,
             stdout_tail: String::new(),
             stderr_tail: String::new(),
@@ -1314,6 +1350,29 @@ mod tests {
             turn(Some(&timed_out), "{\"is_error\":false}"),
             TurnSettle::Park(ParkReason::TurnTimeout)
         );
+        let killed = |kills| ExecResult {
+            oom_kills: Some(kills),
+            ..result(Stage::Run, None)
+        };
+        assert_eq!(
+            turn(Some(&killed(1)), ""),
+            TurnSettle::Park(ParkReason::TurnMemoryKill)
+        );
+        assert_eq!(
+            turn(Some(&killed(0)), ""),
+            TurnSettle::Park(ParkReason::TurnError)
+        );
+        assert_eq!(
+            turn(
+                Some(&ExecResult {
+                    exit_code: Some(0),
+                    ..killed(2)
+                }),
+                "{\"is_error\":false}"
+            ),
+            TurnSettle::Park(ParkReason::TurnEnd),
+            "a turn that outlived the kill ended as it would"
+        );
         assert_eq!(turn(None, ""), TurnSettle::Settle(Settle::NeedsReview));
         let unkept = ExecResult {
             unkept: Some("push: the remote hung up".to_owned()),
@@ -1369,6 +1428,33 @@ mod tests {
             turn(Some(&cancelled), ""),
             TurnSettle::Settle(Settle::Cancelled)
         );
+    }
+
+    #[test]
+    fn oom_victims_are_the_slots_own_by_name_each_once() {
+        let line = |memcg: &str, task: &str| {
+            format!(
+                "oom-kill:constraint=CONSTRAINT_MEMCG,nodemask=(null),cpuset=/,mems_allowed=0,\
+                 oom_memcg=/environments.slice,task_memcg={memcg},task={task},pid=4242,uid=1000"
+            )
+        };
+        let ours = "/environments.slice/container@pool1.service";
+        let kmsg = [
+            line(
+                &format!("{ours}/payload/system.slice/exec-pool-task.service"),
+                "nix",
+            ),
+            "Out of memory: Killed process 4242 (nix) total-vm:3500000kB".to_owned(),
+            line(
+                "/environments.slice/container@pool10.service/payload",
+                "cargo",
+            ),
+            line(&format!("{ours}/payload"), "nix"),
+            line(ours, "claude"),
+        ]
+        .join("\n");
+        assert_eq!(oom_victims(&kmsg, ours), ["nix", "claude"]);
+        assert!(oom_victims("", ours).is_empty());
     }
 
     #[test]

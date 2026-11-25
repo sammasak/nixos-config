@@ -44,16 +44,19 @@ pub enum ParkReason {
     TurnError,
     /// The agent's call was stopped at the turn's time limit.
     TurnTimeout,
+    /// A turn that would park as `turn_error` in which the kernel's OOM killer killed a process of its slot.
+    TurnMemoryKill,
 }
 
 impl ParkReason {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::TurnEnd,
         Self::WaitingUntil,
         Self::Preempted,
         Self::HostDraining,
         Self::TurnError,
         Self::TurnTimeout,
+        Self::TurnMemoryKill,
     ];
 
     #[must_use]
@@ -65,6 +68,7 @@ impl ParkReason {
             Self::HostDraining => "host_draining",
             Self::TurnError => "turn_error",
             Self::TurnTimeout => "turn_timeout",
+            Self::TurnMemoryKill => "turn_memory_kill",
         }
     }
 }

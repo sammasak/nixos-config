@@ -114,6 +114,19 @@ groups:
           query: 'increase(exec_pool_park_push_failures_total{job="node-exporter",node="{{ $labels.node }}"}[1h])'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolparkpushfailing"
 
+      - alert: ExecPoolSlotMemoryKills
+        # the slots share the environments slice's one limit: a turn's nix eval meets it while its neighbours are busy
+        expr: |
+          sum by (node) (increase(exec_pool_memory_kills_total{job="node-exporter"}[2h])) >= 2
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "The kernel keeps killing processes in execution pool slots on {{ $labels.node }}"
+          description: "{{ $value }} process(es) in the slots on {{ $labels.node }} were killed by the OOM killer at the slots' shared memory limit in the last 2 hours. On {{ $labels.node }} run journalctl -k -g oom-kill --since -2h for each killed task and its slot (task_memcg), and exec-pool list for sessions parked turn_memory_kill (runbook)."
+          query: 'increase(exec_pool_memory_kills_total{job="node-exporter",node="{{ $labels.node }}"}[2h])'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolslotmemorykills"
+
       - alert: ExecPoolPrepareFailing
         # each failed prepare requeues the task and spends a try: repeated, they end as attempts_exhausted
         expr: |
