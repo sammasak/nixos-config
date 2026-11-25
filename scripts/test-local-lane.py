@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """scripts/local-lane.py's gate on fixtures (#807): one good result passes, and a weakened check, a file out of scope,
-a check still failing, a diff over 60 lines, a reviewer saying unsafe or something unclear, and a check that already
-passes on the prepared commit each fail at their own item."""
+a check still failing, a diff over 60 lines or with a binary file, a reviewer saying unsafe or something unclear or
+missing, and a check that already passes on the prepared commit each fail at their own item; `run` against a fake
+exec-pool retries once, keeps no credential in the lint's environment and writes one record."""
 import json
 import os
 import pathlib
@@ -51,7 +52,8 @@ def commit(repo, files, msg):
 def gate(repo, prepared, head, reviewer="echo ok", check_args=("--check", "python3 check.py", "--check-file", "check.py")):
     out = subprocess.run([sys.executable, "-I", str(LANE), "gate", "--repo", repo, "--prepared", prepared,
                           "--head", head, *check_args, "--scope", "a.txt", "--scope", "docs/",
-                          "--task", "Make a.txt say new.", "--reviewer", reviewer], capture_output=True, text=True)
+                          "--task", "Make a.txt say new.", "--lint", "none", "--reviewer", reviewer],
+                         capture_output=True, text=True)
     return out.returncode, json.loads(out.stdout) if out.stdout.strip() else {"stderr": out.stderr}
 
 
@@ -75,13 +77,16 @@ with tempfile.TemporaryDirectory() as tmp:
         "check": head({"a.txt": "other\n"}),
         "lines": head({"a.txt": "new\n", "docs/long.md": "x\n" * 61}),
     }
+    binary = head({"a.txt": "new\n", "docs/blob.bin": "\0" * 10})
+    rc, v = gate(repo, prepared, binary)
+    check(rc == 1 and v.get("failed") == "lines", f"a binary file fails the line count ({rc}, {v})")
     for item, sha in cases.items():
         rc, v = gate(repo, prepared, sha)
         check(rc == 1 and v.get("failed") == item, f"a bad result fails at {item} ({rc}, {v})")
 
-    for said, why in (("unsafe", "unsafe"), ("maybe", "unclear")):
-        rc, v = gate(repo, prepared, good, reviewer=f"echo {said}")
-        check(rc == 1 and v.get("failed") == "review" and v.get("why") == why, f"a reviewer saying {said} fails the review ({rc}, {v})")
+    for said, why in (("unsafe", "unsafe"), ("maybe", "unclear"), (None, "unclear")):
+        rc, v = gate(repo, prepared, good, reviewer=f"echo {said}" if said else "/nonexistent/reviewer")
+        check(rc == 1 and v.get("failed") == "review" and v.get("why") == why, f"a reviewer saying {said or 'nothing, missing'} fails the review ({rc}, {v})")
 
     rc, v = gate(repo, good, good)
     check(rc == 1 and v.get("failed") == "prepare", f"a check that passes on the prepared commit is refused ({rc}, {v})")
@@ -110,7 +115,8 @@ with tempfile.TemporaryDirectory() as tmp:
            "PLATFORM_RECORD_SPOOL": str(spool), "PLATFORM_RECORD_SHIPPER": "host", "PLATFORM_RECORD_STRICT": "1"}
     out = subprocess.run([sys.executable, "-I", str(LANE), "run", "--repo", origin, "--prepared", base,
                           "--check-script", str(script), "--scope", "a.txt", "--task", "Make a.txt say new.",
-                          "--reviewer", "echo ok"], capture_output=True, text=True, env=env)
+                          "--lint", "test -z \"$CLAUDE_CODE_OAUTH_TOKEN\"", "--reviewer", "echo ok"],
+                         capture_output=True, text=True, env={**env, "CLAUDE_CODE_OAUTH_TOKEN": "planted"})
     lines = [json.loads(line) for line in out.stdout.splitlines()]
     check(out.returncode == 0 and [v["failed"] for v in lines] == ["check", "none"]
           and [v["task"] for v in lines] == ["t1", "t2"], f"run retries a failed result once and passes ({out.returncode}, {lines}, {out.stderr[-300:]})")

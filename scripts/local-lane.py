@@ -3,7 +3,7 @@
 decides. goals.md "Quality gate for a local-model task" is the contract; items 1 to 5 below are its numbers.
 
   gate --repo DIR --prepared SHA --head SHA (--check CMD --check-file PATH... | --check-script FILE)
-       --scope PATH... --task TEXT [--lint CMD] [--reviewer CMD|none] [--check-timeout S]
+       --scope PATH... --task TEXT --lint CMD|none [--reviewer CMD|none] [--check-timeout S]
       Items 1 to 5 on two commits of a local clone; prints one JSON line, exit 0 pass, 1 fail.
   run  --repo URL --prepared SHA (the gate's flags but --head) [--model M] [--timeout S] [--key K]
       Item 1 on the prepared commit, then `exec-pool submit --agent pi`, wait, the gate on its pushed
@@ -13,12 +13,15 @@ The hosted agent's check either sits in the repository (the prepared commit is t
 holds the check files to it) or is a Python FILE outside it (scripts/lane-checks/), run from the tree's root: then the
 prepared commit is the base itself, the gate runs its own copy, and Pi gets the source to run as /tmp/lane-check.py, so
 item 2 holds by construction. Either way it must fail on the prepared commit. A `dir/` scope covers what is under it. The reviewer reads a prompt on stdin and must print exactly ok, unsafe or "does not fix the problem" on its
-first line; anything else fails closed. The check runs under `sh -c` in a detached worktree at each commit."""
+first line; anything else, its crash included, fails closed. The check and the lint run under `sh -c` in a detached
+worktree at each commit, without the environment's credential-like variables (SECRET); `--lint none` leaves item 4 at
+`git diff --check`."""
 import argparse
 import hashlib
 import json
 import os
 import pathlib
+import re
 import shlex
 import shutil
 import subprocess
@@ -30,6 +33,8 @@ MAX_LINES = 60
 REVIEWER = "claude -p --model haiku"
 VERDICTS = ("ok", "unsafe", "does not fix the problem")
 TAIL = 3000
+# what the check and the lint, which can run model-written code, do not inherit
+SECRET = re.compile(r"TOKEN|SECRET|KEY|PASS|AUTH|CREDENTIAL|COOKIE", re.I)
 
 REVIEW_PROMPT = """You review a change a small local model made for this task. Answer with exactly one line: \
 ok, unsafe, or does not fix the problem. Say unsafe only if the change could do harm (deletes data, weakens a check \
@@ -62,7 +67,9 @@ def run_check(repo, sha, cmd, timeout):
         tree = pathlib.Path(tmp) / "tree"
         git(repo, "worktree", "add", "--detach", "--quiet", str(tree), sha)
         try:
-            out = subprocess.run(["sh", "-c", cmd], cwd=tree, capture_output=True, text=True, timeout=timeout)
+            env = {k: v for k, v in os.environ.items() if not SECRET.search(k)}
+            out = subprocess.run(["sh", "-c", cmd], cwd=tree, env=env, capture_output=True, text=True,
+                                 timeout=timeout)
             return out.returncode, (out.stdout + out.stderr)[-TAIL:]
         except subprocess.TimeoutExpired:
             return 124, f"timed out after {timeout} s"
@@ -77,8 +84,11 @@ def in_scope(path, scope):
 def review(cmd, task, diff):
     if cmd == "none":
         return "ok", "skipped"
-    out = subprocess.run(shlex.split(cmd), input=REVIEW_PROMPT.format(task=task, diff=diff), capture_output=True,
-                         text=True, timeout=600)
+    try:
+        out = subprocess.run(shlex.split(cmd), input=REVIEW_PROMPT.format(task=task, diff=diff), capture_output=True,
+                             text=True, timeout=600)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return "unclear", str(e)
     first = (out.stdout.strip().splitlines() or [""])[0].strip().strip(".").lower()
     return (first if out.returncode == 0 and first in VERDICTS else "unclear"), out.stdout[-TAIL:]
 
@@ -102,6 +112,8 @@ def gate(a, head):
     if outside:
         return fail("scope", f"outside the scope: {' '.join(outside)}")
     numstat = [line.split("\t") for line in git(repo, "diff", "--numstat", prep, head).splitlines()]
+    if any(row[0] == "-" for row in numstat):
+        return fail("lines", "a binary file changed")
     out["lines"] = sum(int(n) for row in numstat for n in row[:2] if n.isdigit())
     if out["lines"] > MAX_LINES:
         return fail("lines", f"{out['lines']} changed lines, over {MAX_LINES}")
@@ -111,7 +123,7 @@ def gate(a, head):
     whitespace = subprocess.run(["git", "-C", repo, "diff", "--check", prep, head], capture_output=True, text=True)
     if whitespace.returncode != 0:
         return fail("lint", "git diff --check", output=whitespace.stdout[-TAIL:])
-    if a.lint:
+    if a.lint != "none":
         code, tail = run_check(repo, head, a.lint, a.check_timeout)
         if code != 0:
             return fail("lint", f"the lint exits {code}", output=tail)
@@ -123,8 +135,8 @@ def gate(a, head):
 
 def prepared_fails(a):
     code, tail = run_check(a.repo, a.prepared, a.check, a.check_timeout)
-    return code != 0, {"result": "invalid", "failed": "prepare", "why": "the check passes on the prepared commit",
-                       "output": tail}
+    why = "the check times out on the prepared commit" if code == 124 else "the check passes on the prepared commit"
+    return code not in (0, 124), {"result": "invalid", "failed": "prepare", "why": why, "output": tail}
 
 
 def cmd_gate(a):
@@ -134,10 +146,14 @@ def cmd_gate(a):
     return 0 if verdict["result"] == "passed" else 1
 
 
+class PoolError(Exception):
+    pass
+
+
 def pool(*args, stdin=None):
     out = subprocess.run(["exec-pool", *args], input=stdin, capture_output=True, text=True)
     if out.returncode != 0:
-        sys.exit(f"local-lane: exec-pool {args[0]} exits {out.returncode}: {out.stderr.strip()}")
+        raise PoolError(f"exec-pool {args[0]} exits {out.returncode}: {out.stderr.strip()[-500:]}")
     return out.stdout.strip()
 
 
@@ -166,9 +182,14 @@ def cmd_run(a):
         key = hashlib.sha256(json.dumps([a.prepared, a.check, a.scope, a.task]).encode()).hexdigest()[:16]
         verdict, task = {}, ""
         for attempt in (1, 2):
-            task = pool("submit", "--agent", "pi", "--model", a.model, "--repo", url, "--rev", a.prepared,
-                        "--workdir", ".", "--key", f"{a.key or 'local-lane-' + key}-{a.model}-{attempt}",
-                        "--prompt-file", "-", stdin=prompt).split()[-1]
+            try:
+                task = pool("submit", "--agent", "pi", "--model", a.model, "--repo", url, "--rev", a.prepared,
+                            "--workdir", ".", "--key", f"{a.key or 'local-lane-' + key}-{a.model}-{attempt}",
+                            "--prompt-file", "-", stdin=prompt).split()[-1]
+            except PoolError as e:
+                verdict = {"result": "error", "failed": "submit", "why": str(e), "lines": None, "attempt": attempt}
+                print(json.dumps(verdict), flush=True)
+                break
             subprocess.run(["exec-pool", "wait", task, "--timeout", str(a.timeout)], capture_output=True)
             fetched = subprocess.run(["git", "-C", a.repo, "fetch", "--quiet", "origin", f"pool/{task}"],
                                      capture_output=True)
@@ -201,7 +222,7 @@ def main():
         s.add_argument("--check-script")
         s.add_argument("--scope", action="append", required=True)
         s.add_argument("--task", required=True)
-        s.add_argument("--lint")
+        s.add_argument("--lint", required=True, help="the repository's fast lints at the head, or none")
         s.add_argument("--reviewer", default=os.environ.get("LOCAL_LANE_REVIEWER", REVIEWER))
         s.add_argument("--check-timeout", type=int, default=300)
     sub.choices["gate"].add_argument("--head", required=True)
