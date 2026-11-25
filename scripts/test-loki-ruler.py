@@ -1,5 +1,6 @@
 """Loki's ruler as black-pi renders it (homelab.loki.ruler), on loopback: synthetic compaction events and systemd OOM
-lines pushed to Loki must reach a real Prometheus by remote write as the per-host, per-worker recording and a stub
+lines pushed to Loki must reach a real Prometheus by remote write as the per-host, per-worker recording, Codex egress
+access lines as the per-host, per-status refusals (429, the usage limit, its own), and a stub
 Alertmanager as UnitOOMKilled, with no other label, whose query annotation runs on that Loki. The rules are evaluated
 as Loki parses them, not imitated.
 Usage: test-loki-ruler.py LOKI PROMETHEUS CONFIG_JSON WORKDIR"""
@@ -85,6 +86,10 @@ try:
         return {'stream': {'job': 'host-journal', 'host': 'msi-ms7758', 'unit': unit},
                 'values': [[str(now - 1000 * (len(lines) - i)), line] for i, line in enumerate(lines)]}
 
+    def access(logger, status):
+        return json.dumps({'level': 'error' if status >= 400 else 'info', 'logger': f'http.log.access.{logger}',
+                           'msg': 'handled request', 'request': {'method': 'POST', 'uri': '/v1/responses'}, 'status': status})
+
     oom = 'A process of this unit has been killed by the OOM killer.'
     push([
         compactions('acer-swift', [
@@ -102,6 +107,9 @@ try:
         journal('quoting.service', [f'quoted.service: {oom}']),
         # what UnitOOMKilled's query annotation names besides init.scope: the unit's own stream
         journal('nav-metrics.service', ['fatal error: runtime: out of memory']),
+        # Caddy's access lines: the slots' Codex refused, a fleet route's too; GitHub's and a success are not Codex refusals
+        journal('dev-env-egress.service', [access('openai-pool1', 429), access('openai-pool2', 429), access('codex-fleet', 429),
+                                           access('openai-pool1', 401), access('github-pool1', 429), access('openai-pool3', 200)]),
     ])
     # a second batch a minute boundary later: counted once, in its own window
     time.sleep(75)
@@ -111,6 +119,8 @@ try:
     want_recorded = {(('host', 'acer-swift'), ('worker', 'herman')): '3', (('host', 'acer-swift'), ('worker', 'a1')): '1',
                      (('host', 'acer-swift'),): '1', (('host', 'lenovo-21cb001pmx'), ('worker', 'w2')): '1'}
     want_alerts = {'nav-metrics.service', 'transient', 'session'}
+    refusals = urllib.parse.urlencode({'query': 'sum_over_time(host_status:codex_egress_refusals:count1m[15m])'})
+    want_refusals = {(('host', 'msi-ms7758'), ('status', '429')): '3', (('host', 'msi-ms7758'), ('status', '401')): '1'}
 
     def read():
         result = json.loads(get(f'http://127.0.0.1:{PROM}/api/v1/query?{query}'))['data']['result']
@@ -120,20 +130,24 @@ try:
                                    'severity': 'warning', 'team': 'homelab'}, a['labels']
             assert 'OOM event(s) in' in a['annotations']['description'], a['annotations']
             fired.add(a['labels']['oom_unit'])
-        return {tuple(sorted(s['metric'].items())): s['value'][1] for s in result}, fired
+        refused = json.loads(get(f'http://127.0.0.1:{PROM}/api/v1/query?{refusals}'))['data']['result']
+        return ({tuple(sorted(s['metric'].items())): s['value'][1] for s in result}, fired,
+                {tuple(sorted(s['metric'].items())): s['value'][1] for s in refused})
 
-    recorded, fired = read()
+    recorded, fired, refused = read()
     deadline = time.time() + 300
-    while time.time() < deadline and (recorded != want_recorded or fired != want_alerts):
+    while time.time() < deadline and (recorded != want_recorded or fired != want_alerts or refused != want_refusals):
         time.sleep(10)
-        recorded, fired = read()
+        recorded, fired, refused = read()
     assert recorded == want_recorded, f'recorded {recorded}, want {want_recorded}'
     assert fired == want_alerts, f'fired {fired}, want {want_alerts}'
+    assert refused == want_refusals, f'refusals {refused}, want {want_refusals}'
     # past every window that could still hold the lines: an overlapping or repeated count shows here
     time.sleep(150)
-    recorded, fired = read()
+    recorded, fired, refused = read()
     assert recorded == want_recorded, f'later recorded {recorded}, want {want_recorded}'
     assert fired == want_alerts, f'later fired {fired}, want {want_alerts}'
+    assert refused == want_refusals, f'later refusals {refused}, want {want_refusals}'
     # each alert's query annotation as the ruler rendered it is LogQL this Loki runs (a parse error is a 400) and finds
     # the OOM lines with; an unfolded unit's own stream among them, so a misrendered oom_unit shows
     for unit, q in {(a['labels']['oom_unit'], a['annotations']['query']) for a in alerts}:
@@ -144,7 +158,8 @@ try:
         streams = {r['stream']['unit']: [v[1] for v in r['values']] for r in found['data']['result']}
         assert any(oom in l for l in streams.get('init.scope', [])), f'the query annotation {q!r} finds no OOM line ({streams})'
         assert unit in ('transient', 'session') or unit in streams, f"the query annotation {q!r} misses {unit}'s stream ({streams})"
-    print('PASS: the ruler remote-writes auto compactions once per host and worker and sends UnitOOMKilled per unit, '
+    print('PASS: the ruler remote-writes auto compactions once per host and worker, Codex egress refusals once per host '
+          'and status, and sends UnitOOMKilled per unit, '
           'whose query annotation runs', flush=True)
 except BaseException:
     sys.stderr.write((root / 'loki.log').read_text()[-4000:])

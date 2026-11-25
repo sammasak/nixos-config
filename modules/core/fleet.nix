@@ -380,6 +380,13 @@ in
         port = 4190;
         from = [ "msi-ms7758" ];
       };
+      # acer's Codex route for msi's slots (modules/workers/default.nix): served only with acer's
+      # sam.workers.codexEgress.serveFleet, used only once msi's pool agents name codex; both off until acer's own work
+      codex-egress = {
+        host = "acer-swift";
+        port = 4191;
+        from = [ "msi-ms7758" ];
+      };
       # Pi on lenovo and acer, and acer's gateway, call it directly
       ollama-msi = {
         host = "msi-ms7758";

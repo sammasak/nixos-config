@@ -377,6 +377,22 @@ slot (`exec-pool result ID`), or a task too big for one turn. Fix that, then
 Do not: send it "continue" while the cause stands; it fails the same way and stalls again after three more turns.
 Rollback: none; the alert clears when the session is woken or cancelled (`exec-pool cancel ID`).
 
+## CodexLoginRefreshFailed
+
+Fires: the owner's ChatGPT login the egress proxy signs the slots' Codex calls with (`sam.workers.codexAuthFile`,
+`/home/lukas/.codex/auth.json` on `node`) failed or timed out on its last refresh (`codex_egress_refresh_failed`), or
+its access token expires within the hour while a login exists (`codex_egress_access_token_expiry_timestamp_seconds`),
+for 5 minutes. `codex-egress-refresh.timer` lets upstream Codex, as `lukas`, refresh it in place once half the token's
+life is gone; a failure is never retried while the refresh token is the same, as it may already be spent and a reused one fails for good
+(`refresh_token_reused`).
+First: on `node`, `journalctl -u codex-egress-refresh.service -n 20` says why (no answer in time, or no new refresh
+recorded). Then the owner signs in again on `node` as `lukas`: `codex login --device-auth` (or the plain
+`codex login`), which rewrites that file. The new login clears the failure at the timer's next run, within 15
+minutes, and `codex-egress-token.path` hands the proxy the new token at once.
+Do not: copy `auth.json` to or from another machine, or point a second host's Codex at it: a second writer spends the
+same refresh token.
+Rollback: none; with no login the runners stop offering codex and submit refuses a Codex task.
+
 ## AlertInvestigationFailed
 
 Fires: on the host that runs `alert-investigations` (`modules/homelab/alert-investigations.nix`, lenovo, for the
