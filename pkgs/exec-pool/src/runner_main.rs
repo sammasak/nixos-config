@@ -1683,23 +1683,36 @@ impl<'a> PaneTurn<'a> {
         }
     }
 
-    /// Whether a Bash tool command of the agent runs ([`pane::tool_shell`]), by the host's /proc; a process that
-    /// exits mid-read is not one.
+    /// Whether a Bash tool command ([`pane::tool_shell`]) or a detached job ([`pane::detached`]) of the agent runs,
+    /// by the host's /proc; a process that exits mid-read is not one.
     fn jobs(&self) -> bool {
         let Ok(procs) = fs::read_dir("/proc") else {
             return false;
         };
-        let (slot, unit) = self.unit;
-        procs.filter_map(Result::ok).any(|e| {
+        let mut unit = Vec::new();
+        for e in procs.filter_map(Result::ok) {
             let p = e.path();
-            e.file_name()
-                .to_str()
-                .is_some_and(|n| n.bytes().all(|b| b.is_ascii_digit()))
-                && fs::read_to_string(p.join("cgroup")).is_ok_and(|cg| {
-                    fs::read(p.join("cmdline"))
-                        .is_ok_and(|c| pane::tool_shell(&cg, &c, (slot, unit)))
-                })
-        })
+            let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else {
+                continue;
+            };
+            let Some(cg) = fs::read_to_string(p.join("cgroup"))
+                .ok()
+                .filter(|cg| pane::in_unit(cg, self.unit))
+            else {
+                continue;
+            };
+            if fs::read(p.join("cmdline")).is_ok_and(|c| pane::tool_shell(&cg, &c, self.unit)) {
+                return true;
+            }
+            if let Some(up) = fs::read_to_string(p.join("stat"))
+                .ok()
+                .as_deref()
+                .and_then(pane::parent)
+            {
+                unit.push((pid, up));
+            }
+        }
+        pane::detached(&unit)
     }
 
     /// Reads the runner's hint: its grace, and the messages sent to the session since the last one prompted, which

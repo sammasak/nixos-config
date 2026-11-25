@@ -99,19 +99,48 @@ pub fn seen(list: &Value, pane: &str) -> Option<Seen> {
     })
 }
 
-/// Whether a process the host sees is a Bash tool command ([`TOOL_SHELL`]) of the agent in `slot`'s step `unit`.
-///
-/// It is by its `/proc/PID/cgroup`, in that unit's cgroup inside the slot's container, and its `/proc/PID/cmdline`.
+/// Whether a process the host sees runs in `slot`'s step `unit`, by its `/proc/PID/cgroup`: that unit's cgroup inside
+/// the slot's container.
 #[must_use]
-pub fn tool_shell(cgroup: &str, cmdline: &[u8], (slot, unit): (&str, &str)) -> bool {
+pub fn in_unit(cgroup: &str, (slot, unit): (&str, &str)) -> bool {
     let container = format!("/container@{slot}.service/");
     let unit = format!("{unit}.service");
-    let ours = cgroup.lines().any(|l| {
+    cgroup.lines().any(|l| {
         l.strip_prefix("0::")
             .and_then(|p| p.split_once(&container))
             .is_some_and(|(_, rest)| rest.split('/').any(|c| c == unit))
-    });
-    ours && cmdline.windows(TOOL_SHELL.len()).any(|w| w == TOOL_SHELL)
+    })
+}
+
+/// Whether a process the host sees is a Bash tool command ([`TOOL_SHELL`]) of the agent in `slot`'s step `unit`:
+/// [`in_unit`], and by its `/proc/PID/cmdline`.
+#[must_use]
+pub fn tool_shell(cgroup: &str, cmdline: &[u8], at: (&str, &str)) -> bool {
+    in_unit(cgroup, at) && cmdline.windows(TOOL_SHELL.len()).any(|w| w == TOOL_SHELL)
+}
+
+/// The parent's pid in a `/proc/PID/stat` line, the field after the state that follows the command's last `)`.
+#[must_use]
+pub fn parent(stat: &str) -> Option<u32> {
+    stat.rsplit_once(')')?
+        .1
+        .split_whitespace()
+        .nth(1)?
+        .parse()
+        .ok()
+}
+
+/// Whether a step unit's processes, `(pid, parent)` each, hold a detached job.
+///
+/// That is a `nohup` or `setsid` one whose command returned, adopted by the container's init. It stays in the unit's cgroup with its parent outside it, as
+/// only the unit's own main process (`dtach`) has otherwise, so a second such root is one.
+#[must_use]
+pub fn detached(procs: &[(u32, u32)]) -> bool {
+    procs
+        .iter()
+        .filter(|(_, up)| !procs.iter().any(|(pid, _)| pid == up))
+        .nth(1)
+        .is_some()
 }
 
 /// Whether a Claude subagent's `meta.json` is one still running.
@@ -129,7 +158,7 @@ pub fn subagent_running(meta: &str) -> bool {
 /// running.
 ///
 /// That is a state Herdr reached after the prompt, held for [`SETTLE_MS`]. A blocked or working agent, one Herdr does
-/// not see, one waiting on its own background command ([`tool_shell`]) or subagent ([`subagent_running`]), or a message the owner types in the pane makes
+/// not see, one waiting on its own background command ([`tool_shell`]), detached job ([`detached`]) or subagent ([`subagent_running`]), or a message the owner types in the pane makes
 /// it busy again; only the time limit ends a turn that never settles.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TurnWatch {
@@ -446,6 +475,27 @@ mod tests {
         assert!(!tool_shell(cg, tool, ("pool3", "exec-pool-probe")));
         assert!(!tool_shell(&cg.replace("pool3", "pool30"), tool, at));
         assert!(!tool_shell("", tool, at));
+    }
+
+    #[test]
+    fn a_detached_job_is_a_second_root_of_the_unit_s_processes() {
+        assert_eq!(parent("24134 (sleep) S 1 24134 24134 0 -1"), Some(1));
+        assert_eq!(
+            parent("7 (a) b) S 3 7"),
+            Some(3),
+            "a command name holding a parenthesis"
+        );
+        assert_eq!(parent(""), None);
+        // dtach, the agent under it, an MCP server and a tool shell: one root
+        let tree = [(10, 1), (11, 10), (12, 11), (13, 12), (14, 12)];
+        assert!(!detached(&tree));
+        assert!(!detached(&[]));
+        // a setsid job, or a nohup one whose shell exited: adopted by the container's init
+        assert!(detached(&[tree.as_slice(), &[(20, 1)]].concat()));
+        assert!(
+            !detached(&[tree.as_slice(), &[(21, 14)]].concat()),
+            "a job its shell still waits on is the shell's"
+        );
     }
 
     #[test]
