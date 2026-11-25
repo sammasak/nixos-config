@@ -28,7 +28,7 @@ STREAM = {"job", "kind", "host"}
 
 fields = {k: set(v["fields"]) | set(v.get("optional", [])) for k, v in SCHEMA.items()}
 required = {k: set(v["fields"]) for k, v in SCHEMA.items()}
-check({"review", "research", "offload", "usage", "release", "bench"} <= set(SCHEMA) and len(SCHEMA) == 14,
+check({"review", "research", "offload", "local-lane", "usage", "release", "bench"} <= set(SCHEMA) and len(SCHEMA) == 15,
       f"the schema lists every kind ({sorted(SCHEMA)})")
 check(fields["review"] == {"repo", "head", "round", "grade", "reviewer", "author", "seconds", "findings"}
       and fields["research"] == {"issue", "claims_checked", "claims_corrected", "hours", "adopted", "spiked", "rejected"},
@@ -77,6 +77,9 @@ gate_defer_fields = set(re.findall(r'f?"([a-z_]+)=', defer.group(1))) if defer e
 check(len(delivery) == 7 and len(gate_defer_fields) == 8, f"platform-delivery.jq's and gate_defer.py's fields are read ({delivery}, {sorted(gate_defer_fields)})")
 written["gate-step"] |= gate_defer_fields
 writers.setdefault("gate-step", set()).add("scripts/gate_defer.py")
+lane = re.search(r"record\(\{(.*?)\}\)", (ROOT / "scripts/local-lane.py").read_text(), re.S)
+written["local-lane"] = set(re.findall(r'"([a-z_]+)":', lane.group(1))) if lane else set()
+writers["local-lane"] = {"scripts/local-lane.py"}
 here = {k for k, v in SCHEMA.items() if v["writer"] == "here"}
 pending = {k for k, v in SCHEMA.items() if v.get("pending")}
 check(all(isinstance(SCHEMA[k]["pending"], str) and SCHEMA[k]["pending"].strip() for k in pending),
