@@ -85,7 +85,7 @@ in
         RuntimeDirectory = "paddock";
         WorkingDirectory = "/var/lib/paddock";
         # 18.3 GiB of page-locked experts, 0.4 GiB anonymous; up to the cap the GGUF's page cache, reclaimable.
-        # memory.peak was 26.0 GiB under this cap; Ollama's 8G fits beside the 20 GiB that is not reclaimable.
+        # memory.peak was 26.0 GiB under this cap; the host budgets the rest (hosts/asus-b460m/configuration.nix, the RAM assertion).
         MemoryMax = "26G";
         MemorySwapMax = 0;
         OOMScoreAdjust = 500;

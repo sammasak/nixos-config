@@ -55,15 +55,18 @@ in
   specialisation.gaming.configuration = {
     imports = [ ../../modules/specialisations/gaming.nix ];
     sam.gaming.streaming = true;
+    # mkForce: games get the GPU and the 18 GiB of RAM Paddock pins
+    homelab.paddock.enable = lib.mkForce false;
   };
   # grub-reboot: the only way into that entry on a host with no keyboard
   environment.systemPackages = [ pkgs.grub2_efi ];
 
-  # 32 GB RAM, the host's own use not yet measured (msi's 2.8G assumed): a 20G pool reserves 2G each for at most 10,
-  # 4 recommended (docs/nspawn-workers.md, Sizing). No ghHostsFile until lukas has a gh login here.
+  # 32 GB RAM, the host's own use not yet measured (msi's 2.8G assumed); every instance is retired, and with Paddock on
+  # the pool gets what its pinned experts and Ollama leave (the RAM assertion below). No ghHostsFile until lukas has a
+  # gh login here.
   sam.workers = {
     labelPrefix = "asus";
-    pool.memory = "20G";
+    pool.memory = if config.homelab.paddock.enable then "4G" else "20G";
     # Agent work goes to acer and msi first: this host carries ollama and the heavier loads.
     retired = [
       "a624"
@@ -140,12 +143,25 @@ in
   # staged at homelab.paddock.model by hand; it takes the GPU, and Ollama serves on the CPU while it is on
   homelab.paddock.enable = true;
   # Host RAM only: the weights sit in VRAM, and cgroups neither cap nor reserve it. 8G holds gemma4:e4b's 6.1G
-  # if it falls back to the CPU; CPUQuota keeps such a fallback off the workers' cores.
+  # if it falls back to the CPU; CPUQuota keeps such a fallback off the workers' cores. With Paddock on Ollama runs
+  # on the CPU: 6G holds qwen3.5:4b's 3.3G, its 32K KV cache and the runner.
   systemd.services.ollama.serviceConfig = {
-    MemoryMax = "8G";
+    MemoryMax = if config.homelab.paddock.enable then "6G" else "8G";
     CPUQuota = "800%";
   };
   assertions = [
+    {
+      # Paddock's 18.7 GiB pinned and anonymous cannot be reclaimed or swapped (its cap above that is GGUF page
+      # cache); 3G is the host's own and the on-host deploy builds
+      assertion =
+        !config.homelab.paddock.enable
+        ||
+          19
+          + lib.toInt (lib.removeSuffix "G" config.systemd.services.ollama.serviceConfig.MemoryMax)
+          + 3
+          + config.sam.workers.pool.memory / 1073741824 <= 32;
+      message = "hosts/asus-b460m: with homelab.paddock on, its 19G pinned, Ollama's MemoryMax, the workers' pool.memory and 3G for the host exceed the 32 GiB of RAM; an OOM would take Paddock.";
+    }
     {
       # the RTX 3070's power.min_limit and power.max_limit; nvidia-smi -pl refuses anything outside them
       assertion =
