@@ -66,7 +66,11 @@ the turn's time limit, `waiting_until` when it finished and asked for a timer (l
 `preempted`). A failed turn never fails the session. The time limit is `homelab.execPool.timeoutSecs`
 (default 1800 s, the same bound as a one-shot run). A timed-out turn leaves a `continue` row, so the session resumes
 its own transcript in a new turn told to check its last action; the third timeout in a row with no message read
-since the first parks with no `continue` row and stays in `waiting` until a message. A
+since the first parks with no `continue` row and stays in `waiting` until a message. A turn that ends in an error
+leaves a `continue` row due 10, 30 and then 90 minutes later for the first three in a row (a rate limit is not met
+again at once): a new turn told its last one failed and not to repeat an outside change it cannot confirm, never a
+replay; the fourth parks with none. Either kind of session left with nothing to wake it is counted in
+`exec_pool_sessions_stalled{host,reason}` and alerts as ExecPoolSessionStalled. A
 **wake** is a row in the task's inbox due: a message (`exec-pool send`) at once, a timer (`exec-pool send --at`, or the
 agent's own `pool-wait`) at its `due_at`. It queues the session again, and the next claim carries the turn's input (the task's prompt on the
 first turn, the messages since on a later one) and `upto`, the last message it holds, which the park hands back. A

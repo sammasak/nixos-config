@@ -38,9 +38,10 @@ code, commit on {branch} with a message whose body has a `Why:` line and push th
 its pre-push hooks run. Never push main or any other branch, never force-push, never skip a hook (no --no-verify, no \
 SKIP=); if a hook refuses the push, say why in your answer. The task:\n\n";
 
-/// What an agent on a GitHub repository is also told, before "The task:" of [`PREFIX`]: `gh pr create` and `gh pr
-/// comment` go through GraphQL, which the slot's GitHub proxy refuses (it bounds no repository), so the REST calls it
-/// passes; `{repo}` is the repository's `owner/name`.
+/// What an agent on a GitHub repository is also told, before "The task:" of [`PREFIX`].
+///
+/// `gh pr create` and `gh pr comment` go through GraphQL, which the slot's GitHub proxy refuses (it bounds no
+/// repository), so it is told the REST calls the proxy passes; `{repo}` is the repository's `owner/name`.
 pub const PULL_REQUEST: &str = "To open a pull request from your branch, or comment on one, call GitHub's REST API: \
 `gh pr create` and `gh pr comment` use GraphQL, which the pool's GitHub proxy refuses. Open it with \
 `gh api repos/{repo}/pulls -f head={branch} -f base=BASE -f title=TITLE -F body=@FILE` and comment with \
@@ -65,21 +66,21 @@ pub const SESSION_PARK: &str = "Before you end a turn or wait, commit your work 
 /// # Errors
 /// What [`branch`] rejects.
 pub fn prefix(task: &TaskSpec) -> Result<String, Error> {
-    let branch = branch(task)?;
-    let repo = crate::runner::github_push_url(&task.source.repo).and_then(|u| {
+    let name = branch(task)?;
+    let slug = crate::runner::github_push_url(&task.source.repo).and_then(|u| {
         u.strip_prefix("git@github.com:")
             .and_then(|r| r.strip_suffix(".git"))
             .map(str::to_owned)
     });
-    let out = PREFIX.replace("{branch}", &branch);
-    Ok(match repo {
-        Some(repo) => out.replace(
+    let out = PREFIX.replace("{branch}", &name);
+    Ok(match slug {
+        Some(slug) => out.replace(
             "The task:",
             &format!(
                 "{}The task:",
                 PULL_REQUEST
-                    .replace("{repo}", &repo)
-                    .replace("{branch}", &branch)
+                    .replace("{repo}", &slug)
+                    .replace("{branch}", &name)
             ),
         ),
         None => out,

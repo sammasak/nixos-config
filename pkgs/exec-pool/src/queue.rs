@@ -340,6 +340,53 @@ fn in_a_row(
     Ok(n)
 }
 
+/// The `continue` row a park for `reason` leaves, if any: at once after a preemption or a drain, and after a timeout
+/// short of [`TIMEOUTS_IN_A_ROW`]; after an error, due once its [`ERROR_BACKOFF_SECS`] delay has passed, while any is
+/// left.
+fn leave_continue(
+    tx: &mut Transaction<'_>,
+    (task, attempt): (&str, &str),
+    reason: ParkReason,
+) -> Result<(), QueueError> {
+    let delay = match reason {
+        ParkReason::Preempted | ParkReason::HostDraining => Some(0),
+        ParkReason::TurnTimeout => (in_a_row(
+            tx,
+            (task, attempt),
+            ParkReason::TurnTimeout,
+            TIMEOUTS_IN_A_ROW,
+        )? < TIMEOUTS_IN_A_ROW)
+            .then_some(0),
+        ParkReason::TurnError => {
+            let n = in_a_row(
+                tx,
+                (task, attempt),
+                ParkReason::TurnError,
+                ERROR_BACKOFF_SECS.len().saturating_add(1),
+            )?;
+            ERROR_BACKOFF_SECS.get(n.saturating_sub(1)).copied()
+        }
+        _ => None,
+    };
+    match delay {
+        Some(0) => {
+            tx.execute(
+                "INSERT INTO inbox (task_id, kind) VALUES ($1, 'continue')",
+                &[&task],
+            )?;
+        }
+        Some(secs) => {
+            tx.execute(
+                "INSERT INTO inbox (task_id, kind, due_at) \
+                 VALUES ($1, 'continue', now() + $2::int8 * interval '1 second')",
+                &[&task, &i64::from(secs)],
+            )?;
+        }
+        None => {}
+    }
+    Ok(())
+}
+
 /// What [`Store::logs`] found of a task's output.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Logs {
@@ -1042,43 +1089,7 @@ impl Store {
                 ],
             )?;
             mark_read(tx, (&task, attempt, epoch), park)?;
-            // the delay before the turn's continue, none for no continue
-            let resume = match park.reason {
-                ParkReason::Preempted | ParkReason::HostDraining => Some(0),
-                ParkReason::TurnTimeout => (in_a_row(
-                    tx,
-                    (&task, attempt),
-                    ParkReason::TurnTimeout,
-                    TIMEOUTS_IN_A_ROW,
-                )? < TIMEOUTS_IN_A_ROW)
-                    .then_some(0),
-                ParkReason::TurnError => {
-                    let n = in_a_row(
-                        tx,
-                        (&task, attempt),
-                        ParkReason::TurnError,
-                        ERROR_BACKOFF_SECS.len().saturating_add(1),
-                    )?;
-                    ERROR_BACKOFF_SECS.get(n.saturating_sub(1)).copied()
-                }
-                _ => None,
-            };
-            match resume {
-                Some(0) => {
-                    tx.execute(
-                        "INSERT INTO inbox (task_id, kind) VALUES ($1, 'continue')",
-                        &[&task],
-                    )?;
-                }
-                Some(secs) => {
-                    tx.execute(
-                        "INSERT INTO inbox (task_id, kind, due_at) \
-                         VALUES ($1, 'continue', now() + $2::int8 * interval '1 second')",
-                        &[&task, &i64::from(secs)],
-                    )?;
-                }
-                None => {}
-            }
+            leave_continue(tx, (&task, attempt), park.reason)?;
             if let Some(w) = &wake {
                 tx.execute(
                     "SELECT wake_at($1, $2::text::timestamptz, $3)",
