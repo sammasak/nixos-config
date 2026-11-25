@@ -99,42 +99,69 @@ in
         }:
         let
           # The slots share one environments.slice (#827): a task's own evaluation takes the light-work lane the push
-          # hook's takes. A caller already holding its locks sets WORK_LOCKS_HELD=1 (pool_merge_check.py), or its
-          # nix would wait on its own light hold.
+          # hook's takes, and never a compile or a program that may take heavy (pool-merge-check: heavy, then light).
+          # A caller already holding its locks sets WORK_LOCKS_HELD=1 (pool_merge_check.py), or it waits on itself.
           lane =
-            name: real: whole: warm:
+            name: real: text:
             lib.hiPrio (
               pkgs.writeShellScriptBin name ''
-                light=/run/work-locks/light-work.lock
-                if [ -z "''${WORK_LOCKS_HELD:-}" ] && [ -e "$light" ]; then
-                  for a in "$@"; do
-                    case $a in
-                      ${whole}) WORK_LOCKS_HELD=1 exec ${pkgs.util-linux}/bin/flock -o -w 900 "$light" ${real} "$@" ;;
-                      ${lib.optionalString (warm != null) ''
-                        ${warm})
-                          # only the evaluation under the lock: a task run whole could take the heavy lane while
-                          # holding light, the reverse of pool-merge-check's order
-                          WORK_LOCKS_HELD=1 ${pkgs.util-linux}/bin/flock -o -w 900 "$light" ${real} shell -- true >&2 || exit
-                          break ;;
-                      ''}
-                      -*) ;;
-                      *) break ;;
-                    esac
-                  done
+                light() {
+                  WORK_LOCKS_HELD=1 ${pkgs.util-linux}/bin/flock -o -w 900 -E 75 /run/work-locks/light-work.lock "$@"
+                  rc=$?
+                  [ "$rc" -ne 75 ] || echo "${name}: /run/work-locks/light-work.lock still held after 900 s" >&2
+                  return "$rc"
+                }
+                if [ -z "''${WORK_LOCKS_HELD:-}" ] && [ -e /run/work-locks/light-work.lock ]; then
+                  ${text}
                 fi
                 exec ${real} "$@"
               ''
             );
+          nix = lib.getExe config.nix.package;
+          devenv = lib.getExe pkgs.devenv;
         in
         lib.mkIf (lib.elem devEnvironment.name slotNames) {
           environment.systemPackages = [
             poolWait
-            # nix develop, shell and run are left out: a long-lived program under the light hold could take heavy
-            (lane "nix" (lib.getExe config.nix.package) "eval|build|flake|path-info|derivation" null)
-            # devenv evaluates in-process and caches it: the warm `shell -- true` is the only evaluation
-            (lane "devenv" (lib.getExe pkgs.devenv) "eval|build|info|search|direnv-export"
-              "shell|tasks|test|up|processes"
-            )
+            # a global option before the subcommand is not read: `nix --option k v eval` runs unlocked
+            (lane "nix" nix ''
+              case ''${1:-} in
+                eval | path-info | derivation) light ${nix} "$@"; exit ;;
+                flake) case ''${2:-} in show | metadata | info) light ${nix} "$@"; exit ;; esac ;;
+                build)
+                  all=("$@")
+                  # each flake attribute's drvPath under the lock, its build outside; another form runs unlocked
+                  shift
+                  flags=() evalflags=() drvs=() whole=
+                  while [ $# -gt 0 ]; do
+                    case $1 in
+                      -o | --out-link) flags+=("$1" "''${2:-}"); shift ;;
+                      --impure | --show-trace | --no-write-lock-file) flags+=("$1"); evalflags+=("$1") ;;
+                      --no-link | -L | --print-build-logs | --print-out-paths | --keep-going | -k | --json | --rebuild | --dry-run) flags+=("$1") ;;
+                      -*) whole=1 ;;
+                      *^*) whole=1 ;;
+                      *'#'*) drvs+=("$1") ;;
+                      *) whole=1 ;;
+                    esac
+                    shift
+                  done
+                  [ -z "$whole" ] && [ ''${#drvs[@]} -gt 0 ] || exec ${nix} "''${all[@]}"
+                  set -- build "''${flags[@]}"
+                  for i in "''${drvs[@]}"; do
+                    drv=$(light ${nix} eval "''${evalflags[@]}" --raw "$i.drvPath") || exit
+                    set -- "$@" "$drv^*"
+                  done
+                  exec ${nix} "$@" ;;
+              esac
+            '')
+            # devenv evaluates in-process and caches it: under the lock its eval, or a warm `shell -- true` for a
+            # command that runs a task or a shell, which then evaluates from that cache
+            (lane "devenv" devenv ''
+              case ''${1:-} in
+                eval | info | search | direnv-export) light ${devenv} "$@"; exit ;;
+                shell | tasks | test | up | processes | build) light ${devenv} shell -- true >&2 || : ;;
+              esac
+            '')
           ];
           # A slot runs task text: none of the host user's groups (wheel, kvm, input) and no sudo, whose setuid
           # wrapper is host root's in a slot without privateUsers. mkForce: core/users.nix and rootInGuest add them.
