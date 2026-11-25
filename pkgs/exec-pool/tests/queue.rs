@@ -2883,15 +2883,17 @@ fn session_metrics_count_turns_wakes_and_tokens() {
         "exec_pool_session_cost_usd_total{{host=\"msi-ms7758\",{arm},agent=\"claude\"}} 0.5"
     ));
     has(&format!(
-        "exec_pool_sessions_reported_total{{host=\"msi-ms7758\",{arm},agent=\"claude\"}} 1"
+        "exec_pool_sessions_reported_1d{{host=\"msi-ms7758\",{arm},agent=\"claude\"}} 1"
     ));
     has(
         "exec_pool_session_turns_reported_total{host=\"asus-b460m\",variant=\"unknown\",shunt=\"unknown\",agent=\"claude\"} 0",
     );
     has(
-        "exec_pool_sessions_reported_total{host=\"msi-ms7758\",variant=\"default\",shunt=\"off\",agent=\"claude\"} 0",
+        "exec_pool_sessions_reported_1d{host=\"msi-ms7758\",variant=\"default\",shunt=\"off\",agent=\"claude\"} 0",
     );
     assert!(!m.contains("host=\"asus-b460m\",variant=\"300000\""), "{m}");
+    // only the first turn reported usage, so no session ran under two arms
+    has("exec_pool_sessions_mixed_arms_1d 0");
     has(
         "exec_pool_sessions_parked_seconds_bucket{host=\"msi-ms7758\",agent=\"claude\",le=\"86400\"} 1",
     );

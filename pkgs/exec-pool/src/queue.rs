@@ -2205,7 +2205,8 @@ fn session_totals(
 
 /// The tokens and cost session turns reported, by the host each turn ran on, the arm it ran under ([`Arm`],
 /// `unknown` when not recorded) and agent kind, and how many sessions reported a turn there: a slot's declared
-/// settings compare per turn and per session. A session whose turns ran under two arms counts once on each.
+/// settings compare per turn and per session. A session whose turns ran under two arms counts once on each, and the
+/// sessions that did so in the last day are counted queue-wide: a claim has no slot affinity, so they mix the arms.
 fn usage(tx: &mut Transaction<'_>, out: &mut String, hosts: &[String]) -> Result<(), QueueError> {
     // a turn's host is where its lease ran: the running event at the turn's epoch
     let rows = tx.query(
@@ -2215,7 +2216,7 @@ fn usage(tx: &mut Transaction<'_>, out: &mut String, hosts: &[String]) -> Result
          count(u.input_tokens), coalesce(sum(u.input_tokens), 0)::bigint, \
          coalesce(sum(u.output_tokens), 0)::bigint, coalesce(sum(u.cache_read_tokens), 0)::bigint, \
          coalesce(sum(u.cache_creation_tokens), 0)::bigint, \
-         count(DISTINCT t.id) FILTER (WHERE u.input_tokens IS NOT NULL), coalesce(sum(u.cost_usd), 0)::float8 \
+         count(DISTINCT t.id) FILTER (WHERE u.input_tokens IS NOT NULL AND u.parked_at > now() - interval '1 day'), coalesce(sum(u.cost_usd), 0)::float8 \
          FROM turns u JOIN attempts a ON a.id = u.attempt_id JOIN tasks t ON t.id = a.task_id GROUP BY 1, 2, 3, 4",
         &[],
     )?;
@@ -2240,8 +2241,8 @@ fn usage(tx: &mut Transaction<'_>, out: &mut String, hosts: &[String]) -> Result
          # TYPE exec_pool_session_cache_read_tokens_total counter\n",
         "# HELP exec_pool_session_cache_creation_tokens_total Input tokens written to the prompt cache, by host, arm and agent kind.\n\
          # TYPE exec_pool_session_cache_creation_tokens_total counter\n",
-        "# HELP exec_pool_sessions_reported_total Sessions with a turn that reported its usage, by host, arm and agent kind.\n\
-         # TYPE exec_pool_sessions_reported_total counter\n",
+        "# HELP exec_pool_sessions_reported_1d Sessions with a turn that reported its usage in the last day, by host, arm and agent kind.\n\
+         # TYPE exec_pool_sessions_reported_1d gauge\n",
     ];
     let row_of = |(host, variant, shunt): &(String, String, String), agent: &str| {
         rows.iter().find(|r| {
@@ -2285,6 +2286,19 @@ fn usage(tx: &mut Transaction<'_>, out: &mut String, hosts: &[String]) -> Result
             );
         }
     }
+    let mixed: i64 = tx
+        .query_one(
+            "SELECT count(*) FROM (SELECT a.task_id FROM turns u JOIN attempts a ON a.id = u.attempt_id \
+             WHERE u.input_tokens IS NOT NULL AND u.parked_at > now() - interval '1 day' GROUP BY 1 \
+             HAVING count(DISTINCT (coalesce(u.variant, ''), coalesce(u.shunt, ''))) > 1) m",
+            &[],
+        )?
+        .try_get(0)?;
+    let _ = write!(
+        out,
+        "# HELP exec_pool_sessions_mixed_arms_1d Sessions whose reported turns in the last day ran under more than one arm.\n\
+         # TYPE exec_pool_sessions_mixed_arms_1d gauge\nexec_pool_sessions_mixed_arms_1d {mixed}\n"
+    );
     Ok(())
 }
 
