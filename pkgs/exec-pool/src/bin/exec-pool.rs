@@ -50,7 +50,8 @@ const USAGE: &str = "usage: exec-pool COMMAND
                     blocks until the task settles (succeeded, failed, needs_review or cancelled) or, a session,
                     parks waiting, then prints its result
   sessions [ID] [--limit N] [--merged] [--report FILE]
-                    where each session's time and money went, one JSON object per line, newest first (N, 20): turns,
+                    where each session's (and one-shot agent task's) time and money went, one JSON object per line,
+                    newest first (N, 20), with its model (its --model, default when none) and session: turns,
                     wall, running, queued, review and waiting seconds (waiting_by_reason: by why its turns parked),
                     the tokens and cost its turns reported, and pr: the pull request of its branch pool/<task> on
                     GitHub as gh finds it ({number, state open|closed|merged, merged_at, url}; null with none, and
