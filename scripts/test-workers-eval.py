@@ -1090,6 +1090,8 @@ in {
   failing = map (a: a.message) (builtins.filter (a: !a.assertion) c.assertions);
   binds = lib.genAttrs slots (n: lib.mapAttrs (_: b: [ b.hostPath b.isReadOnly b.mountPoint ]) c.containers.${n}.bindMounts);
   privateUsers = lib.genAttrs slots (n: c.containers.${n}.privateUsers);
+  flags = lib.genAttrs slots (n: { inherit (c.containers.${n}) extraFlags allowedDevices; });
+  declaration = c.systemd.services.worker-pool1.unitConfig.X-Declaration;
   units = lib.genAttrs slots (n: builtins.filter (k: lib.hasInfix "Credential" k) (builtins.attrNames c.systemd.services."container@${n}".serviceConfig));
   start = c.systemd.services."container@pool1".serviceConfig.ExecStartPre;
   groups = g.users.users.${dev.user}.extraGroups;
@@ -1119,6 +1121,7 @@ def slot_binds(n, own):
 
 def check_slot_reach():
     # a whole host each, one at a time
+    declarations = []
     for host, case, count, own in (("acer-swift", "{ }", 3, False), ("msi-ms7758", "{ }", 4, False),
                                    ("msi-ms7758", "{ homelab.execPool.slot.privateUsers = true; }", 4, True)):
         out = run_eval(SLOT_REACH % {"root": json.dumps(ROOT), "host": host, "case": case})
@@ -1131,6 +1134,10 @@ def check_slot_reach():
               f"{label}: {', '.join(slots)} each bind only their home, caches, dock, egress sockets, the lock lanes, the "
               f"{key} sshd key and the user's public key: no secret, private key or token "
               f"({got.get('error') or got.get('failing') or {n: {k: v for k, v in b.items() if want.get(n, {}).get(k) != v} for n, b in got.get('binds', {}).items()} })")
+        flags = {"extraFlags": ["--private-users-ownership=auto"] if own else [], "allowedDevices": []}
+        check(got.get("flags") == {n: flags for n in slots},
+              f"{label}: no slot gets a bind or device through extraFlags or allowedDevices ({got.get('flags')})")
+        declarations.append(got.get("declaration"))
         blocks = got.get("privateUsers", {})
         check(all(v == ("no" if not own else 1879048192 + 65536 * (1 + int(hashlib.sha256(n.encode()).hexdigest()[:4], 16) % 254)) for n, v in blocks.items())
               and len(blocks) == count and got.get("units") == {n: [] for n in slots},
@@ -1141,6 +1148,9 @@ def check_slot_reach():
         if own:
             check(all(f"vu-{n}-1000" in got.get("allowed", []) for n in slots) and "lukas" in got.get("allowed", []),
                   f"{label}: the host daemon allows each slot's mapped user beside lukas ({got.get('allowed')})")
+    # a declaration that moves restarts worker-pool1 and through PartOf its container: a reload would keep the old ids
+    check(None not in declarations and declarations[1] != declarations[2],
+          "msi: privateUsers moves each slot's declaration unit, so the switch restarts its container, not only reloads it")
 
 
 # modules/homelab/exec-pool-runner.nix: on acer one runner per slot as the queue's role, its root helper, and a
