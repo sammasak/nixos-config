@@ -1,0 +1,207 @@
+#!/usr/bin/env python3
+"""The local-model lane (#807): Pi on a local model takes one prepared task, and a gate that never takes its word
+decides. goals.md "Quality gate for a local-model task" is the contract; items 1 to 5 below are its numbers.
+
+  gate --repo DIR --prepared SHA --head SHA --check CMD --check-file PATH... --scope PATH... --task TEXT
+       [--lint CMD] [--reviewer CMD|none] [--check-timeout S]
+      Items 1 to 5 on two commits of a local clone; prints one JSON line, exit 0 pass, 1 fail.
+  run  --repo URL --prepared SHA (the gate's flags but --head) [--model M] [--timeout S] [--key K]
+      Item 1 on the prepared commit, then `exec-pool submit --agent pi`, wait, the gate on its pushed
+      pool/<task> branch, one retry with the gate's output on a fail, and one `local-lane` platform record.
+
+The prepared commit is the base plus the hosted agent's check, which must fail there. A `dir/` scope covers what is
+under it. The reviewer reads a prompt on stdin and must print exactly ok, unsafe or "does not fix the problem" on its
+first line; anything else fails closed. The check runs under `sh -c` in a detached worktree at each commit."""
+import argparse
+import json
+import os
+import pathlib
+import shlex
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+
+MAX_LINES = 60
+REVIEWER = "claude -p --model haiku"
+VERDICTS = ("ok", "unsafe", "does not fix the problem")
+TAIL = 3000
+
+REVIEW_PROMPT = """You review a change a small local model made for this task. Answer with exactly one line: \
+ok, unsafe, or does not fix the problem. Say unsafe only if the change could do harm (deletes data, weakens a check \
+or a security boundary, leaks a secret, runs something it should not). Say does not fix the problem only if the diff \
+does not do what the task asks. Style, naming and missing polish are ok.
+
+Task:
+{task}
+
+Diff:
+{diff}
+"""
+
+PROMPT = """{task}
+
+Change only these paths: {scope}. Do not edit {checks}: they are the check, and a changed check fails the task. \
+Keep the change under {lines} changed lines. When you are done, run `{check}` and make it pass, then commit with a \
+message whose body has a `Why:` line and push your branch."""
+
+
+def git(repo, *args, check=True):
+    return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, check=check).stdout
+
+
+def run_check(repo, sha, cmd, timeout):
+    """(exit code, output tail) of cmd in a fresh worktree at sha; 124 on a timeout."""
+    with tempfile.TemporaryDirectory(prefix="local-lane-") as tmp:
+        tree = pathlib.Path(tmp) / "tree"
+        git(repo, "worktree", "add", "--detach", "--quiet", str(tree), sha)
+        try:
+            out = subprocess.run(["sh", "-c", cmd], cwd=tree, capture_output=True, text=True, timeout=timeout)
+            return out.returncode, (out.stdout + out.stderr)[-TAIL:]
+        except subprocess.TimeoutExpired:
+            return 124, f"timed out after {timeout} s"
+        finally:
+            git(repo, "worktree", "remove", "--force", str(tree), check=False)
+
+
+def in_scope(path, scope):
+    return any(path == s or (s.endswith("/") and path.startswith(s)) for s in scope)
+
+
+def review(cmd, task, diff):
+    if cmd == "none":
+        return "ok", "skipped"
+    out = subprocess.run(shlex.split(cmd), input=REVIEW_PROMPT.format(task=task, diff=diff), capture_output=True,
+                         text=True, timeout=600)
+    first = (out.stdout.strip().splitlines() or [""])[0].strip().strip(".").lower()
+    return (first if out.returncode == 0 and first in VERDICTS else "unclear"), out.stdout[-TAIL:]
+
+
+def gate(a, head):
+    """The verdict on head: {result, failed (the first item that failed), lines, ...}."""
+    repo, prep = a.repo, a.prepared
+    out = {"head": head, "lines": None}
+
+    def fail(item, why, **more):
+        return {**out, "result": "failed", "failed": item, "why": why, **more}
+
+    if subprocess.run(["git", "-C", repo, "merge-base", "--is-ancestor", prep, head]).returncode != 0:
+        return fail("scope", "head does not descend from the prepared commit")
+    if git(repo, "diff", "--name-only", prep, head, "--", *a.check_file).strip():
+        return fail("check-file", "a check file differs from the prepared one")
+    changed = git(repo, "diff", "--name-only", "--no-renames", prep, head).split()
+    if not changed:
+        return fail("scope", "no change")
+    outside = [p for p in changed if not in_scope(p, a.scope)]
+    if outside:
+        return fail("scope", f"outside the scope: {' '.join(outside)}")
+    numstat = [line.split("\t") for line in git(repo, "diff", "--numstat", prep, head).splitlines()]
+    out["lines"] = sum(int(n) for row in numstat for n in row[:2] if n.isdigit())
+    if out["lines"] > MAX_LINES:
+        return fail("lines", f"{out['lines']} changed lines, over {MAX_LINES}")
+    code, tail = run_check(repo, head, a.check, a.check_timeout)
+    if code != 0:
+        return fail("check", f"the check exits {code} on the head", output=tail)
+    whitespace = subprocess.run(["git", "-C", repo, "diff", "--check", prep, head], capture_output=True, text=True)
+    if whitespace.returncode != 0:
+        return fail("lint", "git diff --check", output=whitespace.stdout[-TAIL:])
+    if a.lint:
+        code, tail = run_check(repo, head, a.lint, a.check_timeout)
+        if code != 0:
+            return fail("lint", f"the lint exits {code}", output=tail)
+    verdict, said = review(a.reviewer, a.task, git(repo, "diff", prep, head))
+    if verdict != "ok":
+        return fail("review", verdict, output=said)
+    return {**out, "result": "passed", "failed": "none"}
+
+
+def prepared_fails(a):
+    code, tail = run_check(a.repo, a.prepared, a.check, a.check_timeout)
+    return code != 0, {"result": "invalid", "failed": "prepare", "why": "the check passes on the prepared commit",
+                       "output": tail}
+
+
+def cmd_gate(a):
+    ok, bad = prepared_fails(a)
+    verdict = gate(a, git(a.repo, "rev-parse", a.head).strip()) if ok else bad
+    print(json.dumps(verdict))
+    return 0 if verdict["result"] == "passed" else 1
+
+
+def pool(*args, stdin=None):
+    out = subprocess.run(["exec-pool", *args], input=stdin, capture_output=True, text=True)
+    if out.returncode != 0:
+        sys.exit(f"local-lane: exec-pool {args[0]} exits {out.returncode}: {out.stderr.strip()}")
+    return out.stdout.strip()
+
+
+def record(fields):
+    exe = shutil.which("platform-record") or str(
+        pathlib.Path(__file__).resolve().parents[1] / "pkgs/platform-record/platform_record.py")
+    subprocess.run([exe, "local-lane", *(f"{k}={v}" for k, v in fields.items())], check=False)
+
+
+def cmd_run(a):
+    started = time.monotonic()
+    url = a.repo
+    with tempfile.TemporaryDirectory(prefix="local-lane-clone-") as tmp:
+        a.repo = str(pathlib.Path(tmp) / "repo")
+        subprocess.run(["git", "clone", "--quiet", "--filter=blob:none", url, a.repo], check=True)
+        git(a.repo, "fetch", "--quiet", "origin", a.prepared)
+        a.prepared = git(a.repo, "rev-parse", a.prepared).strip()
+        ok, bad = prepared_fails(a)
+        if not ok:
+            print(json.dumps(bad))
+            return 2
+        prompt = PROMPT.format(task=a.task, scope=", ".join(a.scope), checks=", ".join(a.check_file),
+                               lines=MAX_LINES, check=a.check)
+        verdict, task = {}, ""
+        for attempt in (1, 2):
+            task = pool("submit", "--agent", "pi", "--model", a.model, "--repo", url, "--rev", a.prepared,
+                        "--workdir", ".", "--key", f"{a.key or 'local-lane-' + a.prepared[:12]}-{a.model}-{attempt}",
+                        "--prompt-file", "-", stdin=prompt).split()[-1]
+            subprocess.run(["exec-pool", "wait", task, "--timeout", str(a.timeout)], capture_output=True)
+            fetched = subprocess.run(["git", "-C", a.repo, "fetch", "--quiet", "origin", f"pool/{task}"],
+                                     capture_output=True)
+            if fetched.returncode != 0:
+                verdict = {"result": "failed", "failed": "push", "why": f"no branch pool/{task}", "lines": None}
+            else:
+                verdict = gate(a, git(a.repo, "rev-parse", "FETCH_HEAD").strip())
+            verdict.update(task=task, attempt=attempt)
+            print(json.dumps(verdict), flush=True)
+            if verdict["result"] == "passed":
+                break
+            prompt += (f"\n\nA first attempt failed the gate at {verdict['failed']}: {verdict['why']}."
+                       f"\n{verdict.get('output', '')}")
+    record({"model": a.model, "repo": url.removeprefix("https://github.com/").removesuffix(".git"),
+            "result": verdict["result"], "failed": verdict["failed"], "attempts": verdict["attempt"],
+            "lines": verdict["lines"] if verdict["lines"] is not None else "unknown",
+            "seconds": int(time.monotonic() - started), "task": task})
+    return 0 if verdict["result"] == "passed" else 1
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    for name in ("gate", "run"):
+        s = sub.add_parser(name)
+        s.add_argument("--repo", required=True)
+        s.add_argument("--prepared", required=True)
+        s.add_argument("--check", required=True)
+        s.add_argument("--check-file", action="append", required=True)
+        s.add_argument("--scope", action="append", required=True)
+        s.add_argument("--task", required=True)
+        s.add_argument("--lint")
+        s.add_argument("--reviewer", default=os.environ.get("LOCAL_LANE_REVIEWER", REVIEWER))
+        s.add_argument("--check-timeout", type=int, default=300)
+    sub.choices["gate"].add_argument("--head", required=True)
+    sub.choices["run"].add_argument("--model", default="homelab/local")
+    sub.choices["run"].add_argument("--timeout", type=int, default=3600)
+    sub.choices["run"].add_argument("--key", help="a new one runs the same prepared task again")
+    a = p.parse_args()
+    return cmd_gate(a) if a.cmd == "gate" else cmd_run(a)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
