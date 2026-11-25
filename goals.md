@@ -128,7 +128,7 @@ before the restart is not seen.
    `coord:brief` against the real CLI.
 5. The drain starts before the build, so a long build keeps a host from claiming.
 6. Slot isolation: `homelab.execPool.slot.privateUsers` booted in `execution-pool-vm` (both slots, ids, dock, GitHub
-   sidecar, daemon, the toggle reset) and on for msi's slots, branch `pool/cli-743fb9b1fba25cf8` (deploy msi, then
+   sidecar, daemon, the toggle reset) and on for msi's slots, #796 (deploy msi, then
    acer for the per-slot fetcher cache); every slot now has its own fetcher cache, emptied by each reset. Open: acer's
    slots, one line in `hosts/acer-swift/configuration.nix` once msi has run a day with it; what still runs as host
    root for a slot is listed in `docs/nspawn-workers.md` (Execution pool).
