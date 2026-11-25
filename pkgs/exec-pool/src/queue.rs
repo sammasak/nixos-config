@@ -1755,7 +1755,8 @@ fn insert_result(
             .try_get::<_, bool>(0)?
     {
         tx.execute(
-            "UPDATE results SET head = $2 WHERE attempt_id = $1",
+            // a session's turn that pushed nothing keeps the commit its last push left
+            "UPDATE results SET head = coalesce($2, head) WHERE attempt_id = $1",
             &[&attempt, &result.head],
         )?;
     }
