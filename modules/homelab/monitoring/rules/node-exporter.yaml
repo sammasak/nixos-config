@@ -1,10 +1,10 @@
 # kube-prometheus-stack 85.0.3's node-exporter mixin, less the two systemd-unit alerts (NodeSystemdUnitFailed in
 # homelab.yaml pages a failed unit), the RAID and bonding ones (no host has an md array or a bond, so they could never
 # fire), NodeCPUHighUsage (severity info: routed to no one), NodeFileDescriptorLimit (systemd raises fs.file-max to
-# LONG_MAX, so it cannot fire), conntrack (a LAN of a few hosts), NodeClockSkewDetected (NodeClockNotSynchronising
-# pages the failure), and NodeMemoryMajorPagesFaults and NodeDiskIOSaturation (load with no step to take; the memory
-# and OOM alerts page the failure). NodeNetworkInterfaceFlapping's description names instance, not namespace/pod;
-# each description ends with this fleet's first command.
+# LONG_MAX, so it cannot fire), NodeClockSkewDetected (NodeClockNotSynchronising pages the failure), and
+# NodeMemoryMajorPagesFaults and NodeDiskIOSaturation (load with no step to take; the memory and OOM alerts page the
+# failure). NodeNetworkInterfaceFlapping's description names instance, not namespace/pod; each description ends with
+# this fleet's first command.
 # Each alert's query (docs/alert-runbooks.md) is a copy of its expr: change both.
 groups:
   - name: node-exporter.rules
@@ -95,7 +95,7 @@ groups:
     rules:
       - alert: NodeFilesystemSpaceFillingUp
         annotations:
-          description: Filesystem on {{ $labels.device }}, mounted on {{ $labels.mountpoint }}, at {{ $labels.instance }} has only {{ printf "%.2f" $value }}% available space left and is filling up. Run df -h {{ $labels.mountpoint }} and du -xsh {{ $labels.mountpoint }}/* 2>/dev/null | sort -h | tail on {{ $labels.node }}; for /nix/store, nix-collect-garbage --delete-older-than 14d as root.
+          description: 'Filesystem on {{ $labels.device }}, mounted on {{ $labels.mountpoint }}, at {{ $labels.instance }} has only {{ printf "%.2f" $value }}% available space left and is filling up. Run df -h {{ $labels.mountpoint }} and du -xsh {{ $labels.mountpoint }}/* 2>/dev/null | sort -h | tail on {{ $labels.node }}; for /nix/store, nix-store --gc as root frees only paths no generation holds (old generations stay until removed on purpose).'
           query: |-
             (
               node_filesystem_avail_bytes{job="node-exporter",fstype!="",mountpoint!=""} / node_filesystem_size_bytes{job="node-exporter",fstype!="",mountpoint!=""} * 100 < 15
@@ -119,7 +119,7 @@ groups:
           severity: warning
       - alert: NodeFilesystemSpaceFillingUp
         annotations:
-          description: Filesystem on {{ $labels.device }}, mounted on {{ $labels.mountpoint }}, at {{ $labels.instance }} has only {{ printf "%.2f" $value }}% available space left and is filling up fast. Run df -h {{ $labels.mountpoint }} and du -xsh {{ $labels.mountpoint }}/* 2>/dev/null | sort -h | tail on {{ $labels.node }}; for /nix/store, nix-collect-garbage --delete-older-than 14d as root.
+          description: 'Filesystem on {{ $labels.device }}, mounted on {{ $labels.mountpoint }}, at {{ $labels.instance }} has only {{ printf "%.2f" $value }}% available space left and is filling up fast. Run df -h {{ $labels.mountpoint }} and du -xsh {{ $labels.mountpoint }}/* 2>/dev/null | sort -h | tail on {{ $labels.node }}; for /nix/store, nix-store --gc as root frees only paths no generation holds (old generations stay until removed on purpose).'
           query: |-
             (
               node_filesystem_avail_bytes{job="node-exporter",fstype!="",mountpoint!=""} / node_filesystem_size_bytes{job="node-exporter",fstype!="",mountpoint!=""} * 100 < 10
@@ -143,7 +143,7 @@ groups:
           severity: critical
       - alert: NodeFilesystemAlmostOutOfSpace
         annotations:
-          description: Filesystem on {{ $labels.device }}, mounted on {{ $labels.mountpoint }}, at {{ $labels.instance }} has only {{ printf "%.2f" $value }}% available space left. Run df -h {{ $labels.mountpoint }} and du -xsh {{ $labels.mountpoint }}/* 2>/dev/null | sort -h | tail on {{ $labels.node }}; for /boot, nix-collect-garbage --delete-older-than 14d and a switch drop old generations.
+          description: 'Filesystem on {{ $labels.device }}, mounted on {{ $labels.mountpoint }}, at {{ $labels.instance }} has only {{ printf "%.2f" $value }}% available space left. Run df -h {{ $labels.mountpoint }} and du -xsh {{ $labels.mountpoint }}/* 2>/dev/null | sort -h | tail on {{ $labels.node }}; for /boot, du -sh /boot/*/nixos/* shows the kernels old generations keep (nix-env --list-generations -p /nix/var/nix/profiles/system as root lists them; remove one only on purpose).'
           query: |-
             (
               node_filesystem_avail_bytes{job="node-exporter",fstype!="",mountpoint!=""} / node_filesystem_size_bytes{job="node-exporter",fstype!="",mountpoint!=""} * 100 < 5
@@ -163,7 +163,7 @@ groups:
           severity: warning
       - alert: NodeFilesystemAlmostOutOfSpace
         annotations:
-          description: Filesystem on {{ $labels.device }}, mounted on {{ $labels.mountpoint }}, at {{ $labels.instance }} has only {{ printf "%.2f" $value }}% available space left. Run df -h {{ $labels.mountpoint }} and du -xsh {{ $labels.mountpoint }}/* 2>/dev/null | sort -h | tail on {{ $labels.node }}; for /boot, nix-collect-garbage --delete-older-than 14d and a switch drop old generations.
+          description: 'Filesystem on {{ $labels.device }}, mounted on {{ $labels.mountpoint }}, at {{ $labels.instance }} has only {{ printf "%.2f" $value }}% available space left. Run df -h {{ $labels.mountpoint }} and du -xsh {{ $labels.mountpoint }}/* 2>/dev/null | sort -h | tail on {{ $labels.node }}; for /boot, du -sh /boot/*/nixos/* shows the kernels old generations keep (nix-env --list-generations -p /nix/var/nix/profiles/system as root lists them; remove one only on purpose).'
           query: |-
             (
               node_filesystem_avail_bytes{job="node-exporter",fstype!="",mountpoint!=""} / node_filesystem_size_bytes{job="node-exporter",fstype!="",mountpoint!=""} * 100 < 3
@@ -183,7 +183,7 @@ groups:
           severity: critical
       - alert: NodeFilesystemFilesFillingUp
         annotations:
-          description: Filesystem on {{ $labels.device }}, mounted on {{ $labels.mountpoint }}, at {{ $labels.instance }} has only {{ printf "%.2f" $value }}% available inodes left and is filling up. Run df -i {{ $labels.mountpoint }} on {{ $labels.node }}, then find {{ $labels.mountpoint }} -xdev -type f | cut -d/ -f1-4 | sort | uniq -c | sort -n | tail for the directory holding the files.
+          description: 'Filesystem on {{ $labels.device }}, mounted on {{ $labels.mountpoint }}, at {{ $labels.instance }} has only {{ printf "%.2f" $value }}% available inodes left and is filling up. Run df -i {{ $labels.mountpoint }} on {{ $labels.node }}, then find {{ $labels.mountpoint }} -xdev -type f | cut -d/ -f1-4 | sort | uniq -c | sort -n | tail for the directory holding the files.'
           query: |-
             (
               node_filesystem_files_free{job="node-exporter",fstype!="",mountpoint!=""} / node_filesystem_files{job="node-exporter",fstype!="",mountpoint!=""} * 100 < 40
@@ -207,7 +207,7 @@ groups:
           severity: warning
       - alert: NodeFilesystemFilesFillingUp
         annotations:
-          description: Filesystem on {{ $labels.device }}, mounted on {{ $labels.mountpoint }}, at {{ $labels.instance }} has only {{ printf "%.2f" $value }}% available inodes left and is filling up fast. Run df -i {{ $labels.mountpoint }} on {{ $labels.node }}, then find {{ $labels.mountpoint }} -xdev -type f | cut -d/ -f1-4 | sort | uniq -c | sort -n | tail for the directory holding the files.
+          description: 'Filesystem on {{ $labels.device }}, mounted on {{ $labels.mountpoint }}, at {{ $labels.instance }} has only {{ printf "%.2f" $value }}% available inodes left and is filling up fast. Run df -i {{ $labels.mountpoint }} on {{ $labels.node }}, then find {{ $labels.mountpoint }} -xdev -type f | cut -d/ -f1-4 | sort | uniq -c | sort -n | tail for the directory holding the files.'
           query: |-
             (
               node_filesystem_files_free{job="node-exporter",fstype!="",mountpoint!=""} / node_filesystem_files{job="node-exporter",fstype!="",mountpoint!=""} * 100 < 20
@@ -231,7 +231,7 @@ groups:
           severity: critical
       - alert: NodeFilesystemAlmostOutOfFiles
         annotations:
-          description: Filesystem on {{ $labels.device }}, mounted on {{ $labels.mountpoint }}, at {{ $labels.instance }} has only {{ printf "%.2f" $value }}% available inodes left. Run df -i {{ $labels.mountpoint }} on {{ $labels.node }}, then find {{ $labels.mountpoint }} -xdev -type f | cut -d/ -f1-4 | sort | uniq -c | sort -n | tail for the directory holding the files.
+          description: 'Filesystem on {{ $labels.device }}, mounted on {{ $labels.mountpoint }}, at {{ $labels.instance }} has only {{ printf "%.2f" $value }}% available inodes left. Run df -i {{ $labels.mountpoint }} on {{ $labels.node }}, then find {{ $labels.mountpoint }} -xdev -type f | cut -d/ -f1-4 | sort | uniq -c | sort -n | tail for the directory holding the files.'
           query: |-
             (
               node_filesystem_files_free{job="node-exporter",fstype!="",mountpoint!=""} / node_filesystem_files{job="node-exporter",fstype!="",mountpoint!=""} * 100 < 5
@@ -251,7 +251,7 @@ groups:
           severity: warning
       - alert: NodeFilesystemAlmostOutOfFiles
         annotations:
-          description: Filesystem on {{ $labels.device }}, mounted on {{ $labels.mountpoint }}, at {{ $labels.instance }} has only {{ printf "%.2f" $value }}% available inodes left. Run df -i {{ $labels.mountpoint }} on {{ $labels.node }}, then find {{ $labels.mountpoint }} -xdev -type f | cut -d/ -f1-4 | sort | uniq -c | sort -n | tail for the directory holding the files.
+          description: 'Filesystem on {{ $labels.device }}, mounted on {{ $labels.mountpoint }}, at {{ $labels.instance }} has only {{ printf "%.2f" $value }}% available inodes left. Run df -i {{ $labels.mountpoint }} on {{ $labels.node }}, then find {{ $labels.mountpoint }} -xdev -type f | cut -d/ -f1-4 | sort | uniq -c | sort -n | tail for the directory holding the files.'
           query: |-
             (
               node_filesystem_files_free{job="node-exporter",fstype!="",mountpoint!=""} / node_filesystem_files{job="node-exporter",fstype!="",mountpoint!=""} * 100 < 3
@@ -271,7 +271,7 @@ groups:
           severity: critical
       - alert: NodeNetworkReceiveErrs
         annotations:
-          description: '{{ $labels.instance }} interface {{ $labels.device }} has encountered {{ printf "%.0f" $value }} receive errors in the last two minutes. Run ip -s link show {{ $labels.device }} and ethtool -S {{ $labels.device }} on {{ $labels.node }}; a count that keeps rising is the cable, port or NIC.'
+          description: '{{ $labels.instance }} interface {{ $labels.device }} has encountered {{ printf "%.0f" $value }} receive errors in the last two minutes. Run ip -s link show {{ $labels.device }} on {{ $labels.node }}; a count that keeps rising is the cable, port or NIC.'
           query: rate(node_network_receive_errs_total{job="node-exporter"}[2m]) / rate(node_network_receive_packets_total{job="node-exporter"}[2m]) > 0.01
           runbook_url: https://runbooks.prometheus-operator.dev/runbooks/node/nodenetworkreceiveerrs
           summary: Network interface is reporting many receive errors.
@@ -281,12 +281,21 @@ groups:
           severity: warning
       - alert: NodeNetworkTransmitErrs
         annotations:
-          description: '{{ $labels.instance }} interface {{ $labels.device }} has encountered {{ printf "%.0f" $value }} transmit errors in the last two minutes. Run ip -s link show {{ $labels.device }} and ethtool -S {{ $labels.device }} on {{ $labels.node }}; a count that keeps rising is the cable, port or NIC.'
+          description: '{{ $labels.instance }} interface {{ $labels.device }} has encountered {{ printf "%.0f" $value }} transmit errors in the last two minutes. Run ip -s link show {{ $labels.device }} on {{ $labels.node }}; a count that keeps rising is the cable, port or NIC.'
           query: rate(node_network_transmit_errs_total{job="node-exporter"}[2m]) / rate(node_network_transmit_packets_total{job="node-exporter"}[2m]) > 0.01
           runbook_url: https://runbooks.prometheus-operator.dev/runbooks/node/nodenetworktransmiterrs
           summary: Network interface is reporting many transmit errors.
         expr: rate(node_network_transmit_errs_total{job="node-exporter"}[2m]) / rate(node_network_transmit_packets_total{job="node-exporter"}[2m]) > 0.01
         for: 1h
+        labels:
+          severity: warning
+      - alert: NodeHighNumberConntrackEntriesUsed
+        annotations:
+          description: '{{ $labels.instance }} {{ $value | humanizePercentage }} of conntrack entries are used; at the limit new connections (the containers NAT and the subnet route included) are dropped. Run sysctl net.netfilter.nf_conntrack_count net.netfilter.nf_conntrack_max on {{ $labels.node }}, then ss -s for the socket counts.'
+          query: (node_nf_conntrack_entries{job="node-exporter"} / node_nf_conntrack_entries_limit) > 0.75
+          runbook_url: https://runbooks.prometheus-operator.dev/runbooks/node/nodehighnumberconntrackentriesused
+          summary: Number of conntrack are getting close to the limit.
+        expr: (node_nf_conntrack_entries{job="node-exporter"} / node_nf_conntrack_entries_limit) > 0.75
         labels:
           severity: warning
       - alert: NodeTextFileCollectorScrapeError

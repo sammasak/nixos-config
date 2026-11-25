@@ -114,7 +114,7 @@ groups:
           team: homelab
         annotations:
           summary: "{{ $labels.node }} runs hot"
-          description: "{{ $labels.node }}'s {{ $labels.type }} zone has read {{ $value }} °C for 15 minutes, at the Pi's throttle point. Check the fan and airflow; Hosts shows the hottest sensor."
+          description: "{{ $labels.node }}'s {{ $labels.type }} zone has read {{ $value }} °C for 15 minutes, at the Pi's throttle point. Run cat /sys/class/thermal/thermal_zone*/temp there (millidegrees), then check the fan and airflow; https://grafana.sammasak.dev/d/hosts shows the hottest sensor."
           query: 'node_thermal_zone_temp{job="node-exporter",node="{{ $labels.node }}"}'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#nodetemperaturehigh"
 

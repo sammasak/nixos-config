@@ -107,7 +107,7 @@ in
         )
         (alert "GateFailRateHigh"
           "${gateFailRatio} > ${toString a.GateFailRateHigh.maxRatio.value} and on () ${gateRuns} >= ${toString a.GateFailRateHigh.lastRuns.value}"
-          "{{ $value | humanizePercentage }} of the last ${toString a.GateFailRateHigh.lastRuns.value} push gates failed. The Shipping dashboard (https://grafana.sammasak.dev/d/shipping, failed gate steps, last 7 d, and gate fail rate) names the step and host; rerun that step alone on main with NIXOS_STEP=STEP devenv tasks run nixos:step, and fix what it names before the next push."
+          "{{ $value | humanizePercentage }} of the last ${toString a.GateFailRateHigh.lastRuns.value} push gates failed. The Shipping dashboard (https://grafana.sammasak.dev/d/shipping, failed gate steps, last 7 d, and gate fail rate) names the step and host; rerun that step alone on main with NIXOS_STEP=STEP devenv tasks run nixos:step (for nixos-push-eval: nix flake show --all-systems), and fix what it names before the next push."
           { }
         )
         # the full gate runs on main only, on a schedule (modules/homelab/scheduled-gate.nix): a red run names its first
@@ -132,7 +132,7 @@ in
               in
               "time() - ${s "homelab_scheduled_gate_behind_since_timestamp_seconds"} > ${limit} and on (node) ${s "homelab_scheduled_gate_behind_since_timestamp_seconds"} > 0 or time() - ${s "homelab_scheduled_gate_checked_timestamp_seconds"} > ${limit}"
             )
-            "Main moved {{ $value | humanizeDuration }} ago and no scheduled full gate on {{ $labels.node }} has finished since, over ${toString a.ScheduledGateOverdue.hours.value} h, or the scheduler has not read main for that long."
+            "Main moved {{ $value | humanizeDuration }} ago and no scheduled full gate on {{ $labels.node }} has finished since, over ${toString a.ScheduledGateOverdue.hours.value} h, or the scheduler has not read main for that long. On acer: systemctl list-timers scheduled-gate and journalctl -u scheduled-gate -n 50."
             { }
           )
           {
@@ -142,7 +142,7 @@ in
         # for: hours up and behind in a row, so a host that slept through a merge is not paged the minute it wakes
         (alert "HostBehindMain"
           ''shipping_deploy_lag_hours > ${toString a.HostBehindMain.maxHours.value} and on (node) up{job="node-exporter"} == 1''
-          "{{ $labels.node }} runs a deploy {{ $value | humanize }} h behind main."
+          "{{ $labels.node }} runs a deploy {{ $value | humanize }} h behind main. From lenovo: just dry-activate HOST, then just deploy HOST (HOST is the flake attribute: lenovo for lenovo-21CB001PMX; msi and asus only in their power window)."
           { "for" = "${toString a.HostBehindMain.upHours.value}h"; }
         )
         # per host, and only until a good deploy of it: a rollback the retry fixed is handled

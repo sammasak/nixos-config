@@ -22,7 +22,7 @@ tests:
           - exp_labels: {severity: warning, team: homelab, job: node-exporter, node: black-pi, type: cpu-thermal, zone: "0"}
             exp_annotations:
               summary: "black-pi runs hot"
-              description: "black-pi's cpu-thermal zone has read 86 °C for 15 minutes, at the Pi's throttle point. Check the fan and airflow; Hosts shows the hottest sensor."
+              description: "black-pi's cpu-thermal zone has read 86 °C for 15 minutes, at the Pi's throttle point. Run cat /sys/class/thermal/thermal_zone*/temp there (millidegrees), then check the fan and airflow; https://grafana.sammasak.dev/d/hosts shows the hottest sensor."
               query: 'node_thermal_zone_temp{job="node-exporter",node="black-pi"}'
               runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#nodetemperaturehigh"
       - eval_time: 18m
