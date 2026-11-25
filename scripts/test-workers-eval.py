@@ -1017,18 +1017,18 @@ def check_pool_compat():
     s = on.get("slots", {}).get("pool1", {})
     extra = [x for x in s.get("sockets", []) if x.endswith("-egress")] + [b for b in s.get("binds", []) if b.startswith(("/run/secrets", "/run/user", "/run/credentials", "/run/egress", "/var/lib/host-credentials/")) and not b.endswith(("/ssh_host_ed25519_key", ".pub"))]
     check(on.get("failing") == [] and s.get("agent") == "none" and s.get("credentials") == [] and s.get("headlessAgents") == ["claude"]
-          and s.get("baseUrl") == "http://127.0.0.1:4100" and extra == ["anthropic-egress", "github-egress", "/run/egress"]
+          and s.get("baseUrl") == "http://127.0.0.1:4100" and extra == ["anthropic-egress", "github-egress", "otlp-egress", "/run/egress"]
           and on.get("agents") == named and on.get("shutdown") == absent.get("shutdown"),
-          f"homelab.execPool.agents = [ \"claude\" ]: pool1 stays agent none with no credential, gets only the anthropic and github egress and its ANTHROPIC_BASE_URL, and starts no session ({on.get('error') or on.get('failing') or {**s, 'extra': extra} })")
+          f"homelab.execPool.agents = [ \"claude\" ]: pool1 stays agent none with no credential, gets only the anthropic, github and OTLP egress and its ANTHROPIC_BASE_URL, and starts no session ({on.get('error') or on.get('failing') or {**s, 'extra': extra} })")
     out = run_eval(POOL_ALL % {"root": json.dumps(ROOT)})
     a = json.loads(out.stdout) if out.returncode == 0 else {"error": out.stderr.strip()[-600:]}
     # acer's pool1 pushes through the GitHub proxy (check_runner) and holds nothing of the host's
     leaked = [b for b in a.get("binds", []) if b.startswith(("/run/secrets", "/run/user", "/run/credentials", "/var/lib/host-credentials/"))
               and not b.endswith(("/ssh_host_ed25519_key", ".pub"))]
-    check(a.get("failing") == [] and a.get("sockets") == ["anthropic-egress", "github-egress", "llm-gateway-egress", "openai-egress"] and not leaked
+    check(a.get("failing") == [] and a.get("sockets") == ["anthropic-egress", "github-egress", "llm-gateway-egress", "openai-egress", "otlp-egress"] and not leaked
           and a.get("codexKey") == "held-by-the-host" and a.get("codexUrl") == 'openai_base_url = "http://127.0.0.1:4103/v1"' and a.get("pi") is True
           and {"llm_gateway_pi_key:/run/secrets/llm_gateway_pi_key", "codex-auth.json:/home/lukas/.codex/auth.json"} <= set(a.get("creds", [])),
-          f"homelab.execPool.agents = [ \"claude\" \"codex\" \"pi\" ] on acer: pool1 gets the anthropic, github, openai and llm-gateway proxies, Codex and Pi pointed at them with placeholders, and the keys only in the proxy's credentials ({a.get('error') or {**a, 'leaked': leaked} })")
+          f"homelab.execPool.agents = [ \"claude\" \"codex\" \"pi\" ] on acer: pool1 gets the anthropic, github, openai, llm-gateway and OTLP proxies, Codex and Pi pointed at them with placeholders, and the keys only in the proxy's credentials ({a.get('error') or {**a, 'leaked': leaked} })")
     # POOL_CASES were prefetched; a whole msi per type error, one at a time
     outs = [run_eval(fleet(c[1])) for c in POOL_CASES]
     typed = [subprocess.run(["nix", "eval", "--impure", "--json", "--expr", POOL_THROW % {"root": json.dumps(ROOT), "case": c[1]}], capture_output=True, text=True)

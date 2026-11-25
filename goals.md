@@ -168,6 +168,7 @@ benchmark requirements: #776; epic: #491).
 | 3 | Alerts | 624-i fixes the alerts nobody could act on; not yet read live (pool slots reach neither Prometheus nor Alertmanager) | merge and deploy 624-i, then read the live list; a1's patch at `/var/lib/worker-archive/a1` on acer |
 | 4 | Gates | scheduled gate red since 24 Nov on `checks.x86_64-linux.execution-pool-vm`, which failed to evaluate (slots' repos need `sam.workers.ghHostsFile`, the VM set none); fixed in branch `pool/cli-38a64f8b5b1d81f5` | merge, deploy acer (scheduled gate) and black-pi (rules), read the next scheduled gate result |
 | 5 | Live comparison | `ShuntCollectorStale` fires since the on side moved | read a day of Shunt on and off on 25 Nov, now on acer `pool1` |
+| 5b | Live comparison | #626 had no per-variant tokens, cost or compactions from the pool | deploy branch `pool/cli-950c25fbd3f89b7a` (acer, msi, black-pi), then read the "Compaction window on versus off" table a day later |
 | 6 | Leftovers | one draft open | #616 (needs a physical reboot of black-pi) |
 
 ## Priorities
@@ -188,7 +189,7 @@ benchmark requirements: #776; epic: #491).
 | P2 | skills [#132](https://github.com/sammasak/skills/issues/132), [#134](https://github.com/sammasak/skills/issues/134), [#135](https://github.com/sammasak/skills/issues/135) | Remaining specialists | all merged: skills#153, #154, #155 |
 | P1 | [#646](https://github.com/sammasak/nixos-config/issues/646) | Execution pool, v0.1 | split below; never ahead of a P0 item |
 | P1 | [paddock#2](https://github.com/sammasak/paddock/pull/2) | Paddock SSD-backed MoE expert streaming | one dedicated pool session; see the queue above |
-| P2 | [#626](https://github.com/sammasak/nixos-config/issues/626) | Auto-compaction benchmarks | matrix doc when idle; benchmark is token spend |
+| P2 | [#626](https://github.com/sammasak/nixos-config/issues/626) | Auto-compaction, live on/off | 300K on acer `pool2` only, branch `pool/cli-950c25fbd3f89b7a`; needs acer and msi (runner, migration 21), rules and dashboard on black-pi; read one day after deploy |
 
 ## Work items
 
@@ -250,7 +251,7 @@ Placement order: acer, then msi, asus last (it carries ollama and the heavier lo
 
 | Host | Worker | Item |
 |------|--------|------|
-| acer-swift | `pool1` to `pool3` | pool slots, Shunt on for `pool1`; `herman` and `a1` retired, their work in `/var/lib/worker-archive` |
+| acer-swift | `pool1` to `pool3` | pool slots, Shunt on for `pool1`, a 300K compaction window for `pool2` (#626, once deployed); `herman` and `a1` retired, their work in `/var/lib/worker-archive` |
 | msi-ms7758 | `pool1` to `pool4` | pool slots; `t1`, `m1` and `m2` retired, their work in `/var/lib/worker-archive` |
 | asus-b460m | none | `a624`, `s138`, `s130` retired |
 
