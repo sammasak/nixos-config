@@ -5,7 +5,8 @@ time. Nothing is pushed.
 
 A path maps to checks only where the gate's history shows what it can break (goals.md, "Check tuning"):
   docs/ and top-level *.md     nothing: the push hook's lints already ran on them
-  monitoring rules (*.yaml)    the rule checks (promtool cases, annotations, routes, sleeping hosts, shipping rules)
+  monitoring rules (*.yaml)    the rule checks (promtool cases, annotations, routes, sleeping hosts, shipping rules) and
+                               grafana-dashboards, which finds each name a rule selects in what the fleet exports
   dashboards (*.json)          the dashboard checks and black-pi's evaluation (its datasource assertion)
   pkgs/exec-pool/              its package build (crate tests, clippy, rustfmt) and the evaluation of the pool's hosts;
                                a migration also its numbering, one name per number and no gap
@@ -46,6 +47,7 @@ RULE_CHECKS = (
     "monitoring-alert-routes",
     "monitoring-rules-sleeping-hosts",
     "shipping-rules",
+    "grafana-dashboards",
 )
 DASHBOARDS = re.compile(r"modules/homelab/monitoring/dashboards/[^/]+\.json")
 DASHBOARD_CHECKS = ("grafana-dashboards", "grafana-dashboard-removal")
