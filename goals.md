@@ -127,11 +127,11 @@ before the restart is not seen.
 4. Not yet seen live: a drain started by `just deploy`, claim order by priority, the prepare failure counter,
    `coord:brief` against the real CLI.
 5. The drain starts before the build, so a long build keeps a host from claiming.
-6. Slot isolation, branch `pool/cli-89635bd687bfeb7c` (deploy acer and msi): a slot's user is in no group and has no
-   sudo; `homelab.execPool.slot.privateUsers` (off) puts each slot in its own uid block, a toggled slot's home reset at
-   its next start; `check_slot_reach` pins every bind of every slot. Open: privateUsers not yet booted (VM on msi, then
-   flip msi first); the other setuid wrappers (su, mount, newuidmap) stay host root's in a slot without it; the shared
-   `.nix-cache` lets one slot plant fetcher entries another reads until privateUsers is on.
+6. Slot isolation: `homelab.execPool.slot.privateUsers` booted in `execution-pool-vm` (both slots, ids, dock, GitHub
+   sidecar, daemon, the toggle reset) and on for msi's slots, #796 (deploy msi, then
+   acer for the per-slot fetcher cache); every slot now has its own fetcher cache, emptied by each reset. Open: acer's
+   slots, one line in `hosts/acer-swift/configuration.nix` once msi has run a day with it; what still runs as host
+   root for a slot is listed in `docs/nspawn-workers.md` (Execution pool).
 7. `status` and `list` do not show priority.
 8. `HostBehindMain` needs 24 h; black-pi lacked new alert rules for some hours unseen.
 9. lenovo cannot push nixos-config (stale devenv gate) or fetch a new private skills pin as a user.

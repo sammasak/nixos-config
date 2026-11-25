@@ -65,6 +65,8 @@ in
       egress.github.repos = cfg.repos;
       sessionDock = true;
       rootInGuest = cfg.slot.privateUsers;
+      # a task's fetches never read entries an earlier task in any slot planted
+      ownNixCache = true;
       # each attempt's workspace (pkgs/exec-pool/src/workspace.rs): throwaway, so its checkout never holds the reset
       scratch = [ "attempts" ];
       memory.reserved = cfg.slot.memory;
