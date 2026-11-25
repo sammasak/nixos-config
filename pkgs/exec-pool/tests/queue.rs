@@ -1740,6 +1740,7 @@ fn park(reason: ParkReason, upto: i64) -> Park {
         }),
         result: TaskResult::new(Some(Outcome::Succeeded), Some(0), "the turn's answer"),
         upto,
+        undelivered: false,
         wake: None,
         transcript: None,
     }
@@ -1814,6 +1815,40 @@ fn a_message_sent_while_a_turn_runs_is_delivered_after_its_park() {
     assert!(
         metrics.contains("reason=\"turn_end\"} 2"),
         "both parks count in exec_pool_transitions_total"
+    );
+}
+
+#[test]
+fn a_message_sent_while_a_turn_runs_reaches_its_pane_and_is_read_at_its_park() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let (a, epoch, first) = started(&mut owner);
+    let mut runner = runner(&pg);
+    assert_eq!(
+        runner.during_turn(&id, first.upto).unwrap(),
+        (vec![], false)
+    );
+    s.send(&id, "review: fix the test").unwrap();
+    s.send(&id, "and rebase").unwrap();
+    let (mail, busy) = runner.during_turn(&id, first.upto).unwrap();
+    assert_eq!(
+        mail.iter().map(|(_, b)| b.as_str()).collect::<Vec<_>>(),
+        ["review: fix the test", "and rebase"]
+    );
+    assert!(!busy, "nothing waits for a slot");
+    let upto = mail.iter().map(|(i, _)| *i).max().unwrap();
+    assert_eq!(runner.during_turn(&id, upto).unwrap().0, vec![]);
+    // queued work and the one slot busy: an idle agent's grace is the short one
+    submit(&mut owner, &task("queued-behind", 1));
+    assert!(runner.during_turn(&id, upto).unwrap().1);
+    let (_, changes) = owner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, upto))
+        .unwrap();
+    assert_eq!(
+        moves(&changes),
+        [(Status::Waiting, "turn_end")],
+        "what the pane was given is read: no turn for it again"
     );
 }
 
@@ -2887,4 +2922,75 @@ fn a_parked_transcript_is_bounded_kept_compressed_handed_to_the_next_turn_and_dr
         .unwrap()
         .get(0);
     assert_eq!(left, 0, "a final session is never resumed");
+}
+
+#[test]
+fn a_session_whose_pane_or_prompt_keeps_failing_parks_and_a_send_wakes_it() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    // max_attempts is 1: a failed turn that went back to the queue would end the session `failed` at once
+    for (n, step) in exec_pool::runner::PANE_STEPS
+        .iter()
+        .cycle()
+        .take(4)
+        .enumerate()
+    {
+        let (a, epoch, turn) = started(&mut owner);
+        let result: exec_pool::runner::ExecResult = serde_json::from_value(json!({
+            "schema_version": 1, "attempt_id": a, "lease_epoch": epoch, "stage": "prepare",
+            "exit_code": 1, "timed_out": false, "cancelled": false, "failed_step": step,
+            "container_active": true, "stdout_tail": "", "stderr_tail": "", "prepare_ms": 5000, "run_ms": 0
+        }))
+        .unwrap();
+        let to = exec_pool::runner::decide_turn(&a, epoch, Some(&result), "");
+        assert_eq!(
+            to,
+            exec_pool::runner::TurnSettle::Park(ParkReason::TurnError)
+        );
+        owner
+            .park(&a, epoch, &park(ParkReason::TurnError, turn.upto))
+            .unwrap();
+        assert_eq!(status(&pg, &a).0, "waiting", "turn {n}, failed at {step}");
+        assert_eq!(
+            s.send(&id, &format!("try {n}")).unwrap(),
+            (a.clone(), Status::Queued)
+        );
+    }
+}
+
+#[test]
+fn a_turn_whose_input_never_reached_the_agent_hands_it_to_the_next() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let undelivered = |upto| Park {
+        undelivered: true,
+        ..park(ParkReason::TurnError, upto)
+    };
+    let (a, epoch, first) = started(&mut owner);
+    assert!(first.first);
+    owner.park(&a, epoch, &undelivered(first.upto)).unwrap();
+    s.send(&id, "one").unwrap();
+    let (a, epoch, again) = started(&mut owner);
+    assert!(
+        again.first,
+        "the prompt never reached it: still the first turn"
+    );
+    assert_eq!(again.input, first.input);
+    owner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, again.upto))
+        .unwrap();
+    s.send(&id, "two").unwrap();
+    let (a, epoch, later) = started(&mut owner);
+    assert!(!later.first);
+    assert!(later.input.contains("two"), "{}", later.input);
+    owner.park(&a, epoch, &undelivered(later.upto)).unwrap();
+    s.send(&id, "three").unwrap();
+    let (_, _, next) = started(&mut owner);
+    assert!(
+        next.input.contains("two") && next.input.contains("three"),
+        "the undelivered message is handed again: {}",
+        next.input
+    );
 }

@@ -27,10 +27,10 @@ let
   exe = "${pkg}/bin/exec-pool-runner";
   slotNames = map (n: "pool${toString n}") (lib.range 1 cfg.slots);
   execDir = "/var/lib/exec-pool-exec";
-  # the helper stops the task at timeoutSecs; above it, four prepare steps of up to 300 s, the branch listed before and
-  # after the run (60 s each) and the stop's own wait; a session turn adds its restore, relink and probes, and the park's
-  # push, tried for up to 30 minutes
-  execTimeout = cfg.timeoutSecs + 3600;
+  # none: the helper bounds every step itself (the park's push included), and a session turn has no bound of its own,
+  # as the owner may work in its pane for hours (each stretch of the agent's work at most timeoutSecs, each pause at
+  # most idleGraceSecs); a stop here would kill the helper with the turn's work in the dock and quarantine the slot
+  execTimeout = "infinity";
   # the runner renews it every 10 s while the helper runs, so a run may outlast it; a runner that dies sends its
   # running attempt to review this long after its last renewal
   leaseSecs = 300;
@@ -135,6 +135,25 @@ in
           EXEC_POOL_FIND = "${pkgs.findutils}/bin/find";
           EXEC_POOL_INSTALL = "${pkgs.coreutils}/bin/install";
           EXEC_POOL_CAT = "${pkgs.coreutils}/bin/cat";
+          # a session turn's agent runs in this terminal in the guest, and its pane is in the host user's Herdr,
+          # attached to it by the slot's entry point (modules/workers/core.nix, `turn`)
+          EXEC_POOL_DTACH = "${pkgs.dtach}/bin/dtach";
+          # a session turn's pane in the host user's Herdr; without it the helper runs the turn headless
+          EXEC_POOL_HERDR = lib.mkIf (cfg.sessionSurface == "pane") (
+            builtins.toJSON [
+              "${pkgs.util-linux}/bin/setpriv"
+              "--reuid=${dev.user}"
+              "--regid=${config.users.users.${dev.user}.group}"
+              "--init-groups"
+              "--"
+              "${pkgs.coreutils}/bin/env"
+              "-i"
+              "HOME=${guestHome}"
+              "XDG_RUNTIME_DIR=/run/user/${toString dev.uid}"
+              (lib.getExe pkgs.herdr)
+            ]
+          );
+          EXEC_POOL_ATTACH = "/run/current-system/sw/bin/${dev.unitPrefix}-%i turn";
           # each slot's dock, which the guest sees at /session (pkgs/exec-pool/src/workspace.rs)
           EXEC_POOL_SESSIONS = "${dev.stateDir}/.sessions";
           EXEC_POOL_GUEST_HOME = guestHome;
@@ -181,6 +200,8 @@ in
             EXEC_POOL_DB = db;
             EXEC_POOL_SLOT = slot n;
             EXEC_POOL_LEASE_SECS = toString leaseSecs;
+            EXEC_POOL_IDLE_GRACE_SECS = toString cfg.idleGraceSecs;
+            EXEC_POOL_IDLE_GRACE_BUSY_SECS = toString cfg.idleGraceBusySecs;
             EXEC_POOL_RUNTIME = "/run/exec-pool-runner/${n}";
             EXEC_POOL_EXEC_DIR = execDir;
             EXEC_POOL_STATE = "/var/lib/exec-pool-runner";

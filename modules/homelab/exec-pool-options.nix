@@ -78,7 +78,25 @@ in
     timeoutSecs = mkOption {
       type = types.ints.positive;
       default = 1800;
-      description = "How long a task's command, or one turn of a session, may run before it is stopped: a one-shot attempt then goes to needs_review, a session's turn parks as turn_timeout and continues in a new turn, up to three in a row with no message between.";
+      description = "How long a task's command, or a session's agent since it was last idle, may run in its slot before it is stopped: a one-shot attempt then goes to needs_review, a session's turn parks as turn_timeout and continues in a new turn, up to three in a row with no message between.";
+    };
+    sessionSurface = mkOption {
+      type = types.enum [
+        "pane"
+        "headless"
+      ];
+      default = "pane";
+      description = "Where a session turn's agent runs: interactive Claude in the slot's pane in the host user's Herdr, or headless, Claude's print mode with no pane and no idle pause, its turn ending when the call does.";
+    };
+    idleGraceSecs = mkOption {
+      type = types.ints.unsigned;
+      default = 600;
+      description = "How long a session's agent, idle and waiting for input, stays in its slot's Herdr pane, where the owner's typing or a message sent to the session answers it in the same turn, before the session parks (its work pushed) and frees the slot.";
+    };
+    idleGraceBusySecs = mkOption {
+      type = types.ints.unsigned;
+      default = 60;
+      description = "idleGraceSecs while a task is queued and no slot is idle on any host.";
     };
     queueListener = mkOption {
       type = types.nullOr types.str;

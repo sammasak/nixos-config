@@ -26,7 +26,7 @@ pub const DOWN: &str = include_str!("../migrations/0001_queue.down.sql");
 /// From 7 each records its floor, the oldest VERSION whose reads and writes stay correct on it: an additive one keeps
 /// the previous floor, so a binary rolled back across it still serves; one an older binary would misread or break by
 /// its writes records its own version.
-const STEPS: [(i32, &str); 17] = [
+const STEPS: [(i32, &str); 18] = [
     (1, UP),
     (2, include_str!("../migrations/0002_submitter.up.sql")),
     (3, include_str!("../migrations/0003_result.up.sql")),
@@ -50,6 +50,7 @@ const STEPS: [(i32, &str); 17] = [
     (15, include_str!("../migrations/0015_turn_log.up.sql")),
     (16, include_str!("../migrations/0016_priority.up.sql")),
     (17, include_str!("../migrations/0017_transcript.up.sql")),
+    (18, include_str!("../migrations/0018_undelivered.up.sql")),
 ];
 const DOWN_SUBMITTER: &str = include_str!("../migrations/0002_submitter.down.sql");
 const DOWN_RESULT: &str = include_str!("../migrations/0003_result.down.sql");
@@ -64,7 +65,8 @@ const DOWN_TIMER: &str = include_str!("../migrations/0014_timer.down.sql");
 const DOWN_TURN_LOG: &str = include_str!("../migrations/0015_turn_log.down.sql");
 const DOWN_PRIORITY: &str = include_str!("../migrations/0016_priority.down.sql");
 const DOWN_TRANSCRIPT: &str = include_str!("../migrations/0017_transcript.down.sql");
-const VERSION: i32 = 17;
+const DOWN_UNDELIVERED: &str = include_str!("../migrations/0018_undelivered.down.sql");
+const VERSION: i32 = 18;
 /// The fence's SQLSTATE, raised by `attempts_fence`.
 const FENCED: &str = "XP409";
 const LIVE: &str = "('leased', 'running', 'checkpointing')";
@@ -275,6 +277,10 @@ pub struct Park {
     pub result: TaskResult,
     /// [`Turn::upto`] of the claim the turn ran.
     pub upto: i64,
+    /// The turn's input never reached the agent (`runner::parks_undelivered`): nothing is marked read, and the next
+    /// turn is handed it again.
+    #[serde(default)]
+    pub undelivered: bool,
     /// The time the turn asked to be woken at (`pool-wait`), put in the inbox as a timer row.
     #[serde(default)]
     pub wake: Option<Wake>,
@@ -723,7 +729,7 @@ impl Store {
             None => Err(QueueError::NotMigrated),
             Some(v) if v > VERSION => Err(QueueError::SchemaAhead(v)),
             Some(_) => Ok(tx.batch_execute(&format!(
-                "{DOWN_TRANSCRIPT}{DOWN_PRIORITY}{DOWN_TURN_LOG}{DOWN_TIMER}{DOWN_DRAIN_REASON}{DOWN_CLAIM_HOST}{DOWN_SESSION_METRICS}{DOWN_SESSION}{DOWN_SLOTS}{DOWN_QUARANTINE}{DOWN_CANCEL}{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"
+                "{DOWN_UNDELIVERED}{DOWN_TRANSCRIPT}{DOWN_PRIORITY}{DOWN_TURN_LOG}{DOWN_TIMER}{DOWN_DRAIN_REASON}{DOWN_CLAIM_HOST}{DOWN_SESSION_METRICS}{DOWN_SESSION}{DOWN_SLOTS}{DOWN_QUARANTINE}{DOWN_CANCEL}{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"
             ))?),
         })
     }
@@ -1013,7 +1019,7 @@ impl Store {
             };
             tx.execute(
                 "INSERT INTO turns (attempt_id, lease_epoch, input_tokens, output_tokens, cache_read_tokens, \
-                 cache_creation_tokens, cost_usd, handed_back) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                 cache_creation_tokens, cost_usd, handed_back, delivered) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
                 &[
                     &attempt,
                     &epoch,
@@ -1023,15 +1029,10 @@ impl Store {
                     &tokens(|u| u.cache_creation_tokens)?,
                     &usage.and_then(|u| u.cost_usd),
                     &park.result.handed_back,
+                    &!park.undelivered,
                 ],
             )?;
-            tx.execute(
-                // what the claim handed over: up to upto, and due when it leased (its event's `at` is the claim's now())
-                "UPDATE inbox SET consumed_epoch = $3 WHERE task_id = $1 AND id <= $2 AND consumed_epoch IS NULL \
-                 AND (due_at IS NULL OR due_at <= (SELECT max(e.at) FROM events e \
-                 WHERE e.attempt_id = $4 AND e.lease_epoch = $3 AND e.to_status = 'leased'))",
-                &[&task, &park.upto, &epoch, &attempt],
-            )?;
+            mark_read(tx, (&task, attempt, epoch), park)?;
             let resume = match park.reason {
                 ParkReason::Preempted | ParkReason::HostDraining => true,
                 ParkReason::TurnTimeout => timeouts_in_a_row(tx, &task, attempt)? < TIMEOUTS_IN_A_ROW,
@@ -1067,6 +1068,39 @@ impl Store {
                 changes.push(change);
             }
             Ok((parked, changes))
+        })
+    }
+
+    /// What a live session turn's runner tells its helper: the session's unread messages after `upto` (what the claim
+    /// handed over), by id, and whether work waits for a slot (a queued attempt, and no idle slot on any host).
+    ///
+    /// # Errors
+    /// What the database reports.
+    pub fn during_turn(
+        &mut self,
+        task_id: &str,
+        upto: i64,
+    ) -> Result<(Vec<(i64, String)>, bool), QueueError> {
+        self.tx(|tx| {
+            let mail = tx
+                .query(
+                    "SELECT id, body FROM inbox WHERE task_id = $1 AND id > $2 AND kind = 'message' \
+                     AND consumed_epoch IS NULL ORDER BY id",
+                    &[&task_id, &upto],
+                )?
+                .iter()
+                .map(|r| Ok((r.try_get(0)?, r.try_get(1)?)))
+                .collect::<Result<Vec<_>, postgres::Error>>()?;
+            let busy: bool = tx
+                .query_one(
+                    &format!(
+                        "SELECT EXISTS (SELECT FROM attempts WHERE status = 'queued') \
+                         AND NOT EXISTS ({IDLE_SLOTS})"
+                    ),
+                    &[],
+                )?
+                .try_get(0)?;
+            Ok((mail, busy))
         })
     }
 
@@ -1534,7 +1568,9 @@ fn turn(
 ) -> Result<Option<Turn>, QueueError> {
     let row = tx.query_one(
         "SELECT session, session_uuid::text, NOT EXISTS (SELECT FROM events e \
-         WHERE e.attempt_id = $2 AND e.to_status = 'running') FROM tasks WHERE id = $1",
+         WHERE e.attempt_id = $2 AND e.to_status = 'running' AND NOT EXISTS (SELECT FROM turns u \
+         WHERE u.attempt_id = e.attempt_id AND u.lease_epoch = e.lease_epoch AND NOT u.delivered)) \
+         FROM tasks WHERE id = $1",
         &[&task.id, &attempt],
     )?;
     if !row.try_get::<_, bool>(0)? {
@@ -1605,6 +1641,25 @@ fn turn(
         checkpoint,
         transcript,
     }))
+}
+
+/// Marks the inbox rows the turn of `attempt` at `epoch` was handed read, unless its input never reached the agent.
+fn mark_read(
+    tx: &mut Transaction<'_>,
+    (task, attempt, epoch): (&str, &str, i64),
+    park: &Park,
+) -> Result<(), QueueError> {
+    if park.undelivered {
+        return Ok(());
+    }
+    tx.execute(
+        // what the claim handed over: up to upto, and due when it leased (its event's `at` is the claim's now())
+        "UPDATE inbox SET consumed_epoch = $3 WHERE task_id = $1 AND id <= $2 AND consumed_epoch IS NULL \
+         AND (due_at IS NULL OR due_at <= (SELECT max(e.at) FROM events e \
+         WHERE e.attempt_id = $4 AND e.lease_epoch = $3 AND e.to_status = 'leased'))",
+        &[&task, &park.upto, &epoch, &attempt],
+    )?;
+    Ok(())
 }
 
 /// Replaces `task`'s transcript with `t`, the one its turn at `epoch` left; `None` keeps the one it has.

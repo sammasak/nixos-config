@@ -392,7 +392,18 @@ let
                   exec -a ${w.agent} ${ssh w "-tt -o ConnectTimeout=10 -o ServerAliveInterval=30"} "$cmd"
                 ''
             } ;;
-          *) echo "usage: ${cfg.unitPrefix}-${w.name} wait|resumable|attach [fresh|continue]" >&2; exit 2 ;;
+          turn)
+            ${
+              # the session turn's agent terminal (agent::AGENT_SOCKET in pkgs/exec-pool/src/agent.rs), which
+              # exec-pool-exec@ starts in the guest and opens a Herdr pane on with this
+              if w.sessionDock then
+                ''
+                  exec -a claude ${ssh w "-tt -o ConnectTimeout=10 -o ServerAliveInterval=30"} ${lib.escapeShellArg "${pkgs.dtach}/bin/dtach -a /session/cur/home/.exec-pool-agent.sock -E -z -r winch"}
+                ''
+              else
+                "exit 2"
+            } ;;
+          *) echo "usage: ${cfg.unitPrefix}-${w.name} wait|resumable|attach [fresh|continue]|turn" >&2; exit 2 ;;
         esac
       '';
     };

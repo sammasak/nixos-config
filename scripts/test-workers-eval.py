@@ -1076,6 +1076,8 @@ in {
   user = r.serviceConfig.User;
   wanted = r.wantedBy;
   slot = builtins.fromJSON r.environment.EXEC_POOL_SLOT;
+  grace = [ r.environment.EXEC_POOL_IDLE_GRACE_SECS r.environment.EXEC_POOL_IDLE_GRACE_BUSY_SECS ];
+  execTimeout = acer.systemd.services."exec-pool-exec@".serviceConfig.TimeoutStartSec;
   exec = acer.systemd.services."exec-pool-exec@".serviceConfig.ExecStart;
   env = acer.systemd.services."exec-pool-exec@".environment;
   agentEnv = builtins.fromJSON acer.systemd.services."exec-pool-exec@".environment.EXEC_POOL_AGENT_ENV;
@@ -1114,6 +1116,11 @@ def check_runner():
           and env.get("EXEC_POOL_SLOT_HOME") == "/var/lib/workers/%i/home" and env.get("EXEC_POOL_GUEST_HOME", "").startswith("/home/")
           and got.get("scratch") == ["attempts"] and "--expand-environment=no --wait" in got.get("reset", ""),
           f"the helper hands a step only the slot's egress variables and a PATH to the agent, admits by the host side of the slot home, and the reset trashes ~/attempts unchecked, its guest scan not expanded by systemd ({agent}, { {k: v for k, v in env.items() if 'HOME' in k} }, {got.get('scratch')})")
+    herdr = json.loads(env.get("EXEC_POOL_HERDR", "[]"))
+    check(env.get("EXEC_POOL_ATTACH") == "/run/current-system/sw/bin/worker-%i turn" and env.get("EXEC_POOL_DTACH", "").endswith("/bin/dtach")
+          and herdr[:1] and herdr[0].endswith("/bin/setpriv") and "--reuid=lukas" in herdr and herdr[-1].endswith("/bin/herdr")
+          and got.get("grace") == ["600", "60"] and got.get("execTimeout") == "infinity",
+          f"a session turn's pane is in the host user's Herdr (herdr run as that user), attached by the slot's `turn` entry point to the agent's dtach terminal; an idle agent pauses 600 s, 60 s while work waits; the helper has no start timeout, a session turn being as long as the owner works in it ({herdr}, {env.get('EXEC_POOL_ATTACH')}, {got.get('grace')}, {got.get('execTimeout')})")
     # a slot's reset restarts its container once per task turn, seconds apart in a session: the reset clears the
     # container's start limit, which still ends a guest that never gets ready
     script = got.get("reset", "")

@@ -4,6 +4,7 @@
 //! checked by `validate()` before anything acts on it. A version or path that is wrong does not deserialise at all.
 
 pub mod agent;
+pub mod pane;
 pub mod queue;
 pub mod runner;
 pub mod snapshot;
