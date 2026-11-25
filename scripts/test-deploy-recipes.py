@@ -5,8 +5,10 @@ real scripts/post-deploy-check.sh to the target, so a unit in a restart loop, wh
 fails it with result=check-failed. deploy-rs's --dry-activate exits 0 whatever the dry activation did, so dry-activate
 reruns switch-to-configuration dry-activate over ssh and exits non-zero, with its output, when that or the closure diff
 fails, and 0 when both pass. A deploy of a host whose lock (in XDG_RUNTIME_DIR, here a temporary directory) is held is
-refused at once with result=locked."""
+refused at once with result=locked. Every private (sammasak) input of flake.lock is git over ssh, so a deploy as the
+user fetches a new pin with that user's key; a github: input would need the root-only nix access token."""
 import fcntl
+import json
 import os
 import pathlib
 import shutil
@@ -214,5 +216,11 @@ with tempfile.TemporaryDirectory() as tmp:
                        env=dict(env, SHADOW_REPORT=str(tmp / "nodir" / "r")), capture_output=True, text=True)
     check(r.returncode == 0 and "could not write" in r.stderr,
           f"seeded: an unwritable report is a warning and the activation still succeeds ({r.returncode}: {r.stderr.strip()[-120:]})")
+
+nodes = json.loads((ROOT / "flake.lock").read_text())["nodes"]
+private = {n: v for n, v in nodes.items() if "sammasak" in json.dumps(v.get("original", {}))}
+check(private and all(v[k]["type"] == "git" and v[k]["url"].startswith("ssh://git@github.com/sammasak/")
+                      for v in private.values() for k in ("original", "locked")),
+      f"flake.lock: every private input is git+ssh, fetchable without the root-only token ({sorted(private)})")
 
 finish()

@@ -137,6 +137,17 @@ changed packages as before. lenovo's user.slice 8288M to 8032M, still above the 
 (4.6 GiB idle sessions plus the largest 3.0 GiB unit): 259M of budget left instead of 3M; a new 128M unit evaluates.
 Open: the 4.6 GiB idle figure predates the named workers moving to pool slots; re-measure lenovo's user slice. PR #799.
 
+**25 Nov, branch `pool/cli-6a8cf03c11ffa376`** (no deploy: the skills store path and every toplevel drvPath are
+unchanged): the skills input is `git+ssh` like the other six private inputs (devenv-platform, factum, herman,
+llm-gateway, nix-audit, rf-proto), so `just deploy` as lukas fetches a new skills pin with lukas's SSH key instead of
+the root-only nix access token (the 404 after #798). Same narHash, so the same store path. Chosen over a prefetch in
+the deploy recipe (more recipe code, still a github: lock) and a token group (wider secret access).
+`scripts/test-deploy-recipes.py` fails on any private input in flake.lock that is not git over ssh. The 4.6 GiB
+lenovo user.slice note above stays as written, not re-measured.
+Open: lenovo's root rebuild trigger (`modules/homelab/nixos-rebuild-trigger`) fetched a new skills pin with the
+token and now needs a GitHub SSH key for root, as it already did for the other private inputs; glance on lenovo:
+`sudo ssh -T git@github.com`.
+
 **Open, in pick-up order**
 
 1. Session turns are headless; the owner wants the same interactive Herdr panes the named workers had, with an idle
@@ -155,7 +166,8 @@ Open: the 4.6 GiB idle figure predates the named workers moving to pool slots; r
    root for a slot is listed in `docs/nspawn-workers.md` (Execution pool).
 7. `status` and `list` do not show priority.
 8. `HostBehindMain` needs 24 h; black-pi lacked new alert rules for some hours unseen.
-9. lenovo cannot push nixos-config (stale devenv gate) or fetch a new private skills pin as a user.
+9. lenovo cannot push nixos-config (stale devenv gate); a new private skills pin fetches as a user over git+ssh
+   once `pool/cli-6a8cf03c11ffa376` merges.
 10. Cost: about 45 USD of session cost on 24 Nov; cost per merged PR is in `exec-pool sessions` and the dashboard
     table once `pool/cli-8ce84f45f00fc734` deploys to acer; read it after a day.
 11. Store follow-ups in #754. Credential slice 3 (a slot pushes only `pool/<task id>` and `refs/pool-wip/<task id>`,
