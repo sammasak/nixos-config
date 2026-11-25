@@ -86,21 +86,23 @@ devenv-platform#141 and #129; pi-harness#26.
 
 ## Open pool findings (item 8, in pick-up order)
 
-1. A turn whose input never reached the agent is queued again at once, skipping the error backoff, and never counts
-   as stalled.
-2. The drain starts before the build, so a long build keeps a host from claiming.
-3. Sessions lost turns to the 30 minute limit on 24 Nov; re-check the limit now that turns are interactive and park
+1. Sessions lost turns to the 30 minute limit on 24 Nov; re-check the limit now that turns are interactive and park
    on idle.
-4. A runner restarted mid-turn takes its new start as the turn's, so a subagent from before the restart is not seen.
-5. A second session stalling on the same host and reason pages nothing new.
-6. lenovo cannot push nixos-config (stale devenv gate); its root rebuild trigger needs a GitHub SSH key for root.
-7. Re-measure lenovo's user slice now that the named workers are pool slots.
-8. The v0.1 acceptance script in a VM (PASS, FAIL or UNTESTED per criterion) is not written.
-9. Slot memory kills (PR #805, merged; deploy to acer and msi not confirmed): the slots share one
+2. A runner restarted mid-turn takes its new start as the turn's, so a subagent from before the restart is not seen.
+3. lenovo cannot push nixos-config (stale devenv gate); its root rebuild trigger needs a GitHub SSH key for root.
+4. Re-measure lenovo's user slice now that the named workers are pool slots.
+5. The v0.1 acceptance script in a VM (PASS, FAIL or UNTESTED per criterion) is not written.
+6. Slot memory kills (PR #805, merged, deployed and confirmed on acer, msi and black-pi): the slots share one
    `environments.slice` limit, so four heavy evaluations at once still kill one, and a kill that leaves the agent
    running is told to it only through its command's exit.
-10. msi's `ownRefsOnly` push filter (PR #805) is live only after the msi deploy; read acer's push filter journal (one
-    `passed`, one `refused`) before it.
+7. msi's `ownRefsOnly` push filter (PR #805) is live only after the msi deploy; read acer's push filter journal (one
+   `passed`, one `refused`) before it.
+
+Fixed on pool/cli-fc35c75b867a1608, live after deploys of acer (the queue, migration 24, its textfile and runner),
+msi (its runner parks through `hold_input`) and black-pi (the alert rule); `just deploy` is the repo's own: an undelivered turn's input is held for the error backoff and past it
+counts as stalled (`an_undelivered_turn_keeps_the_error_backoff_and_past_it_counts_as_stalled`); `just deploy`
+builds the toplevel before the drain (`scripts/test-deploy-recipes.py`, `scripts/test-system-checks.py`); each
+stalled session pages on its own (`exec_pool_session_stalled`, the rule test in `modules/homelab/monitoring/rules/tests/exec-pool.yaml`).
 
 Credential items moved to #653 (item 7).
 
