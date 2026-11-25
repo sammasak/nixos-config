@@ -1,7 +1,8 @@
 -- 0020's summaries for the work-done ledger (#806), columns appended as OR REPLACE allows, its grant kept: one-shot
 -- agent tasks too (a `none` task's argv is its own command, never shown), each task's model (its argv's second item,
 -- `default` when it named none; NULL for a `none` task) and whether it is a session. Cost sums as numeric, which
--- adds exactly in any order: a float8 sum varies in its last bit between reads.
+-- adds exactly in any order: a float8 sum varies in its last bit between reads. It is NULL with no turn reported, so
+-- a one-shot task (its usage is never recorded) is unpriced, not free.
 CREATE OR REPLACE VIEW session_summaries AS
   WITH spans AS (
     SELECT e.attempt_id, e.from_status AS state,
@@ -45,7 +46,7 @@ CREATE OR REPLACE VIEW session_summaries AS
     (coalesce(x.queued_ms, 0) / 1000.0)::float8 AS queued_seconds,
     (coalesce(x.review_ms, 0) / 1000.0)::float8 AS review_seconds,
     u.reported AS turns_reported, u.input_tokens, u.output_tokens, u.cache_read_tokens, u.cache_creation_tokens,
-    u.cost_usd,
+    CASE WHEN u.reported > 0 THEN u.cost_usd END AS cost_usd,
     (SELECT r.branch FROM results r WHERE r.attempt_id = a.id) AS branch,
     CASE WHEN t.spec->'command'->>'agent' <> 'none' THEN CASE WHEN jsonb_array_length(t.spec->'command'->'argv') = 2
       THEN t.spec->'command'->'argv'->>1 ELSE 'default' END END AS model,

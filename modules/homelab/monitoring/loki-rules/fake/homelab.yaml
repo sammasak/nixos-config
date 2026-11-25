@@ -55,20 +55,21 @@ groups:
   - name: pool.ledger
     rules:
       # #806's ledger from exec-pool-session-report's lines (one per merged pool change, on acer): 8 USD is about twice
-      # the 25 Nov mean; under 10 changes one long session alone can double it
+      # the 25 Nov mean; under 10 changes one long session alone can double it. Priced changes only: a one-shot task
+      # reports no cost (cost_usd null), which would read as free
       - alert: PoolCostPerMergedChangeHigh
         expr: |
           (
             sum(sum_over_time({job="host-journal", unit="exec-pool-session-report.service"} | json | __error__="" | pr_state="merged" | unwrap cost_usd | __error__="" [3d]))
-            / sum(count_over_time({job="host-journal", unit="exec-pool-session-report.service"} | json | __error__="" | pr_state="merged" [3d]))
+            / sum(count_over_time({job="host-journal", unit="exec-pool-session-report.service"} | json | __error__="" | pr_state="merged" | cost_usd!="" [3d]))
           ) > 8
-          and sum(count_over_time({job="host-journal", unit="exec-pool-session-report.service"} | json | __error__="" | pr_state="merged" [3d])) >= 10
+          and sum(count_over_time({job="host-journal", unit="exec-pool-session-report.service"} | json | __error__="" | pr_state="merged" | cost_usd!="" [3d])) >= 10
         for: 1h
         labels:
           severity: warning
           team: homelab
         annotations:
           summary: "Merged pool changes cost {{ $value | printf \"%.2f\" }} USD each over 3 days"
-          description: "Over the last 3 days the pool's merged changes (at least 10) cost {{ $value | printf \"%.2f\" }} USD each on average, as their turns reported, over 8 USD, for an hour. Run exec-pool sessions --merged --limit 20 on acer for the costliest changes and their turns, then read the Merged changes per day table in the Agent harnesses dashboard (runbook)."
+          description: "Over the last 3 days the pool's merged changes that reported a cost (at least 10) cost {{ $value | printf \"%.2f\" }} USD each on average, as their turns reported, over 8 USD, for an hour. Run exec-pool sessions --merged --limit 20 on acer for the costliest changes and their turns, then read the Merged changes per day table in the Agent harnesses dashboard (runbook)."
           query: '{job="host-journal", unit="exec-pool-session-report.service"} | json | pr_state="merged"'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#poolcostpermergedchangehigh"

@@ -443,6 +443,9 @@ First: `exec-pool sessions --merged --limit 20` on acer: the costliest changes, 
 then the "Merged changes per day" table in the Agent harnesses dashboard, by agent and model.
 Do not: read the day's cost from `increase()` over `exec_pool_session_cost_usd_total` over a range before acer's
 deploy of #806's fix: that counter's float sum dropped by its last bit and every drop read as a reset.
+The deploy itself can drop each series once in its last bit (the exact sum replacing the float one), so leave out
+the day after it too.
+One-shot tasks report no cost: the alert and the table divide by the changes that reported one.
 
 ## ShuntDelegationFailing
 

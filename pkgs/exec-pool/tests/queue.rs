@@ -3052,6 +3052,7 @@ fn a_one_shot_agent_task_is_summarised_with_its_model_and_a_none_task_is_not() {
     assert_eq!(v["agent"], "claude");
     assert_eq!(v["model"], "default", "no model named: the agent's own");
     assert_eq!(v["state"], "queued");
+    assert!(v["cost_usd"].is_null(), "no turn reported: unpriced, not free");
     assert!(all.iter().any(|v| v["model"] == "opus"), "{all:?}");
 }
 
