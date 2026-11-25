@@ -86,6 +86,13 @@ shunt_hook_duration_ms{hook="shunt-read",quantile="0.5",shunt="on"} 17.5
 shunt_hook_duration_ms{hook="shunt-read",quantile="0.95",shunt="on"} 45
 shunt_hook_duration_ms{hook="shunt-spill",quantile="0.5",shunt="on"} 10
 shunt_hook_duration_ms{hook="shunt-spill",quantile="0.95",shunt="on"} 35.5
+# HELP shunt_hook_time_ms A hook's run time summed over the window: the Shunt hooks, and validate-bash, which runs with Shunt on or off, so ms per Bash call compares the two. A 24 h rolling sum, refreshed every 15 min.
+# TYPE shunt_hook_time_ms gauge
+shunt_hook_time_ms{hook="bulk-read",shunt="on"} 30000
+shunt_hook_time_ms{hook="shunt-bash",shunt="on"} 50
+shunt_hook_time_ms{hook="shunt-read",shunt="on"} 130
+shunt_hook_time_ms{hook="shunt-spill",shunt="on"} 65
+shunt_hook_time_ms{hook="validate-bash",shunt="on"} 6
 # HELP shunt_last_record_timestamp_seconds Unix time of the hook's newest record, carried over while the window holds none.
 # TYPE shunt_last_record_timestamp_seconds gauge
 shunt_last_record_timestamp_seconds{hook="bulk-read",shunt="on"} 1795410000
@@ -184,7 +191,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check(text == GOLDEN, "the fixture's textfile is GOLDEN" + ("" if text == GOLDEN else f":\n{text}"))
     check(not any(s in text for s in SECRETS), "no session id, path, excerpt or unknown result in the textfile")
     labels = set(re.findall(r'(\w+)="([^"]*)"', text))
-    allowed = {("hook", h) for h in sm.RESULTS} | {("result", r) for rs in sm.RESULTS.values() for r in rs | {"other"}}
+    allowed = {("hook", h) for h in [*sm.RESULTS, sm.BASH_HOOK]} | {("result", r) for rs in sm.RESULTS.values() for r in rs | {"other"}}
     allowed |= {("kind", k) for k in ("seen", "returned", "bypassed")} | {("quantile", str(q)) for q in sm.QUANTILES}
     allowed |= {("status", s) for s in sm.LINE_STATUS + sm.FILE_STATUS} | {("kind", k) for k in sm.CHILD_TOKENS}
     allowed |= {("shunt", "on")}
@@ -311,6 +318,8 @@ with tempfile.TemporaryDirectory() as tmp:
     # Shunt off still exports: the Bash calls, zero sums and the collector's health, labelled off; no event series
     r = run("--out", str(gout), "--state-dir", str(state), "--worker", "herman", shunt="off")
     got = gout.read_text()
+    check('shunt_hook_time_ms{hook="validate-bash",shunt="off",worker="herman"} 6\n' in got,
+          "the off side's validate-bash time is written, the control the on side's Shunt time per Bash call compares to")
     check(r.returncode == 0 and 'shunt_bash_calls{shunt="off",worker="herman"} 3\n' in got
           and 'shunt_spill_chars{kind="seen",shunt="off",worker="herman"} 0\n' in got
           and 'shunt_read_tokens{hook="shunt-read",kind="seen",shunt="off",worker="herman"} 0\n' in got

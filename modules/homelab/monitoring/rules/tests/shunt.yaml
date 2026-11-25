@@ -234,3 +234,41 @@ tests:
               description: "Shunt is declared on for acer-swift worker a1, yet its agent ran Bash in the last hour with no Shunt hook record for 2 h, or a Shunt hook logged error or nostate in the last 24 h; the on/off comparison is then not measuring Shunt. A session started before Shunt was switched on keeps its old hooks until restarted. An error stays in the 24 h window, so it can stay firing up to 24 h after a fix."
               query: 'shunt_events{job="node-exporter",node="acer-swift",worker="a1",hook=~"shunt-.*"}'
               runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#shuntsilent"
+
+  # ShuntHookOverhead: pool1 (on) spends 300 ms of Shunt hooks per Bash call over 60 calls, firing after 1h; lenovo
+  # (on) 100 ms per call; acer's busier off worker, its validate-bash time alone, never; on with 40 calls, too few
+  - interval: 15m
+    input_series:
+      - series: 'shunt_hook_time_ms{job="node-exporter",node="acer-swift",worker="pool1",shunt="on",hook="shunt-bash"}'
+        values: '12000x8'
+      - series: 'shunt_hook_time_ms{job="node-exporter",node="acer-swift",worker="pool1",shunt="on",hook="shunt-spill"}'
+        values: '6000x8'
+      - series: 'shunt_hook_time_ms{job="node-exporter",node="acer-swift",worker="pool1",shunt="on",hook="bulk-read"}'
+        values: '900000x8'
+      - series: 'shunt_bash_calls{job="node-exporter",node="acer-swift",worker="pool1",shunt="on"}'
+        values: '60x8'
+      - series: 'shunt_hook_time_ms{job="node-exporter",node="lenovo-21CB001PMX",shunt="on",hook="shunt-bash"}'
+        values: '10000x8'
+      - series: 'shunt_bash_calls{job="node-exporter",node="lenovo-21CB001PMX",shunt="on"}'
+        values: '100x8'
+      - series: 'shunt_hook_time_ms{job="node-exporter",node="acer-swift",worker="pool2",shunt="off",hook="validate-bash"}'
+        values: '90000x8'
+      - series: 'shunt_bash_calls{job="node-exporter",node="acer-swift",worker="pool2",shunt="off"}'
+        values: '60x8'
+      - series: 'shunt_hook_time_ms{job="node-exporter",node="acer-swift",worker="pool3",shunt="on",hook="shunt-bash"}'
+        values: '40000x8'
+      - series: 'shunt_bash_calls{job="node-exporter",node="acer-swift",worker="pool3",shunt="on"}'
+        values: '40x8'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: ShuntHookOverhead
+        exp_alerts: []
+      - eval_time: 75m
+        alertname: ShuntHookOverhead
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: acer-swift, worker: pool1}
+            exp_annotations:
+              summary: "Shunt hooks on acer-swift for worker pool1 add 300 ms per Bash call"
+              description: "Over the last 24 h, Shunt's own hooks (shunt-read, shunt-bash, shunt-spill) on acer-swift worker pool1 ran 300 ms per Bash call, over 250 ms and at least 50 calls; that is latency on every agent call. Compare the hooks' p95 in the query with validate-bash's time per call on an off worker. Rollback: set sam.claude.bulkReader.enable false for it and switch, or SHUNT_DISABLE=1 where its sessions start. The count is a 24 h window, so it can stay firing up to 24 h after a fix."
+              query: 'shunt_hook_duration_ms{job="node-exporter",node="acer-swift",worker="pool1",quantile="0.95"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#shunthookoverhead"
