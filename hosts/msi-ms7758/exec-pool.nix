@@ -9,6 +9,7 @@
     slots = 4;
     agents = [ "claude" ];
     queueListener = "exec-pool-db";
+    ownRefsOnly = true;
     # each slot in its own uids; acer's slots follow once msi has run a day with it
     slot.privateUsers = true;
   };

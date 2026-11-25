@@ -239,12 +239,12 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
         .query_one("SELECT max(version) FROM schema_migrations", &[])
         .unwrap()
         .get(0);
-    assert_eq!(version, 22);
+    assert_eq!(version, 23);
     submit(&mut s, &task("t-1", 1));
     // a newer binary's additive migration keeps the floor: this one still serves the database, as after a rollback
     pg.sql()
         .execute(
-            "INSERT INTO schema_migrations (version, floor) VALUES (23, 22)",
+            "INSERT INTO schema_migrations (version, floor) VALUES (24, 23)",
             &[],
         )
         .unwrap();
@@ -252,17 +252,17 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
     assert!(s.claim(&slot("s0"), 60).unwrap().is_some());
     // one this binary would misread, or one that names no floor, is refused
     pg.sql()
-        .execute("INSERT INTO schema_migrations (version) VALUES (24)", &[])
+        .execute("INSERT INTO schema_migrations (version) VALUES (25)", &[])
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(24))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(25))));
     pg.sql()
         .execute(
-            "UPDATE schema_migrations SET floor = 24 WHERE version = 24",
+            "UPDATE schema_migrations SET floor = 25 WHERE version = 25",
             &[],
         )
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(24))));
-    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(24))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(25))));
+    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(25))));
 }
 
 #[test]
@@ -1744,6 +1744,7 @@ fn park(reason: ParkReason, upto: i64) -> Park {
         wake: None,
         transcript: None,
         arm: None,
+        memory_killed: Vec::new(),
     }
 }
 
@@ -2242,6 +2243,55 @@ fn error_out(runner: &mut Store) -> (String, Vec<(Status, &'static str)>) {
         .park(&a, epoch, &park(ParkReason::TurnError, turn.upto))
         .unwrap();
     (turn.input, moves(&changes))
+}
+
+#[test]
+fn a_memory_kill_continues_as_an_error_does_and_tells_the_agent_what_was_killed() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let mut runner = runner(&pg);
+    let killed = |runner: &mut Store| {
+        let (a, epoch, turn) = started(runner);
+        let mut p = park(ParkReason::TurnMemoryKill, turn.upto);
+        p.memory_killed = vec!["nix".to_owned(), "bad name;".to_owned()];
+        moves(&runner.park(&a, epoch, &p).unwrap().1)
+    };
+    assert_eq!(killed(&mut runner), [(Status::Waiting, "turn_memory_kill")]);
+    assert_eq!(all_due(&pg, &mut owner), [(Status::Queued, "wake")]);
+    let (a, epoch, turn) = started(&mut runner);
+    assert!(
+        turn.input
+            .starts_with("Your last turn ended in an error after the kernel's OOM killer")
+            && turn.input.contains("Killed: nix.")
+            && !turn.input.contains("bad name"),
+        "{}",
+        turn.input
+    );
+    runner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, turn.upto))
+        .unwrap();
+    // as a remote runner's park into a queue host still at 22: the claim's text names nothing
+    pg.sql()
+        .batch_execute("DROP FUNCTION continue_after(text, int8, text)")
+        .unwrap();
+    s.send(&id, "go on").unwrap();
+    assert_eq!(killed(&mut runner), [(Status::Waiting, "turn_memory_kill")]);
+    assert_eq!(all_due(&pg, &mut owner), [(Status::Queued, "wake")]);
+    let (_, _, turn) = started(&mut runner);
+    assert!(
+        turn.input
+            .starts_with("Your last turn ended in an error after the kernel's OOM killer")
+            && !turn.input.contains("Killed:"),
+        "{}",
+        turn.input
+    );
+    let metrics = owner.metrics().unwrap();
+    assert!(
+        metrics.lines().any(|l| l
+            == "exec_pool_session_turns_total{host=\"msi-ms7758\",reason=\"turn_memory_kill\"} 2"),
+        "{metrics}"
+    );
 }
 
 /// Makes every unread inbox row due now and runs a reconcile: the changes it made.

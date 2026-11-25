@@ -165,6 +165,8 @@ mod tests {
             wake: None,
             upto: None,
             drained: false,
+            oom_kills: None,
+            oom_victims: Vec::new(),
             container_active: true,
             stdout_tail: String::new(),
             stderr_tail: String::new(),

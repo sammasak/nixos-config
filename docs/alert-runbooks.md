@@ -334,6 +334,21 @@ would not see it.
 Rollback: none; push the dock's work by hand (or archive it), remove the dock's `dock-busy` mark and the slot's
 quarantine marker, then send the session.
 
+## ExecPoolSlotMemoryKills
+
+Fires: the kernel's OOM killer killed two or more processes in the execution pool slots on `node` within 2 hours
+(`exec_pool_memory_kills_total{slot}`, each slot's exec helper's textfile, from the slot's `memory.events`). The slots
+share one limit, the `environments.slice` MemoryMax (`homelab.execPool` hosts' `services.devEnvironments.pool.memory`),
+and the kernel kills the largest process in the slice, often a nix eval or build of a host toplevel at 2 to 3 GiB.
+The task unit runs with `OOMPolicy=continue`, so only that process dies and the agent sees its command killed; a turn
+that still ends in an error parks as `turn_memory_kill`, and its continue names what was killed.
+First: on `node`, `journalctl -k -g oom-kill --since -2h`: `task=` is the process, `task_memcg` its slot. `exec-pool
+list` shows the sessions parked `turn_memory_kill`. Too many heavy jobs at once (four sessions each evaluating a host)
+is the usual cause: tell those sessions to run it one at a time, or wait for the others.
+Do not: give a slot its own MemoryMax or MemoryHigh: below the slice it kills or stalls a build the pool had room for
+(modules/workers/core.nix, the slice's settings).
+Rollback: none; the increase ages out of the 2 hours once the kills stop.
+
 ## ExecPoolPrepareFailing
 
 Fires: three or more runs on `node` failed before their agent started at the same `step` within an hour, for 5
@@ -349,9 +364,9 @@ Rollback: none; the increase ages out of the hour once prepares succeed.
 
 ## ExecPoolSessionStalled
 
-Fires: a session last run on `host` has waited for 5 minutes after a turn that parked as `reason` (`turn_error` or
-`turn_timeout`) with no automatic continue left and nothing in its inbox (`exec_pool_sessions_stalled`, the queue's
-textfile on acer). A turn that ends in an error gets up to three continues in a row, due 10, 30 and 90 minutes after
+Fires: a session last run on `host` has waited for 5 minutes after a turn that parked as `reason` (`turn_error`,
+`turn_memory_kill` or `turn_timeout`) with no automatic continue left and nothing in its inbox
+(`exec_pool_sessions_stalled`, the queue's textfile on acer). A turn that ends in an error gets up to three continues in a row, due 10, 30 and 90 minutes after
 it (a rate limit is not met again at once); one stopped at its time limit up to two at once, the third waits. Each
 continue is a new turn told what happened, never a replay of its last action. Errors and timeouts mixed share one
 run, at most four turns. A message starts the count again.
@@ -448,12 +463,12 @@ Rollback: `sam.claude.bulkReader.enable = false` for that host or worker (acer: 
 
 ## ShuntHookOverhead
 
-Fires: on a `shunt="on"` host or worker, Shunt's own Bash hooks (shunt-bash, shunt-spill) took over 250 ms per
+Fires: on a `shunt="on"` host or worker, Shunt's own Bash hooks (shunt-bash, shunt-spill) took over 100 ms per
 Bash call in the collector's 24 h window (`shunt_hook_time_ms` over `shunt_bash_calls`), over at least 50 calls, for
 an hour. shunt-read runs per Read, not per Bash call, and bulk-read's child replaces a read: neither is counted. The off side's
 comparable is validate-bash's time per call (`shunt_hook_time_ms{hook="validate-bash"}`), which runs on or off, on
-the Agent harnesses dashboard; a host that is slow on both sides is load, not Shunt. 250 ms is a starting bound, to be
-set from the first day's readings.
+the Agent harnesses dashboard; a host that is slow on both sides is load, not Shunt. The bound is 100 ms: on 25 Nov 2026 the hooks
+took about 10 ms per call (peak 80 ms, on pool1 under 50 calls), and validate-bash 24 to 95 ms.
 First: the hooks' p95 in the alert's query, then the slowest records without any content:
 `jq -c 'select(.hook | startswith("shunt-")) | {ts, hook, result, duration_ms}' .local/state/claude-hooks/$(date -u +%F).jsonl | sort -t: -k6 -n | tail`
 in the home it reads.
