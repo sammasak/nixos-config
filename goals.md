@@ -151,9 +151,17 @@ failure retried by hand today (the record says `failed=land`).
    pool/cli-f562005cb177dad6: pool-merge-check evaluates under the heavy lock and then the light one, and builds under
    the heavy one alone (live on merge, no deploy). acer-swift's deploy adds `homelab_guest_memory_bytes{worker}`,
    `_peak_bytes` and the slice's current and limit, every minute; the runbook has the slot's Loki query. Signal:
-   `exec_pool_memory_kills_total` flat on acer over a day of merges. Follow-ups: evaluations outside both locks still
-   share the slice (a devenv shell's evaluation, an agent's own `nix eval` or `nix build` of a host or check; the
-   prompt or a wrapper could send them through the light lock); acer's 7G stays (15 GiB, ollama 4G).
+   `exec_pool_memory_kills_total` flat on acer over a day of merges. Fixed on pool/cli-406f00699b51d8ad (live after
+   acer's deploy): in a slot `nix` eval, build, flake, path-info and derivation run under the light lock, and `devenv`
+   evaluates under it (its eval, build, info, search and direnv-export whole; shell, tasks, test, up and processes
+   warm its eval cache with `shell -- true` under the lock, then run unlocked: 85 s and 1.2 GiB cold, 1 s warm), so a
+   task never holds light while it takes heavy; pool-merge-check and the push evaluation set `WORK_LOCKS_HELD=1` so
+   their nix skips it. Reading, 25 Nov 21:27Z, before that deploy: kills over 24 h pool1 5, pool2 1, pool3 2 (pool1's
+   last about 21:17Z, after PR #830's merge), msi 0; `max_over_time(homelab_guest_memory_peak_bytes[1d])` pool1 5.3
+   GiB, pool2 1.8, pool3 5.4. Signal: the counter flat on acer for a day after the deploy. Follow-ups: a slot's `nix
+   build` holds light through its compile, so another slot's push waits on it (900 s, then fails); `nix-build`,
+   `nix-instantiate` and a global option with a value before the subcommand (`nix --option k v eval`) are not
+   locked; acer's 7G stays (15 GiB, ollama 4G).
 7. msi's `ownRefsOnly` push filter (PR #805) is live only after the msi deploy; read acer's push filter journal (one
    `passed`, one `refused`) before it.
 

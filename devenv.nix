@@ -921,7 +921,7 @@ let
         util-linux
       ])
       ''
-        GC_FREE_SPACE_DIVISOR=16 flock -o -w 900 /run/work-locks/light-work.lock \
+        WORK_LOCKS_HELD=1 GC_FREE_SPACE_DIVISOR=16 flock -o -w 900 /run/work-locks/light-work.lock \
           nix flake show --json --all-systems --no-write-lock-file >/dev/null
       '';
   heavyLock = pkgs.callPackage ./pkgs/heavy-lock/package.nix { };

@@ -91,9 +91,51 @@ in
 
     services.devEnvironments.guestModules = [
       (
-        { devEnvironment, ... }:
+        {
+          devEnvironment,
+          config,
+          pkgs,
+          ...
+        }:
+        let
+          # The slots share one environments.slice (#827): a task's own evaluation takes the light-work lane the push
+          # hook's takes. A caller already holding its locks sets WORK_LOCKS_HELD=1 (pool_merge_check.py), or its
+          # nix would wait on its own light hold.
+          lane =
+            name: real: whole: warm:
+            lib.hiPrio (
+              pkgs.writeShellScriptBin name ''
+                light=/run/work-locks/light-work.lock
+                if [ -z "''${WORK_LOCKS_HELD:-}" ] && [ -e "$light" ]; then
+                  for a in "$@"; do
+                    case $a in
+                      ${whole}) WORK_LOCKS_HELD=1 exec ${pkgs.util-linux}/bin/flock -o -w 900 "$light" ${real} "$@" ;;
+                      ${lib.optionalString (warm != null) ''
+                        ${warm})
+                          # only the evaluation under the lock: a task run whole could take the heavy lane while
+                          # holding light, the reverse of pool-merge-check's order
+                          WORK_LOCKS_HELD=1 ${pkgs.util-linux}/bin/flock -o -w 900 "$light" ${real} shell -- true >&2 || exit
+                          break ;;
+                      ''}
+                      -*) ;;
+                      *) break ;;
+                    esac
+                  done
+                fi
+                exec ${real} "$@"
+              ''
+            );
+        in
         lib.mkIf (lib.elem devEnvironment.name slotNames) {
-          environment.systemPackages = [ poolWait ];
+          environment.systemPackages = [
+            poolWait
+            # nix develop, shell and run are left out: a long-lived program under the light hold could take heavy
+            (lane "nix" (lib.getExe config.nix.package) "eval|build|flake|path-info|derivation" null)
+            # devenv evaluates in-process and caches it: the warm `shell -- true` is the only evaluation
+            (lane "devenv" (lib.getExe pkgs.devenv) "eval|build|info|search|direnv-export"
+              "shell|tasks|test|up|processes"
+            )
+          ];
           # A slot runs task text: none of the host user's groups (wheel, kvm, input) and no sudo, whose setuid
           # wrapper is host root's in a slot without privateUsers. mkForce: core/users.nix and rootInGuest add them.
           users.users.${dev.user}.extraGroups = lib.mkForce [ ];
