@@ -134,6 +134,80 @@ let
         respond 403
       }
     '';
+  # black-pi's monitoring APIs for homelab.execPool.monitoring, read only: the query endpoints by path and method
+  # (`read` GET or POST, `get` GET alone), never an admin, write, silence or lifecycle path
+  monitoring = {
+    prometheus = {
+      listener = config.sam.fleet.listeners.prometheus;
+      port = 4105;
+      env = "PROMETHEUS_URL";
+      read = "^/api/v1/(query|query_range|series|labels|label/[A-Za-z0-9_.]+/values)$";
+      get = "^/api/v1/(rules|alerts)$";
+    };
+    alertmanager = {
+      listener = config.sam.fleet.listeners.alertmanager;
+      port = 4106;
+      env = "ALERTMANAGER_URL";
+      read = null;
+      get = "^/api/v2/alerts$";
+    };
+    # logcli reads LOKI_ADDR
+    loki = {
+      listener = config.sam.fleet.listeners.loki;
+      port = 4107;
+      env = "LOKI_ADDR";
+      read = "^/loki/api/v1/(query|query_range|series)$";
+      get = "^/loki/api/v1/(labels|label/[A-Za-z0-9_.]+/values)$";
+    };
+  };
+  monitoringFrom = lib.all (m: lib.elem hostName m.listener.from) (lib.attrValues monitoring);
+  # Caddy matches the decoded path and the upstream reads the raw one: an escape, dot segment or doubled slash in the
+  # path is refused. The query string is passed as it is.
+  monitoringSite =
+    m:
+    let
+      proxy = ''
+        reverse_proxy ${m.listener.url} {
+          header_up Host {upstream_hostport}
+          header_up -Authorization
+          header_up -Cookie
+          # black-pi serves Grafana and alerting from the same Pi: a slot's query is cut at 60 s, which cancels it
+          # there, and at most two run at once per slot and service
+          transport http {
+            response_header_timeout 60s
+            max_conns_per_host 2
+          }
+        }
+      '';
+    in
+    ''
+      @odd vars_regexp {http.request.orig_uri} ^[^?]*(%|//|\\|/\.\.?(/|\?|$))
+      handle @odd {
+        respond 403
+      }
+      request_body {
+        max_size 1MiB
+      }
+      ${lib.optionalString (m.read != null) ''
+        @read {
+          method GET POST
+          path_regexp ${m.read}
+        }
+        handle @read {
+          ${proxy}
+        }
+      ''}
+      @get {
+        method GET
+        path_regexp ${m.get}
+      }
+      handle @get {
+        ${proxy}
+      }
+      handle {
+        respond 403
+      }
+    '';
   unsigned = ''
     reverse_proxy https://github.com {
       header_up Host {upstream_hostport}
@@ -407,6 +481,11 @@ let
         example = "/run/exec-pool-runner/pool1/manifest.json";
         description = "A host file whose JSON `.task.id` names the instance's task: its git pushes then update only `refs/heads/pool/<id>` and `refs/pool-wip/<id>` (pkgs/exec-pool-push-filter), and with no such file none. Null, a push may update any ref of a listed repository.";
       };
+    };
+    options.egress.monitoring = mkOption {
+      type = types.bool;
+      default = false;
+      description = "Read-only query access to black-pi's Prometheus, Alertmanager and Loki through the host's proxy, which holds the routes to sam.fleet.listeners.{prometheus,alertmanager,loki}; this host must be in each one's `from`.";
     };
     options.headlessAgents = mkOption {
       type = types.listOf (
@@ -707,6 +786,14 @@ in
               '';
             };
         };
+      }
+      // lib.mapAttrs (_: m: {
+        for = i: i.egress.monitoring;
+        site = _: monitoringSite m;
+        inherit (m) port;
+        guest.env.${m.env} = "http://127.0.0.1:${toString m.port}";
+      }) monitoring
+      // {
         # A path to the host's relay, which adds the token; the guest's Claude and Codex send to the same 127.0.0.1:4319.
         otlp = {
           for = i: i.telemetry;
@@ -849,6 +936,10 @@ in
       {
         assertion = ghServes -> lib.any onGithub (lib.attrValues dev.instances);
         message = "sam.workers: this host serves sam.fleet.listeners.github-egress, whose token its proxy loads only for an instance of its own with egress.github.repos (homelab.execPool.repos).";
+      }
+      {
+        assertion = monitoringFrom || !lib.any (i: i.egress.monitoring) (lib.attrValues dev.instances);
+        message = "sam.workers: an instance with egress.monitoring reads black-pi's Prometheus, Alertmanager and Loki from this host's address, which sam.fleet.listeners.{prometheus,alertmanager,loki}.from must each admit.";
       }
       {
         assertion = profile.nativeOtel || !lib.any (i: i.telemetry) (lib.attrValues dev.instances);

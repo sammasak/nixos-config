@@ -63,6 +63,7 @@ in
       telemetry = config.sam.profile.nativeOtel && cfg.agents != [ ];
       headlessAgents = cfg.agents;
       egress.github.repos = cfg.repos;
+      egress.monitoring = cfg.monitoring;
       # the runner's runtime directory (exec-pool-runner.nix)
       egress.github.ownRefs = lib.mkIf cfg.ownRefsOnly "/run/exec-pool-runner/${n}/manifest.json";
       sessionDock = true;

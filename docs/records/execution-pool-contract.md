@@ -385,6 +385,21 @@ A park's own time (the agent's exit to the settle) is not
 measured: no exit time reaches the queue. Wake latency starts when a row is due: when it was sent, or a timer's
 `due_at`.
 
+### Reading monitoring from a slot
+
+On a host with `homelab.execPool.monitoring` (acer now), a slot queries black-pi's Prometheus, Alertmanager and Loki
+read only, through its own egress proxy (`modules/workers/default.nix`); the slot holds no credential. The guest's
+`PROMETHEUS_URL`, `ALERTMANAGER_URL` and `LOKI_ADDR` name the loopback ports. Prometheus passes GET or POST
+`/api/v1/query`, `query_range`, `series`, `labels` and `label/NAME/values`, GET `/api/v1/rules` and `alerts`;
+Alertmanager GET `/api/v2/alerts`; Loki GET or POST `/loki/api/v1/query`, `query_range` and `series`, GET `labels` and
+`label/NAME/values`. A request gets 60 s and two run at once per slot and service, as black-pi is one Pi. Anything else (admin, writes, silences, reloads, a path with an escape or dot segment) is 403.
+
+```sh
+curl -sG "$PROMETHEUS_URL/api/v1/query" --data-urlencode 'query=ALERTS{alertstate="firing"}'
+curl -s "$ALERTMANAGER_URL/api/v2/alerts?active=true"
+curl -sG "$LOKI_ADDR/loki/api/v1/query_range" --data-urlencode 'query={job="host-journal", host="acer-swift"} |= "error"' --data-urlencode 'since=1h'
+```
+
 ## How work is dispatched
 
 The Coordinator hands out work only as pool sessions; there are no Herdr worker panes to hand to. On lenovo the
