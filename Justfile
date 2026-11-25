@@ -60,7 +60,8 @@ audit-candidate HOST=host TARGET=(if HOST == host { "local" } else { HOST }):
 # scripts/post-deploy-check.sh, tests/post-deploy-check-vm.nix, scripts/test-deploy-recipes.py). It also lists
 # condition-skipped units without failing. It rolls nothing back, and a host
 # degraded for an unrelated reason fails every deploy until fixed.
-# A pool host (one with exec-pool-drain, modules/homelab/exec-pool-runner.nix) is drained first: its runners stop
+# A pool host (one with exec-pool-drain, modules/homelab/exec-pool-runner.nix) is drained once its toplevel is built
+# where it builds (system-checks.sh), so a long build keeps no host from claiming: its runners stop
 # claiming and park their running session turns, which continue on another host at once or here after the deploy;
 # the recipe waits up to 15 minutes for its helpers to end, then deploys anyway, and clears the drain once deploy-rs
 # returns, whatever it returned (an exit or Ctrl-C too).
@@ -83,7 +84,7 @@ deploy HOST:
       lock=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/deploy-{{HOST}}.lock; exec {held}<>"$lock"; \
       flock -n "$held" || { holder=$(cat "$lock"); echo "deploy: refused, {{HOST}} is being deployed already (${holder:-holder unknown}); not queued, rerun when it ends" >&2; rec locked; exit 1; }; \
       echo "pid $$, $sha, since $(date +%T)" >"$lock"; \
-      scripts/system-checks.sh {{HOST}} {{memcap}} || { c=$?; rec checks-failed; exit "$c"; }; \
+      SYSTEM_CHECKS_TOPLEVEL=1 scripts/system-checks.sh {{HOST}} {{memcap}} || { c=$?; rec checks-failed; exit "$c"; }; \
       target=$(nix eval --raw .#deploy.nodes.{{HOST}}.hostname) || target=""; \
       if [ -n "$target" ] && timeout 60 ssh -o StrictHostKeyChecking=yes "deploy@$target" command -v exec-pool-drain >/dev/null 2>&1; then \
         drained=1; echo "deploy: draining the execution pool on {{HOST}}: no claims, running session turns park" >&2; \

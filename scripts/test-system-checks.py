@@ -2,7 +2,8 @@
 """scripts/system-checks.sh (just checks, run first by deploy and dry-activate) against stub nix, nix-store, ssh and
 systemd-run on PATH: it lists each check as built or substituted on the build host, and it refuses, exiting non-zero
 before any later step, an empty check list, a check that is not an input of the toplevel, an unreachable build host,
-a check that fails to build and a check that is still not valid after the build."""
+a check that fails to build and a check that is still not valid after the build. With SYSTEM_CHECKS_TOPLEVEL=1 (deploy)
+it then realises the toplevel on the same host."""
 import json
 import os
 import pathlib
@@ -69,6 +70,16 @@ rc, out, log = run(remote=False, info={CHECK["out"]: {"ultimate": False, "signat
 check(rc == 0 and "already valid (substituted, signed by acer-swift-store-1 earlier)" in out and "ssh" not in log
       and "nix copy" not in log and "nix build" in log,
       f"a local build host builds here, runs no ssh or copy, and names the signer ({out.strip()})")
+
+rc, out, log = run(SYSTEM_CHECKS_TOPLEVEL="1")
+built = [line for line in log.splitlines() if line.startswith("ssh ") and "nix build" in line]
+check(rc == 0 and len(built) == 2 and f"{TOP}\\^out" in built[-1]
+      and f"nix copy --derivation --to ssh-ng://deploy@target {TOP}" in log,
+      f"SYSTEM_CHECKS_TOPLEVEL=1 copies the toplevel to the build host and realises it there after the checks ({built})")
+rc, out, log = run()
+check(TOP not in log.replace(f"nix derivation show {TOP}", ""), "without it the toplevel is neither copied nor built")
+rc, out, log = run(SYSTEM_CHECKS_TOPLEVEL="1", FAIL_BUILD="1")
+check(rc != 0 and f"{TOP}^out" not in log, f"a failing check stops it before the toplevel is built (rc {rc})")
 
 rc, out, log = run(checks=())
 check(rc != 0 and "declares no system.checks" in out and "nix copy" not in log and "nix build" not in log,

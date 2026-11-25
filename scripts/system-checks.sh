@@ -4,7 +4,8 @@
 # serves with its own key, so a signature names the store it came from, not the builder. A toplevel that is already valid or
 # substitutable is fetched without its build inputs, so otherwise no check of a deploy need run or show for that host.
 # Usage: scripts/system-checks.sh HOST [systemd-run property...] (the Justfile passes its memcap). Exits non-zero if a
-# check is not a toplevel input or fails.
+# check is not a toplevel input or fails. SYSTEM_CHECKS_TOPLEVEL=1 (deploy) then realises the toplevel there too, so a
+# pool host's drain starts after the long build, not before it, and deploy-rs finds it built.
 set -euo pipefail
 
 host=${1:?usage: system-checks.sh HOST [systemd-run property...]}
@@ -38,6 +39,7 @@ if [ "$(jq -r .remoteBuild <<<"$node")" = true ]; then
   export NIX_SSHOPTS="-o StrictHostKeyChecking=yes"
   on() { ssh -o StrictHostKeyChecking=yes "deploy@${where}" "$(printf '%q ' "$@")"; }
   nix copy --derivation --to "ssh-ng://deploy@${where}" "${drvs[@]}"
+  [ "${SYSTEM_CHECKS_TOPLEVEL:-}" != 1 ] || nix copy --derivation --to "ssh-ng://deploy@${where}" "$top"
 else
   where=$(uname -n)
   on() { "$@"; }
@@ -61,3 +63,8 @@ for i in "${!outs[@]}"; do
   case $how in already*) status=already-valid ;; built*) status=built ;; *) status=substituted ;; esac
   "$(dirname "$0")/../pkgs/platform-record/platform_record.py" checks-run node="$host" check="${names[$i]}" status="$status"
 done
+
+if [ "${SYSTEM_CHECKS_TOPLEVEL:-}" = 1 ]; then
+  echo "system-checks: realising ${host}'s toplevel on ${where}"
+  on nix build --no-link "${top}^out"
+fi
