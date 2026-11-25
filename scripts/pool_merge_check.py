@@ -11,6 +11,8 @@ A path maps to checks only where the gate's history shows what it can break (goa
   pkgs/exec-pool/              its package build (crate tests, clippy, rustfmt) and the evaluation of the pool's hosts;
                                a migration also its numbering, one name per number and no gap
   flake.lock                   every host's evaluation and scripts/test-deploy-recipes.py (private inputs over ssh)
+  flake.nix, flake-modules/    every host's evaluation and scripts/test-flake-output-kinds.py: a new output kind fails
+                               the gate's nixos-flake-check step only after every output evaluated
   any other path               every host's evaluation, as before: a NixOS assertion (sam.memory's budget among them)
                                runs only when a host's toplevel is evaluated
 and each pkgs/<dir> with a changed file builds as `pkgsDir.<dir>` (flake-modules/pkgs-dir.nix). One nix process per
@@ -85,6 +87,9 @@ def plan(paths: list[str], hosts: list[str], pkgdirs: list[str]) -> list[Check]:
             want.update(Check("eval", h) for h in POOL_HOSTS if h in hosts)
             if p.startswith(MIGRATIONS):
                 want.add(Check("migrations", MIGRATIONS.rstrip("/")))
+        elif p == "flake.nix" or p.startswith("flake-modules/") or p == "scripts/flake-output-kinds.json":
+            every_host = True
+            want.add(Check("script", "scripts/test-flake-output-kinds.py"))
         elif p == "flake.lock":
             every_host = True
             want.add(Check("script", "scripts/test-deploy-recipes.py"))

@@ -1,6 +1,7 @@
 """The gate's two step decisions (#502), taken from devenv.nix as written and run without Nix: nixos-flake-check's
 `decide` (which check is built, left as unchanged since main, or left to its own host's gate) and nixos-qa's
 `side_by_side` (steps run at once, each printed whole and recorded, the gate failing on any one of them)."""
+import json
 import os
 import pathlib
 import re
@@ -33,6 +34,7 @@ if not gate_heavy or not heavy:
     sys.exit("FAIL (scripts/test-gate-steps.py): gateHeavy, or the flake check's heavy='${gateHeavy}', not found in devenv.nix")
 check("GATE_HEAVY='${gateHeavy}'" in src and "-cuda" not in src.replace(gate_heavy.group(0), ""),
       "the heavy pattern has one definition (gateHeavy): the flake check and ollama-gpu-test's GATE_HEAVY both read it")
+KINDS = json.dumps(json.loads((ROOT / "scripts/flake-output-kinds.json").read_text()), separators=(",", ":"))
 DECIDE = f"heavy='{gate_heavy.group(1)}'\n" + function("decide")
 
 
@@ -140,7 +142,8 @@ for mode, dryrun in dryruns.items():
                                f"open({str(calls)!r}, 'a').write(' '.join(a) + '\\n')\n"
                                f"names = {pair_names if mode.startswith('pair') else names!r}\n"
                                "attr = next((x[2:] for x in a if x.startswith('.#')), '')\n"
-                               "if a[:2] == ['flake', 'show']: print(json.dumps({k: 0 for k in ['checks','deploy','formatter','nixosConfigurations','overlays','packages','templates']}))\n"
+                               "if a[:2] == ['flake', 'show']: print(json.dumps({k: 0 for k in ['checks','deploy','formatter','legacyPackages','nixosConfigurations','overlays','packages','templates']}))\n"
+                               "elif attr == 'legacyPackages': print('{}')\n"
                                "elif '--expr' in a: print('x86_64-linux', end='')\n"
                                "elif any('? driver' in x for x in a): print(json.dumps([]))\n"
                                "elif 'builtins.attrNames' in a: print(json.dumps(names.get(attr, [])))\n"
@@ -163,7 +166,7 @@ for mode, dryrun in dryruns.items():
         for f in ("nix", "nix-store", "uname", "record"):
             (t / f).chmod(0o755)
         body = textwrap.dedent(fc.group(1)).replace("${pkgs.coreutils}/bin/uname", str(t / "uname"))
-        body = body.replace("${lib.getExe record}", str(t / "record")).replace("${gateHeavy}", gate_heavy.group(1)).replace("''$", "$")
+        body = body.replace("${lib.getExe record}", str(t / "record")).replace("${gateHeavy}", gate_heavy.group(1)).replace("${flakeKinds}", KINDS).replace("''$", "$")
         r = subprocess.run(["bash", "-euo", "pipefail", "-c", body], capture_output=True, text=True, cwd=t,
                            env={**os.environ, "PATH": f"{t}:{os.environ['PATH']}", "NIXOS_QA_DEFERRED": str(deferred),
                                 "NIXOS_QA_TOPLEVELS": str(t / "toplevels"), "NIXOS_QA_HEAD": "0123abc", **({"NIXOS_FLAKE_CHECK_DRY": "1"} if mode == "ownerdry" else {})})
@@ -281,7 +284,8 @@ for mode, (dryrun, build_rc) in plain_runs.items():
         (t / "nix").write_text("#!/usr/bin/env python3\nimport json, sys\na = sys.argv[1:]\n"
                                f"names = {plain_names!r}\n"
                                "attr = next((x[2:] for x in a if x.startswith('.#')), '')\n"
-                               "if a[:2] == ['flake', 'show']: print(json.dumps({k: 0 for k in ['checks','deploy','formatter','nixosConfigurations','overlays','packages','templates']}))\n"
+                               "if a[:2] == ['flake', 'show']: print(json.dumps({k: 0 for k in ['checks','deploy','formatter','legacyPackages','nixosConfigurations','overlays','packages','templates']}))\n"
+                               "elif attr == 'legacyPackages': print('{}')\n"
                                "elif '--expr' in a: print('x86_64-linux', end='')\n"
                                "elif any('? driver' in x for x in a): print(json.dumps([]))\n"
                                "elif 'builtins.attrNames' in a: print(json.dumps(names.get(attr, [])))\n"
@@ -296,7 +300,7 @@ for mode, (dryrun, build_rc) in plain_runs.items():
         for f in ("nix", "nix-store", "uname", "record"):
             (t / f).chmod(0o755)
         body = textwrap.dedent(fc.group(1)).replace("${pkgs.coreutils}/bin/uname", str(t / "uname"))
-        body = body.replace("${lib.getExe record}", str(t / "record")).replace("${gateHeavy}", gate_heavy.group(1)).replace("''$", "$")
+        body = body.replace("${lib.getExe record}", str(t / "record")).replace("${gateHeavy}", gate_heavy.group(1)).replace("${flakeKinds}", KINDS).replace("''$", "$")
         r = subprocess.run(["bash", "-euo", "pipefail", "-c", body], capture_output=True, text=True, cwd=t,
                            env={**os.environ, "PATH": f"{t}:{os.environ['PATH']}", "NIXOS_QA_HEAD": "0123abc"})
         lines = rec.read_text().splitlines() if rec.exists() else []

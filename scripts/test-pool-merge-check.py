@@ -54,6 +54,10 @@ check(("migrations", "pkgs/exec-pool/migrations") in m, "an exec-pool migration:
 f = got("flake.lock")
 check(evals(f) == set(HOSTS) and ("script", "scripts/test-deploy-recipes.py") in f,
       "flake.lock: every host and the private-input test")
+for path in ("flake.nix", "flake-modules/pkgs-dir.nix", "scripts/flake-output-kinds.json"):
+    k = got(path)
+    check(evals(k) == set(HOSTS) and ("script", "scripts/test-flake-output-kinds.py") in k,
+          f"{path}: every host and the output-kinds test")
 s = got("pkgs/scheduled-gate/scheduled_gate.py")
 check(("build", "scheduled-gate") in s and evals(s) == set(HOSTS), "another package: its build and every host")
 check(evals(got("pkgs/patches/x.patch")) == set(HOSTS) and not any(k == "build" for k, _ in got("pkgs/patches/x.patch")),
