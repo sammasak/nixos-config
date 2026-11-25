@@ -190,12 +190,13 @@ benchmark requirements: #776; epic: #491).
 | 624-g | Live delivery receipts | read 24 Nov (comment on #624): NodeOOMKill and the synthetic alert reached ntfy and resolved; no blindness alert has fired yet | |
 | 624-h | Query and runbook in the ntfy page | merged, live: Alertmanager posts straight to ntfy, alert-bridge removed | #672, #680 |
 | 624-i | Alerts red with nothing to do (25 Nov): DeployRolledBack per host until a good deploy of it; EscapeFound drops a reapplied revert (the live one, `78f4ee80`, reapplied as `ab8acd36`), one marked `Escape: no` and closed escape issues; the scheduled gate retries a red head once; RetroDueStepFailsRepeat clears on a scheduled green after the last failure; each text names its command | branch `pool/cli-273036d46c7d3230`; needs lenovo (collector) and acer (scheduled gate), rules on black-pi | |
+| 624-j | Audit and cut (25 Nov, #600 comment): 16 rules deleted that could not fire here (RAID, bonding, scrape limits, Alertmanager cluster), could reach no one (Prometheus not connected to Alertmanager; lenovo's watchdog covers it) or duplicated a page (TargetsMostlyDown, HealthScoreLow, the some-Alertmanagers twin), plus the never-notifying NodeCPUHighUsage, InfoInhibitor and NodeSensorNearCritical; UnitOOMKilled inhibits NodeOOMKill on the same node; TargetDown has its own runbook and query text; five host texts name their command. HostExpectedOff was already a silent inhibitor (route test added). The 14-day firing history is unknown from a slot | branch `pool/cli-f7637116415e4bb0`; deploy black-pi | |
 
 Open for #624, in pick-up order: after 624-i deploys, read the live list and confirm each alert cleared or names
 its command; the failing check behind the live ScheduledGateRed and RetroDueStepFailsRepeat (two series) is unknown
 from a pool slot, which reaches neither Prometheus nor Alertmanager: read it on acer (`journalctl -u scheduled-gate
 -n 200`) and fix it in the repo; an intentional revert that is never reapplied still counts for 24 h (no after-the-fact
-acknowledgement); `query` on TargetDown and the llm-gateway rules.
+acknowledgement); after 624-j deploys, read `count_over_time(ALERTS{alertstate="firing"}[14d])` by alertname on black-pi and cut what still never fired; the texts with no command: PrLeadTimeHigh, ReviewFirstPassLow, GateFailRateHigh, the llm-gateway pair, ShuntDelegationFailing, ShuntSilent, ClaudeCompactionLoop and the upstream node, Prometheus and Alertmanager rules.
 
 ### #625 Shunt metrics
 

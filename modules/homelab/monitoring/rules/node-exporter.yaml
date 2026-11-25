@@ -1,6 +1,7 @@
-# kube-prometheus-stack 85.0.3's node-exporter mixin, less the two systemd-unit alerts: a failed unit shows on the
-# Hosts dashboard (prometheus.nix keeps its unit_state series) and pages nobody. NodeNetworkInterfaceFlapping's
-# description names instance, not namespace/pod.
+# kube-prometheus-stack 85.0.3's node-exporter mixin, less the two systemd-unit alerts (NodeSystemdUnitFailed in
+# homelab.yaml pages a failed unit), the RAID and bonding ones (no host has an md array or a bond, so they could never
+# fire) and NodeCPUHighUsage (severity info: routed to no one). NodeNetworkInterfaceFlapping's description names
+# instance, not namespace/pod.
 # Each alert's query (docs/alert-runbooks.md) is a copy of its expr: change both.
 groups:
   - name: node-exporter.rules
@@ -351,25 +352,6 @@ groups:
         for: 10m
         labels:
           severity: warning
-      - alert: NodeRAIDDegraded
-        annotations:
-          description: RAID array '{{ $labels.device }}' at {{ $labels.instance }} is in degraded state due to one or more disks failures. Number of spare drives is insufficient to fix issue automatically.
-          query: node_md_disks_required{job="node-exporter",device=~"(/dev/)?(mmcblk.p.+|nvme.+|rbd.+|sd.+|vd.+|xvd.+|dm-.+|md.+|dasd.+)"} - ignoring (state) (node_md_disks{state="active",job="node-exporter",device=~"(/dev/)?(mmcblk.p.+|nvme.+|rbd.+|sd.+|vd.+|xvd.+|dm-.+|md.+|dasd.+)"}) > 0
-          runbook_url: https://runbooks.prometheus-operator.dev/runbooks/node/noderaiddegraded
-          summary: RAID Array is degraded.
-        expr: node_md_disks_required{job="node-exporter",device=~"(/dev/)?(mmcblk.p.+|nvme.+|rbd.+|sd.+|vd.+|xvd.+|dm-.+|md.+|dasd.+)"} - ignoring (state) (node_md_disks{state="active",job="node-exporter",device=~"(/dev/)?(mmcblk.p.+|nvme.+|rbd.+|sd.+|vd.+|xvd.+|dm-.+|md.+|dasd.+)"}) > 0
-        for: 15m
-        labels:
-          severity: critical
-      - alert: NodeRAIDDiskFailure
-        annotations:
-          description: At least one device in RAID array at {{ $labels.instance }} failed. Array '{{ $labels.device }}' needs attention and possibly a disk swap.
-          query: node_md_disks{state="failed",job="node-exporter",device=~"(/dev/)?(mmcblk.p.+|nvme.+|rbd.+|sd.+|vd.+|xvd.+|dm-.+|md.+|dasd.+)"} > 0
-          runbook_url: https://runbooks.prometheus-operator.dev/runbooks/node/noderaiddiskfailure
-          summary: Failed device in RAID array.
-        expr: node_md_disks{state="failed",job="node-exporter",device=~"(/dev/)?(mmcblk.p.+|nvme.+|rbd.+|sd.+|vd.+|xvd.+|dm-.+|md.+|dasd.+)"} > 0
-        labels:
-          severity: warning
       - alert: NodeFileDescriptorLimit
         annotations:
           description: File descriptors limit at {{ $labels.instance }} is currently at {{ printf "%.2f" $value }}%.
@@ -402,18 +384,6 @@ groups:
         for: 15m
         labels:
           severity: critical
-      - alert: NodeCPUHighUsage
-        annotations:
-          description: 'CPU usage at {{ $labels.instance }} has been above 90% for the last 15 minutes, is currently at {{ printf "%.2f" $value }}%.
-
-'
-          query: sum without(mode) (avg without (cpu) (rate(node_cpu_seconds_total{job="node-exporter", mode!~"idle|iowait"}[2m]))) * 100 > 90
-          runbook_url: https://runbooks.prometheus-operator.dev/runbooks/node/nodecpuhighusage
-          summary: High CPU usage.
-        expr: sum without(mode) (avg without (cpu) (rate(node_cpu_seconds_total{job="node-exporter", mode!~"idle|iowait"}[2m]))) * 100 > 90
-        for: 15m
-        labels:
-          severity: info
       - alert: NodeSystemSaturation
         annotations:
           description: 'System load per core at {{ $labels.instance }} has been above 2 for the last 15 minutes, is currently at {{ printf "%.2f" $value }}.
@@ -470,16 +440,6 @@ groups:
           summary: Disk IO queue is high.
         expr: rate(node_disk_io_time_weighted_seconds_total{job="node-exporter", device=~"(/dev/)?(mmcblk.p.+|nvme.+|rbd.+|sd.+|vd.+|xvd.+|dm-.+|md.+|dasd.+)"}[5m]) > 10
         for: 30m
-        labels:
-          severity: warning
-      - alert: NodeBondingDegraded
-        annotations:
-          description: Bonding interface {{ $labels.master }} on {{ $labels.instance }} is in degraded state due to one or more slave failures.
-          query: (node_bonding_slaves{job="node-exporter"} - node_bonding_active{job="node-exporter"}) != 0
-          runbook_url: https://runbooks.prometheus-operator.dev/runbooks/node/nodebondingdegraded
-          summary: Bonding interface is degraded.
-        expr: (node_bonding_slaves{job="node-exporter"} - node_bonding_active{job="node-exporter"}) != 0
-        for: 5m
         labels:
           severity: warning
   - name: node-network

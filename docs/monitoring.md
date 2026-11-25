@@ -79,9 +79,10 @@ See [the measured improvement cycle](monitoring-improvement-cycle.md) for the fl
   - `host_worker:claude_code_auto_compactions:count1m{host,worker}`: Claude Code's auto compactions per minute (#626),
     each minute counted once: a sum over a day is a lower bound (late lines, minutes Loki was down).
     ClaudeCompactionLoop (`homelab.yaml`) fires when one host or worker sums over 5 in an hour.
-  - UnitOOMKilled (warning): systemd logged an OOM kill in a system unit, named in `oom_unit`.
-- Alertmanager publishes every alert to lenovo's ntfy except Watchdog, InfoInhibitor, HostExpectedOff, any alert
-  labelled `notify="none"` and any `severity="info"` alert (NodeCPUHighUsage): those go to a null receiver. The shipping team's alerts are muted at night.
+  - UnitOOMKilled (warning): systemd logged an OOM kill in a system unit, named in `oom_unit`; while it fires, it
+    inhibits NodeOOMKill on the same host, so one kill pages once.
+- Alertmanager publishes every alert to lenovo's ntfy except Watchdog, HostExpectedOff, any alert labelled
+  `notify="none"` and any `severity="info"` alert (no rule sets either today): those go to a null receiver. The shipping team's alerts are muted at night.
 - HostExpectedOff marks a sleeping host that is off as planned. Inhibit rules keyed on it silence what the power-off
   causes (`alertmanager.nix`); TargetDown leaves that host's targets out itself (`homelab:node:off_as_planned`).
 - lenovo's watchdog (`cluster-watchdog.nix`) checks the pipeline from outside: Prometheus and Alertmanager ready, and
@@ -97,15 +98,14 @@ See [the measured improvement cycle](monitoring-improvement-cycle.md) for the fl
   - BackupCollectorStale (warning, 15 m): the backup-metrics scan is over 900 s old, or acer or lenovo has no `backup.prom`.
   - OtlpWritesRejected (warning, 10 m): acer's alloy-otlp answered OTLP POSTs with 4xx/5xx in every 5 min window.
   - NodeTemperatureHigh (warning, 15 m): the Pi's `cpu-thermal` zone at 85 °C or more. x86 zones page no one.
-  - NodeSensorNearCritical (warning, 15 m, `notify="none"`): an hwmon sensor within 5 °C of its own critical mark.
-    msi and lenovo reach it through every gate, so it notifies no one. It shows in the alert list, in Fleet's
-    "Alerts firing" count, and on the Hosts dashboard's hottest sensor.
   - GpuThermalThrottling (warning, 10 m): the GPU reports hardware thermal slowdown
     (`nvidia_smi_clocks_event_reasons_hw_thermal_slowdown`).
 - Each homelab and shipping alert's `runbook_url` and first diagnostic `query`: [alert-runbooks.md](alert-runbooks.md).
-- The upstream Prometheus and Alertmanager rules leave out what this deployment cannot fire: the cluster-consistency
-  and remote-write/service-discovery alerts. Assertions in `alertmanager.nix` and `prometheus.nix` keep it unclustered
-  and static, and name the rules to restore if that changes.
+- The upstream rules leave out what this deployment cannot fire or deliver: the Alertmanager cluster alerts, the
+  remote-write, service-discovery and target, label and body-size limit alerts, RAID and bonding (no host has either),
+  and the two that only say Prometheus cannot reach Alertmanager (lenovo's watchdog pages that). Assertions in
+  `alertmanager.nix` and `prometheus.nix` keep it unclustered, static and unlimited, and name the rules to restore if
+  that changes. Each rule file's header names what it leaves out.
 
 ## Build checks
 
