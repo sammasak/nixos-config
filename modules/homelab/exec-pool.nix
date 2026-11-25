@@ -16,6 +16,7 @@ let
   # peer: the role is the unit's user
   conninfo = "host=/run/postgresql dbname=exec_pool user=exec_pool";
   dir = "/var/lib/exec-pool-metrics";
+  user = config.sam.profile.username;
   # stdout whatever the exit code (exec_pool_queue_up 0 on a failure), and the unit fails with the CLI
   metrics = pkgs.writeShellApplication {
     name = "exec-pool-metrics";
@@ -162,6 +163,46 @@ in
       systemd.timers.exec-pool-metrics = {
         wantedBy = [ "timers.target" ];
         timerConfig.OnCalendar = "minutely";
+      };
+
+      # One journal line per session whose pull request merged, which the pool dashboard's merged-sessions table reads
+      # from Loki: the ids stay in the line, out of every metric label. As the owner, an exec_pool_submit client whose
+      # gh login finds the pull requests; the listing in its state directory makes each session one line.
+      systemd.services.exec-pool-session-report = {
+        description = "Log each execution pool session whose pull request merged, for the dashboard";
+        after = [
+          "exec-pool-migrate.service"
+          "network-online.target"
+        ];
+        requires = [ "exec-pool-migrate.service" ];
+        wants = [ "network-online.target" ];
+        path = [ pkgs.gh ];
+        environment = {
+          HOME = "/home/${user}";
+          GH_NO_UPDATE_NOTIFIER = "1";
+          GH_PROMPT_DISABLED = "1";
+        };
+        serviceConfig = {
+          Type = "oneshot";
+          User = user;
+          ExecStart = "${lib.getExe' pkg "exec-pool"} sessions --limit 200 --report /var/lib/exec-pool-session-report/reported";
+          StateDirectory = "exec-pool-session-report";
+          # one gh call per unreported session
+          TimeoutStartSec = 600;
+          MemoryMax = "64M";
+          Nice = 10;
+          ProtectSystem = "strict";
+          ProtectHome = "read-only";
+          PrivateTmp = true;
+          NoNewPrivileges = true;
+        };
+      };
+      systemd.timers.exec-pool-session-report = {
+        wantedBy = [ "timers.target" ];
+        timerConfig = {
+          OnCalendar = "*:12,42";
+          Persistent = true;
+        };
       };
 
       # On-host only, like open-webui's: it guards against a bad write or migration, not a dead disk; lenovo pulls
