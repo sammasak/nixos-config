@@ -248,8 +248,8 @@ acknowledgement); after 624-l deploys to black-pi, read the live rule list and t
 | 625-a | Read-only check of the hook JSONL on lenovo, schema decision | done: comment on #625 | |
 | 625-1 | Collector, fixture tests, NixOS wiring (nav-metrics pattern) | merged, enabled on no host yet | #638 |
 | 625-2 | Shunt section in the agent-harness dashboard, stale and failing alerts, collector on lenovo | merged, live: collector on lenovo, rules on black-pi | #644 |
-| 625-pilot | On/off on the running system (no benchmark, owner 23 Nov) | merged, live: on for lenovo and acer's `pool1` (moved from `a1` by #759), off for acer's other slots; read a day on 25 Nov | #678, #679 |
-| 625-3 | Hook overhead: `shunt_hook_time_ms{hook}` with validate-bash as the off side's control, ms per Bash call on and off (dashboard panel), `ShuntHookOverhead` (over 250 ms per call, at least 50 calls, a starting bound) | branch `pool/cli-273036d46c7d3230`; needs lenovo and acer, rules on black-pi; set the bound from the first day's reading | |
+| 625-pilot | On/off on the running system (no benchmark, owner 23 Nov) | merged, live: on for lenovo and acer's `pool1` (moved from `a1` by #759), off for acer's other slots; read 25 Nov: hooks about 10 ms per Bash call, context kept out small (lenovo 4.5% of Bash output chars, 12k read tokens; pool1 none), cost per turn not comparable (pool1 had 1 turn). Split kept: re-read 2 Dec, at least 20 Claude turns per arm on `variant="default"`; if fewer again, Shunt on for every slot | #678, #679 |
+| 625-3 | Hook overhead: `shunt_hook_time_ms{hook}` with validate-bash as the off side's control, ms per Bash call on and off (dashboard panel), `ShuntHookOverhead` (over 100 ms per call, at least 50 calls, set from the 25 Nov reading) | live on lenovo and acer; the 100 ms bound needs black-pi | this branch |
 
 ### #646 execution pool (v0.1)
 
