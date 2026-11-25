@@ -125,7 +125,8 @@ inbox), and the old 10 minute `for:` plus textfile, scrape and `group_wait` page
 22 minute silence was most likely the rule or collector (#783, merged 05:00) not yet live; unverified, slots reach no
 Prometheus. Now `for: 5m` (about 8 minutes) and the text leads with `exec-pool send ID`. HostBehindMain: `upHours`
 2 to 6, up in a row, so a host woken behind after its planned off, or one a batch deploy reaches within hours, is not
-paged; an off host never matched (`up == 1`). Read the 14-day firing history once deployed.
+paged; an off host never matched (`up == 1`). Read the 14-day firing history once deployed. PR #797. Open: a
+second session stalling on the same host and reason is the same ExecPoolSessionStalled alert, so it pages nothing new.
 
 **Open, in pick-up order**
 
