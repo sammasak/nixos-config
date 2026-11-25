@@ -259,16 +259,17 @@ tests:
               query: 'homelab_dev_env_sessions_bytes{job="node-exporter",node="msi-ms7758"}'
               runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolsessionslarge"
 
-  # a session stalls after its third turn error at 6m: firing 5m later, well within 15 minutes, by host and reason; a
-  # timeout one on msi that a message moves within 4 minutes never fires
+  # a session stalls after its third turn error at 6m: firing 5m later, well within 15 minutes, by host, reason and
+  # session; a second one on the same host and reason at 12m fires on its own at 17m; a timeout one on msi that a
+  # message moves within 4 minutes never fires
   - interval: 1m
     input_series:
-      - series: 'exec_pool_sessions_stalled{job="node-exporter",node="acer-swift",host="acer-swift",reason="turn_error"}'
-        values: '0x5 1x30'
-      - series: 'exec_pool_sessions_stalled{job="node-exporter",node="acer-swift",host="msi-ms7758",reason="turn_timeout"}'
-        values: '0x5 1x3 0x27'
-      - series: 'exec_pool_sessions_stalled{job="node-exporter",node="acer-swift",host="msi-ms7758",reason="turn_error"}'
-        values: '0x35'
+      - series: 'exec_pool_session_stalled{job="node-exporter",node="acer-swift",host="acer-swift",reason="turn_error",task="cli-1"}'
+        values: '_x5 1x30'
+      - series: 'exec_pool_session_stalled{job="node-exporter",node="acer-swift",host="acer-swift",reason="turn_error",task="cli-2"}'
+        values: '_x11 1x24'
+      - series: 'exec_pool_session_stalled{job="node-exporter",node="acer-swift",host="msi-ms7758",reason="turn_timeout",task="cli-3"}'
+        values: '_x5 1x3 _x27'
     alert_rule_test:
       - eval_time: 10m
         alertname: ExecPoolSessionStalled
@@ -276,11 +277,35 @@ tests:
       - eval_time: 11m
         alertname: ExecPoolSessionStalled
         exp_alerts:
-          - exp_labels: {severity: warning, team: homelab, host: acer-swift, reason: turn_error}
+          - exp_labels: {severity: warning, team: homelab, host: acer-swift, reason: turn_error, task: cli-1}
             exp_annotations:
-              summary: "An execution pool session last run on acer-swift stopped after repeated turn_error turns"
-              description: "1 session(s) last run on acer-swift have waited 5 minutes after their last turn parked as turn_error with no automatic continue left, so nothing wakes them until you run exec-pool send ID --prompt TEXT. Find ID with exec-pool list (parked turn_error), read exec-pool status ID and exec-pool logs ID for what failed, fix the cause, then send it on with a prompt telling it what happened (runbook)."
-              query: 'exec_pool_sessions_stalled{job="node-exporter",host="acer-swift",reason="turn_error"} > 0'
+              summary: "Execution pool session cli-1, last run on acer-swift, stopped after repeated turn_error turns"
+              description: "Session cli-1, last run on acer-swift, has waited 5 minutes after its last turn parked as turn_error with no automatic continue left, so nothing wakes it until you run exec-pool send cli-1 --prompt TEXT. Read exec-pool status cli-1 and exec-pool logs cli-1 for what failed, fix the cause, then send it on with a prompt telling it what happened (runbook)."
+              query: 'exec_pool_session_stalled{job="node-exporter",host="acer-swift",reason="turn_error",task="cli-1"} > 0'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolsessionstalled"
+      - eval_time: 16m
+        alertname: ExecPoolSessionStalled
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, host: acer-swift, reason: turn_error, task: cli-1}
+            exp_annotations:
+              summary: "Execution pool session cli-1, last run on acer-swift, stopped after repeated turn_error turns"
+              description: "Session cli-1, last run on acer-swift, has waited 5 minutes after its last turn parked as turn_error with no automatic continue left, so nothing wakes it until you run exec-pool send cli-1 --prompt TEXT. Read exec-pool status cli-1 and exec-pool logs cli-1 for what failed, fix the cause, then send it on with a prompt telling it what happened (runbook)."
+              query: 'exec_pool_session_stalled{job="node-exporter",host="acer-swift",reason="turn_error",task="cli-1"} > 0'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolsessionstalled"
+      - eval_time: 17m
+        alertname: ExecPoolSessionStalled
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, host: acer-swift, reason: turn_error, task: cli-1}
+            exp_annotations:
+              summary: "Execution pool session cli-1, last run on acer-swift, stopped after repeated turn_error turns"
+              description: "Session cli-1, last run on acer-swift, has waited 5 minutes after its last turn parked as turn_error with no automatic continue left, so nothing wakes it until you run exec-pool send cli-1 --prompt TEXT. Read exec-pool status cli-1 and exec-pool logs cli-1 for what failed, fix the cause, then send it on with a prompt telling it what happened (runbook)."
+              query: 'exec_pool_session_stalled{job="node-exporter",host="acer-swift",reason="turn_error",task="cli-1"} > 0'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolsessionstalled"
+          - exp_labels: {severity: warning, team: homelab, host: acer-swift, reason: turn_error, task: cli-2}
+            exp_annotations:
+              summary: "Execution pool session cli-2, last run on acer-swift, stopped after repeated turn_error turns"
+              description: "Session cli-2, last run on acer-swift, has waited 5 minutes after its last turn parked as turn_error with no automatic continue left, so nothing wakes it until you run exec-pool send cli-2 --prompt TEXT. Read exec-pool status cli-2 and exec-pool logs cli-2 for what failed, fix the cause, then send it on with a prompt telling it what happened (runbook)."
+              query: 'exec_pool_session_stalled{job="node-exporter",host="acer-swift",reason="turn_error",task="cli-2"} > 0'
               runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolsessionstalled"
 
 
