@@ -166,7 +166,7 @@ benchmark requirements: #776; epic: #491).
 | 1 | Pool platform | the open findings above | a pool session for the top open finding |
 | 2 | Deploy | asus behind main | asus in its power window |
 | 3 | Alerts | 624-i fixes the alerts nobody could act on; not yet read live (pool slots reach neither Prometheus nor Alertmanager) | merge and deploy 624-i, then read the live list; a1's patch at `/var/lib/worker-archive/a1` on acer |
-| 4 | Gates | first scheduled gate red on `shunt-metrics-test` only, fixed since | read the next scheduled gate result |
+| 4 | Gates | scheduled gate red since 24 Nov on `checks.x86_64-linux.execution-pool-vm`, which failed to evaluate (slots' repos need `sam.workers.ghHostsFile`, the VM set none); fixed in branch `pool/cli-38a64f8b5b1d81f5` | merge, deploy acer (scheduled gate) and black-pi (rules), read the next scheduled gate result |
 | 5 | Live comparison | `ShuntCollectorStale` fires since the on side moved | read a day of Shunt on and off on 25 Nov, now on acer `pool1` |
 | 6 | Leftovers | one draft open | #616 (needs a physical reboot of black-pi) |
 
@@ -209,9 +209,10 @@ benchmark requirements: #776; epic: #491).
 | 624-k | Alert to investigation with no human in between: an alert switched on in `homelab.alertInvestigations.alerts` (lenovo: `NodeSystemdUnitFailed` alone) that fired 15 minutes with none open starts one read-only incident-investigator pool session per firing (at most 3 a day per name), its prompt holding what lenovo read (alerts, Prometheus, the unit's journal); its report lands on the issue `Alert: <name>` (label `alert-investigation`, one per name). `homelab_alert_investigations_total{alertname,outcome}`, failures by reason; `AlertInvestigationFailed`, `AlertInvestigationsStale`. Read-only by prompt: the proxy cannot refuse a slot's push (item 13 of the pool list), so a pushed `pool/<id>` fails the investigation | branch `pool/cli-f7ad8047dbbfdc72`; needs lenovo (trigger), rules on black-pi | #792 |
 
 Open for #624, in pick-up order: after 624-k deploys, read the first live investigation on its issue and its counters; after 624-i deploys, read the live list and confirm each alert cleared or names
-its command; the failing check behind the live ScheduledGateRed and RetroDueStepFailsRepeat (two series) is unknown
-from a pool slot, which reaches neither Prometheus nor Alertmanager: read it on acer (`journalctl -u scheduled-gate
--n 200`) and fix it in the repo; an intentional revert that is never reapplied still counts for 24 h (no after-the-fact
+its command; the failing check behind the live ScheduledGateRed and RetroDueStepFailsRepeat was
+`checks.x86_64-linux.execution-pool-vm` failing to evaluate, which wrote no check record (branch
+`pool/cli-38a64f8b5b1d81f5`: the VM fixed, an eval failure now records its check, the red series carries `check`, and
+both alerts name one rerun command, `nix build -L .#<check>` or `NIXOS_STEP=<step> devenv tasks run nixos:step`); an intentional revert that is never reapplied still counts for 24 h (no after-the-fact
 acknowledgement); after 624-j deploys, read `count_over_time(ALERTS{alertstate="firing"}[14d])` by alertname on black-pi and cut what still never fired; the texts with no command: PrLeadTimeHigh, ReviewFirstPassLow, GateFailRateHigh, the llm-gateway pair, ShuntDelegationFailing, ShuntSilent, ClaudeCompactionLoop and the upstream node, Prometheus and Alertmanager rules.
 
 ### #625 Shunt metrics

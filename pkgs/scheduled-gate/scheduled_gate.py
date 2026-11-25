@@ -35,8 +35,8 @@ METRICS: dict[str, str] = {
     "homelab_scheduled_gate_behind_since_timestamp_seconds": "When a check first saw main move past the last finished "
     "gate, 0 while it has not.",
     "homelab_scheduled_gate_seconds": "How long the last finished scheduled full gate took, its lock wait included.",
-    "homelab_scheduled_gate_red": "1 when the last finished scheduled full gate failed: its head, first failed step "
-    "and the last green head.",
+    "homelab_scheduled_gate_red": "1 when the last finished scheduled full gate failed: its head, first failed step, "
+    "the check inside it (empty for none) and the last green head.",
 }
 
 
@@ -44,13 +44,15 @@ METRICS: dict[str, str] = {
 class State:
     """The last finished run. green is the newest head a run passed on, "" before any did, green_at when that run
     started (a failure recorded while it ran is not one it fixed) and green_deferred the "step\tcheck" units it
-    deferred to their owner host; retried is set when this red head was already run again."""
+    deferred to their owner host; retried is set when this red head was already run again. check is the failed
+    step's inner check (the flake check's), "" for none."""
 
     head: str = ""
     result: str = ""
     finished: float = 0.0
     seconds: float = 0.0
     step: str = ""
+    check: str = ""
     green: str = ""
     behind_since: float = 0.0
     green_at: float = 0.0
@@ -69,9 +71,14 @@ def git(*args: str, cwd: pathlib.Path) -> str:
 def load(path: pathlib.Path) -> State:
     try:
         raw = json.loads(path.read_text())
-        return State(**{k: raw[k] for k in asdict(State()) if k in raw})
+        st = State(**{k: raw[k] for k in asdict(State()) if k in raw})
     except (OSError, ValueError, TypeError):
         return State()
+    # an older run wrote "step (check)" in step: published as is, the alerts' rerun command would not parse
+    if not st.check and st.step.endswith(")") and " (" in st.step:
+        st.step, _, rest = st.step.partition(" (")
+        st.check = rest[:-1]
+    return st
 
 
 def save(path: pathlib.Path, st: State) -> None:
@@ -100,7 +107,10 @@ def write_metrics(path: pathlib.Path, st: State, checked: float, main: str) -> N
         step, _, check = unit.partition("\t")
         values["homelab_scheduled_gate_green_deferred"].append((f'step="{label(step)}",check="{label(check)}"', 1.0))
     if st.result == "fail":
-        labels = f'head="{st.head[:12]}",step="{label(st.step)}",green="{st.green[:12] or "none"}"'
+        labels = (
+            f'head="{st.head[:12]}",step="{label(st.step)}",check="{label(st.check)}",'
+            f'green="{st.green[:12] or "none"}"'
+        )
         values["homelab_scheduled_gate_red"].append((labels, 1.0))
     lines = []
     for name, help_text in METRICS.items():
@@ -143,15 +153,14 @@ def deferred(spool: pathlib.Path, since: datetime, head: str) -> list[str]:
     ]
 
 
-def first_failed_step(spool: pathlib.Path, since: datetime, head: str) -> str:
-    """The first gate-step record of this run that failed: a check inside the flake check names its check too;
-    "unrecorded" when nixos:qa failed before its first step (a devenv evaluation error, the devenv-fresh guard): its
-    journal says why."""
+def first_failed_step(spool: pathlib.Path, since: datetime, head: str) -> tuple[str, str]:
+    """The first gate-step record of this run that failed, as (step, check): a check inside the flake check names its
+    check, "" otherwise; ("unrecorded", "") when nixos:qa failed before its first step (a devenv evaluation error, the
+    devenv-fresh guard): its journal says why."""
     for f in records(spool, since, head):
         if f.get("result") == "fail":
-            step = f.get("step", "unrecorded")
-            return f"{step} ({f['check']})" if f.get("check") else step
-    return "unrecorded"
+            return f.get("step", "unrecorded"), f.get("check", "")
+    return "unrecorded", ""
 
 
 def run(repo: str, state_dir: pathlib.Path, metrics: pathlib.Path) -> int:
@@ -193,13 +202,15 @@ def run(repo: str, state_dir: pathlib.Path, metrics: pathlib.Path) -> int:
     st.head, st.finished, st.seconds = main, time.time(), round(time.monotonic() - start)
     st.behind_since, st.retried = 0.0, retry
     if rc == 0:
-        st.result, st.step, st.green = "pass", "", main
+        st.result, st.step, st.check, st.green = "pass", "", "", main
         st.green_at, st.green_deferred = st.finished - st.seconds, deferred(spool, since, main)
     else:
-        st.result, st.step = "fail", first_failed_step(spool, since, main)
+        st.result = "fail"
+        st.step, st.check = first_failed_step(spool, since, main)
     save(state_file, st)
     write_metrics(metrics, st, time.time(), main)
-    say(f"{st.result} on {main[:12]} in {st.seconds:g} s" + (f", first failed step {st.step}" if st.step else ""))
+    say(f"{st.result} on {main[:12]} in {st.seconds:g} s" + (f", first failed step {st.step}" if st.step else "")
+        + (f", check {st.check}" if st.check else ""))
     # a red gate is ScheduledGateRed's to report; a failed unit means the scheduler itself broke
     return 0
 
