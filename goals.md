@@ -128,6 +128,15 @@ Prometheus. Now `for: 5m` (about 8 minutes) and the text leads with `exec-pool s
 paged; an off host never matched (`up == 1`). Read the 14-day firing history once deployed. PR #797. Open: a
 second session stalling on the same host and reason is the same ExecPoolSessionStalled alert, so it pages nothing new.
 
+**25 Nov, branch `pool/cli-9e251aacbfa086ca`** (deploy lenovo): #792 merged a capped unit on lenovo and its
+deploy then failed the sam.memory assertion, as nothing before merge evaluates a host toplevel (the push hook runs
+`nix flake show`). `just pool-merge-check BRANCH` now evaluates every host's toplevel drvPath from the merge with
+origin/main, one nix process per host (all six in one process OOMed a slot's environments.slice), about 3 min on msi
+(acer-swift 63 s, msi 42 s, asus 38 s, black-pi 19 s, lenovo 15 s, naked-pi 8 s; peak 4.2 GB), then builds the
+changed packages as before. lenovo's user.slice 8288M to 8032M, still above the 7782M the build-bounds test asserts
+(4.6 GiB idle sessions plus the largest 3.0 GiB unit): 259M of budget left instead of 3M; a new 128M unit evaluates.
+Open: the 4.6 GiB idle figure predates the named workers moving to pool slots; re-measure lenovo's user slice. PR #799.
+
 **Open, in pick-up order**
 
 1. Session turns are headless; the owner wants the same interactive Herdr panes the named workers had, with an idle
@@ -149,7 +158,10 @@ second session stalling on the same host and reason is the same ExecPoolSessionS
 9. lenovo cannot push nixos-config (stale devenv gate) or fetch a new private skills pin as a user.
 10. Cost: about 45 USD of session cost on 24 Nov; cost per merged PR is in `exec-pool sessions` and the dashboard
     table once `pool/cli-8ce84f45f00fc734` deploys to acer; read it after a day.
-11. Store follow-ups in #754; credential slices 3 and 4.
+11. Store follow-ups in #754. Credential slice 3 (a slot pushes only `pool/<task id>` and `refs/pool-wip/<task id>`,
+    `exec-pool-push-filter` behind `homelab.execPool.ownRefsOnly`, on for acer) on `pool/cli-3d4da7d4a57f8ba1`: deploy
+    acer, see a push `passed` and one `refused`, then turn it on for msi. Slice 4 (GitHub App tokens) needs the owner to
+    create the App and a sops secret for its key first.
 12. Session state lives in git (#781, merged); its old trees and store are removed by the legacy remover once deployed.
 13. The proxy cannot hold a pull request to the task's own repository and `pool/<task id>` branch: the head is in the
     request body, which Caddy does not read, and acer's fleet site does not know which slot asks. Today any listed
@@ -177,7 +189,7 @@ benchmark requirements: #776; epic: #491).
 |---|-------|----------|-------------------|
 | 1 | Pool platform | the open findings above | a pool session for the top open finding |
 | 2 | Deploy | asus behind main | asus in its power window |
-| 3 | Alerts | 624-i fixes the alerts nobody could act on; not yet read live. Slots on acer get read-only Prometheus, Alertmanager and Loki queries through their egress proxy (`homelab.execPool.monitoring`, contract "Reading monitoring from a slot"), PR #802; msi's slots not yet | merge, deploy black-pi (Alertmanager admits acer) then acer, curl each from a slot; then read the live list; a1's patch at `/var/lib/worker-archive/a1` on acer |
+| 3 | Alerts | 624-l names a command in every kept alert and cuts 11 rules that guard nothing. Slots on acer get read-only Prometheus, Alertmanager and Loki queries through their egress proxy (`homelab.execPool.monitoring`, contract "Reading monitoring from a slot"), PR #802; msi's slots not yet | merge 624-l, deploy black-pi, read the next 14-day firing list; merge #802, deploy black-pi (Alertmanager admits acer) then acer, curl each from a slot |
 | 4 | Gates | scheduled gate red since 24 Nov on `checks.x86_64-linux.execution-pool-vm`, which failed to evaluate (slots' repos need `sam.workers.ghHostsFile`, the VM set none); fixed in branch `pool/cli-38a64f8b5b1d81f5` | merge, deploy acer (scheduled gate) and black-pi (rules), read the next scheduled gate result |
 | 5 | Live comparison | `ShuntCollectorStale` fires since the on side moved | read a day of Shunt on and off on 25 Nov, now on acer `pool1` |
 | 5b | Live comparison | #626 had no per-variant tokens, cost or compactions from the pool | deploy branch `pool/cli-950c25fbd3f89b7a` (acer, msi, black-pi), then read the "Compaction window on versus off" table a day later |
@@ -220,13 +232,14 @@ benchmark requirements: #776; epic: #491).
 | 624-i | Alerts red with nothing to do (25 Nov): DeployRolledBack per host until a good deploy of it; EscapeFound drops a reapplied revert (the live one, `78f4ee80`, reapplied as `ab8acd36`), one marked `Escape: no` and closed escape issues; the scheduled gate retries a red head once; RetroDueStepFailsRepeat clears on a scheduled green after the last failure; each text names its command | branch `pool/cli-273036d46c7d3230`; needs lenovo (collector) and acer (scheduled gate), rules on black-pi | |
 | 624-j | Audit and cut (25 Nov, #600 comment): 16 rules deleted that could not fire here (RAID, bonding, scrape limits, Alertmanager cluster), could reach no one (Prometheus not connected to Alertmanager; lenovo's watchdog covers it) or duplicated a page (TargetsMostlyDown, HealthScoreLow, the some-Alertmanagers twin), plus the never-notifying NodeCPUHighUsage, InfoInhibitor and NodeSensorNearCritical; UnitOOMKilled inhibits NodeOOMKill on the same node; TargetDown has its own runbook and query text; five host texts name their command. HostExpectedOff was already a silent inhibitor (route test added). The 14-day firing history is unknown from a slot | branch `pool/cli-f7637116415e4bb0`; deploy black-pi | |
 | 624-k | Alert to investigation with no human in between: an alert switched on in `homelab.alertInvestigations.alerts` (lenovo: `NodeSystemdUnitFailed` alone) that fired 15 minutes with none open starts one read-only incident-investigator pool session per firing (at most 3 a day per name), its prompt holding what lenovo read (alerts, Prometheus, the unit's journal); its report lands on the issue `Alert: <name>` (label `alert-investigation`, one per name). `homelab_alert_investigations_total{alertname,outcome}`, failures by reason; `AlertInvestigationFailed`, `AlertInvestigationsStale`. Read-only by prompt: the proxy cannot refuse a slot's push (item 13 of the pool list), so a pushed `pool/<id>` fails the investigation | branch `pool/cli-f7ad8047dbbfdc72`; needs lenovo (trigger), rules on black-pi | #792 |
+| 624-l | Finish the clean-up (25 Nov, from the coordinator's 14-day firing list): every kept alert's text names its command or dashboard (the upstream node, Prometheus and Alertmanager ones, the shipping KPIs, the llm-gateway one, ShuntDelegationFailing, ShuntSilent, ClaudeCompactionLoop, and the rest a review named); 11 unfired rules that guard nothing cut (NodeFileDescriptorLimit x2, NodeClockSkewDetected, NodeMemoryMajorPagesFaults, NodeDiskIOSaturation, the notification queue, duplicate and out-of-order timestamps, target sync, high query load, LLMGatewayBatchHittingReserve); the keep or delete list per unfired rule is in the PR body | branch `pool/cli-7071e0038fcbe527`; rules on black-pi | |
 
 Open for #624, in pick-up order: after 624-k deploys, read the first live investigation on its issue and its counters; after 624-i deploys, read the live list and confirm each alert cleared or names
 its command; the failing check behind the live ScheduledGateRed and RetroDueStepFailsRepeat was
 `checks.x86_64-linux.execution-pool-vm` failing to evaluate, which wrote no check record (branch
 `pool/cli-38a64f8b5b1d81f5`: the VM fixed, an eval failure now records its check, the red series carries `check`, and
 both alerts name one rerun command, `nix build -L .#<check>` or `NIXOS_STEP=<step> devenv tasks run nixos:step`); an intentional revert that is never reapplied still counts for 24 h (no after-the-fact
-acknowledgement); after 624-j deploys, read `count_over_time(ALERTS{alertstate="firing"}[14d])` by alertname on black-pi and cut what still never fired; the texts with no command: PrLeadTimeHigh, ReviewFirstPassLow, GateFailRateHigh, the llm-gateway pair, ShuntDelegationFailing, ShuntSilent, ClaudeCompactionLoop and the upstream node, Prometheus and Alertmanager rules.
+acknowledgement); after 624-l deploys to black-pi, read the live rule list and the next 14-day firing list; the rules younger than 14 days (exec-pool, alert-investigations, ShuntHookOverhead, ExecPoolCompactionWindowCostlier) were kept untested by that window, so judge them on the next one.
 
 ### #625 Shunt metrics
 

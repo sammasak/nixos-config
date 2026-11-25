@@ -1,6 +1,6 @@
 # Execution pool credentials: sidecars, not binds
 
-Status: slice 1 merged (PR 757); slice 2 and the login net proposed with the next PR. Issue 754, item 1: a session's home was
+Status: slices 1 and 2 merged (PRs 757, 764); slice 3 in code behind `homelab.execPool.ownRefsOnly`, on for acer. Issue 754, item 1: a session's home was
 copied to a store on another host at every park, so any credential in a slot guest could end up there. Sessions no
 longer copy a home (execution-pool-contract.md, Session state: the home is made afresh each turn and only the
 checkout's uncommitted work leaves, as a snapshot commit on the task's remote); a credential written into the checkout
@@ -59,10 +59,18 @@ widest: the whole account, every branch.
    (`services.devEnvironments.egressSites`, one site). The repository list is `homelab.execPool.repos`'s default,
    so both hosts list the same. No slot on any host gets `id_ed25519`, and an assertion keeps it so. msi's slots then
    depend on acer for GitHub, as they already do for the queue.
-3. **Push only `pool/<task id>` and `refs/pool-wip/<task id>`.** Caddy cannot read the ref updates in a receive-pack
-   body. A ref-aware hop: a host-side bare repository per slot whose `pre-receive` hook admits those two and whose `post-receive`
-   pushes upstream with the host's credential (stock git hooks). Rulesets on GitHub are later and not part of this
-   plan, as they change the GitHub account.
+3. **Push only `pool/<task id>` and `refs/pool-wip/<task id>`** (`homelab.execPool.ownRefsOnly`, per host). Caddy
+   cannot read the ref updates in a receive-pack body, so a slot's site sends every receive-pack (any path naming
+   `git-receive-pack`, any case) to `exec-pool-push-filter` with `X-Pool-Slot` set to the slot. The filter reads the
+   pkt-line commands up to the first flush, takes the task id from the runner's manifest of that slot
+   (`/run/exec-pool-runner/<slot>/manifest.json`), and passes the request on unchanged to the proxy's push socket
+   (`/run/dev-env-egress/.push.sock`, which signs a listed repository's receive-pack, or on msi forwards it to acer's
+   sidecar) only when every update is to one of those two refs. Anything else, no manifest, an unknown slot, a
+   compressed or unreadable body: 403, and nothing reaches GitHub. The filter holds no credential and has no network.
+   Not the bare repository with a `post-receive` relay first planned here: that answers the client before GitHub
+   has, so a relay that then failed would be a push the agent believes landed. The filter keeps one hop, returns
+   GitHub's own answer and never retries (a cut upstream is a 502; the park checks with `ls-remote` as before).
+   Rulesets on GitHub are later and not part of this plan, as they change the GitHub account.
 4. **Short-lived tokens.** A GitHub App installation token minted on the host per task (one hour, listed repositories,
    contents write) in place of the owner's gh token in the sidecar (credentials-and-tenancy.md, phase 4).
 
@@ -77,7 +85,9 @@ remote. The model stays that no slot needs a login.
 
 In an acer slot: `test ! -e /var/lib/host-credentials/id_ed25519`; a pool task pushes `pool/<task id>` and the runner
 records it handed back; `nix flake metadata` in nixos-config fetches factum through the proxy;
-`journalctl -u dev-env-egress` on acer shows the `github-pool1` requests. On msi, the same from a slot, the requests in
+`journalctl -u dev-env-egress` on acer shows the `github-pool1` requests. With `ownRefsOnly`: the task's push and
+the park's snapshot land and `journalctl -u exec-pool-push-filter` shows them `passed`; `git push origin HEAD:refs/heads/x`
+from the slot fails with HTTP 403 and shows `refused`, and `git ls-remote` does not list `x`. On msi, the same from a slot, the requests in
 acer's log as `github-fleet`, and `curl -s -o /dev/null -w '%{http_code}' http://<acer>:<listener port>/` from any
 other host times out (firewall). The runner's clone and its pushed check read the guest's system git config, so they
 go through the proxy too: a private repository (skills) clones, and a task on a repository not listed fails in

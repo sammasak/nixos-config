@@ -759,7 +759,7 @@
           }
         ]
       },
-      "description": "The kernel's NTP offset and whether it is synchronised; NodeClockSkewDetected and NodeClockNotSynchronising page on these.",
+      "description": "The kernel's NTP offset and whether it is synchronised; NodeClockNotSynchronising pages on these.",
       "options": {
         "orientation": "vertical"
       }

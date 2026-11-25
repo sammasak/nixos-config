@@ -57,13 +57,15 @@ in
   imports = [ ../homelab/exec-pool-options.nix ];
 
   config = lib.mkIf cfg.enable {
-    services.devEnvironments.instances = lib.genAttrs slotNames (_: {
+    services.devEnvironments.instances = lib.genAttrs slotNames (n: {
       agent = "none";
       # the slots' headless Claude reports its compactions and tokens per slot (worker), which #626 compares
       telemetry = config.sam.profile.nativeOtel && cfg.agents != [ ];
       headlessAgents = cfg.agents;
       egress.github.repos = cfg.repos;
       egress.monitoring = cfg.monitoring;
+      # the runner's runtime directory (exec-pool-runner.nix)
+      egress.github.ownRefs = lib.mkIf cfg.ownRefsOnly "/run/exec-pool-runner/${n}/manifest.json";
       sessionDock = true;
       rootInGuest = cfg.slot.privateUsers;
       # a task's fetches never read entries an earlier task in any slot planted
@@ -110,6 +112,10 @@ in
           )
         );
         message = "homelab.execPool: a slot reaches GitHub through the host's proxy (repos), never with the host user's SSH key (slot.credentials).";
+      }
+      {
+        assertion = cfg.ownRefsOnly -> lib.elem "runner" cfg.roles;
+        message = "homelab.execPool.ownRefsOnly: a slot's task is read from its runner's manifest, and this host has no runner role.";
       }
       {
         assertion = collisions == [ ];

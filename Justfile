@@ -210,12 +210,14 @@ full-gate REF="HEAD":
       cd "$tree" && devenv tasks run nixos:qa
 
 # A package build is its checks (exec-pool's tests, clippy and rustfmt; a Python package's ruff and mypy), which an
-# evaluation does not run, so building each package BRANCH touches from it merged with current origin/main catches a
-# lint failure before merge, and two PRs that pass alone and break main together. A package is a pkgs/<dir> with a
-# changed file, built as `pkgsDir.<dir>` (flake-modules/pkgs-dir.nix); none changed builds nothing. The merge is made
-# by git merge-tree (a conflict exits 1) into a throwaway worktree; nothing is pushed. Heavy: under the heavy-work
-# lock, and refused on lenovo.
-[doc("Build each package BRANCH changes, merged with current origin/main, under the heavy lock; not on lenovo")]
+# evaluation does not run, and a host's NixOS assertions (sam.memory's budget among them) run only when its toplevel
+# is evaluated, which the push hook's `nix flake show` never does. So, from BRANCH merged with current origin/main,
+# this evaluates every host's toplevel drvPath, no build, and builds each package BRANCH touches: a pkgs/<dir> with a
+# changed file, built as `pkgsDir.<dir>` (flake-modules/pkgs-dir.nix). One nix process per host, one at a time: all
+# six in one process OOMs a pool slot's environments.slice, one alone peaks at about 4.2 GB (msi), about 3 min for
+# all. The merge is made by git merge-tree (a conflict exits 1) into a throwaway worktree; nothing is pushed. Heavy:
+# under the heavy-work lock, and refused on lenovo.
+[doc("Evaluate every host and build each package BRANCH changes, merged with current origin/main, under the heavy lock; not on lenovo")]
 pool-merge-check BRANCH:
     @[ "$(uname -n)" != lenovo-21CB001PMX ] || { echo "pool-merge-check: run it on acer, not lenovo" >&2; exit 1; }; \
       branch={{quote(BRANCH)}}; \
@@ -225,22 +227,30 @@ pool-merge-check BRANCH:
         || { printf '%s\n' "$merged" >&2; echo "pool-merge-check: $branch does not merge cleanly with origin/main" >&2; exit 1; }; \
       commit=$(git -c user.name=pool-merge-check -c user.email=pool-merge-check@localhost \
         commit-tree -p "$main" -p "$head" -m "pool-merge-check $branch" "$merged"); \
-      dirs=$(git diff --no-ext-diff --name-only "$main" "$commit" -- pkgs/ | sed -n 's|^pkgs/\([^/]*\)/.*|\1|p' | sort -u); \
-      [ -n "$dirs" ] || { echo "pool-merge-check: $branch ($head) changes no package: nothing to build"; exit 0; }; \
+      lock=/run/work-locks/heavy-work.lock; \
+      [ -e "$lock" ] || { echo "pool-merge-check: no $lock on this host" >&2; exit 1; }; \
       tree=$(mktemp -d); \
       trap 'git worktree remove --force "$tree"' EXIT; \
       git worktree add --quiet --detach "$tree" "$commit"; \
+      hosts=$(nix eval --raw "$tree#nixosConfigurations" --apply 'c: toString (builtins.attrNames c)'); \
+      failed=; for h in $hosts; do \
+        start=$(date +%s); \
+        if drv=$(flock -o "$lock" nix eval --raw "$tree#nixosConfigurations.$h.config.system.build.toplevel.drvPath"); \
+        then echo "pool-merge-check: $h evaluates ($(( $(date +%s) - start )) s) $drv"; \
+        else echo "pool-merge-check: $h FAILS to evaluate" >&2; failed="$failed $h"; fi; \
+      done; \
+      [ -z "$failed" ] || { echo "pool-merge-check: $branch ($head) merged with origin/main ($main) fails to evaluate:$failed" >&2; exit 1; }; \
+      dirs=$(git diff --no-ext-diff --name-only "$main" "$commit" -- pkgs/ | sed -n 's|^pkgs/\([^/]*\)/.*|\1|p' | sort -u); \
+      [ -n "$dirs" ] || { echo "pool-merge-check: every host evaluates; $branch ($head) changes no package: nothing to build"; exit 0; }; \
       known=" $(nix eval --raw "$tree#pkgsDir" --apply 'p: toString (builtins.attrNames p)') "; \
       names=; for d in $dirs; do \
         case "$known" in *" $d "*) names="$names $d" ;; \
           *) echo "pool-merge-check: pkgs/$d changed but builds no package of its own" ;; esac; \
       done; \
-      [ -n "$names" ] || { echo "pool-merge-check: $branch ($head) changes no buildable package"; exit 0; }; \
+      [ -n "$names" ] || { echo "pool-merge-check: every host evaluates; $branch ($head) changes no buildable package"; exit 0; }; \
       echo "pool-merge-check: building$names"; \
-      lock=/run/work-locks/heavy-work.lock; \
-      [ -e "$lock" ] || { echo "pool-merge-check: no $lock on this host" >&2; exit 1; }; \
       flock -o "$lock" nix build --no-link -L $(for d in $names; do printf '%s#pkgsDir.%s ' "$tree" "$d"; done); \
-      echo "pool-merge-check:$names build from $branch ($head) merged with origin/main ($main)"
+      echo "pool-merge-check: every host evaluates and$names build from $branch ($head) merged with origin/main ($main)"
 
 # The lock decides, not a process name: the gate runs as nixos-qa (`pgrep 'nixos:qa'` misses it), a `flock -o` job
 # under any name. The lock is per physical host, so a guest sees its host's jobs; a holder in another PID namespace
