@@ -59,8 +59,8 @@ in
   config = lib.mkIf cfg.enable {
     services.devEnvironments.instances = lib.genAttrs slotNames (_: {
       agent = "none";
-      # nativeOtel's default would bind the OTLP proxy socket into a slot with no agent to send
-      telemetry = false;
+      # the slots' headless Claude reports its compactions and tokens per slot (worker), which #626 compares
+      telemetry = config.sam.profile.nativeOtel && cfg.agents != [ ];
       headlessAgents = cfg.agents;
       egress.github.repos = cfg.repos;
       sessionDock = true;

@@ -2159,72 +2159,86 @@ fn session_totals(
             "exec_pool_session_host_changes_total{{host=\"{host}\"}} {n}"
         );
     }
-    usage(tx, out, hosts)
+    usage(tx, out)
 }
 
-/// The tokens and cost session turns reported, by the host each turn ran on and agent kind.
-fn usage(tx: &mut Transaction<'_>, out: &mut String, hosts: &[String]) -> Result<(), QueueError> {
-    // a turn's host is where its lease ran: the running event at the turn's epoch
+/// The tokens and cost session turns reported, by the host and slot (`worker`) each turn ran on and agent kind, and
+/// how many sessions reported a turn there: a slot's own settings (its compaction window) compare per turn and per
+/// session. A session that moved between slots counts once on each.
+fn usage(tx: &mut Transaction<'_>, out: &mut String) -> Result<(), QueueError> {
+    // a turn's host and slot are where its lease ran: the running event at the turn's epoch
     let rows = tx.query(
-        "SELECT coalesce((SELECT e.host FROM events e WHERE e.attempt_id = u.attempt_id \
-         AND e.lease_epoch = u.lease_epoch AND e.to_status = 'running' ORDER BY e.id DESC LIMIT 1), 'none'), \
-         t.spec->'command'->>'agent', count(u.input_tokens), coalesce(sum(u.input_tokens), 0)::bigint, \
+        "SELECT coalesce(r.host, 'none'), coalesce(r.slot, 'none'), t.spec->'command'->>'agent', \
+         count(u.input_tokens), coalesce(sum(u.input_tokens), 0)::bigint, \
          coalesce(sum(u.output_tokens), 0)::bigint, coalesce(sum(u.cache_read_tokens), 0)::bigint, \
-         coalesce(sum(u.cache_creation_tokens), 0)::bigint, coalesce(sum(u.cost_usd), 0)::float8 \
-         FROM turns u JOIN attempts a ON a.id = u.attempt_id JOIN tasks t ON t.id = a.task_id GROUP BY 1, 2",
+         coalesce(sum(u.cache_creation_tokens), 0)::bigint, \
+         count(DISTINCT t.id) FILTER (WHERE u.input_tokens IS NOT NULL), coalesce(sum(u.cost_usd), 0)::float8 \
+         FROM turns u JOIN attempts a ON a.id = u.attempt_id JOIN tasks t ON t.id = a.task_id \
+         LEFT JOIN LATERAL (SELECT e.host, e.slot FROM events e WHERE e.attempt_id = u.attempt_id \
+         AND e.lease_epoch = u.lease_epoch AND e.to_status = 'running' ORDER BY e.id DESC LIMIT 1) r ON true \
+         GROUP BY 1, 2, 3",
         &[],
     )?;
-    let mut all = hosts.to_vec();
+    let mut all: Vec<(String, String)> = tx
+        .query("SELECT host, id FROM slots", &[])?
+        .iter()
+        .map(|r| Ok((r.try_get(0)?, r.try_get(1)?)))
+        .collect::<Result<_, QueueError>>()?;
     for r in &rows {
-        let h: String = r.try_get(0)?;
-        if !all.contains(&h) {
-            all.push(h);
-        }
+        all.push((r.try_get(0)?, r.try_get(1)?));
     }
+    all.sort();
+    all.dedup();
     let heads = [
-        "# HELP exec_pool_session_turns_reported_total Session turns that reported their usage, by host and agent kind.\n\
+        "# HELP exec_pool_session_turns_reported_total Session turns that reported their usage, by host, slot and agent kind.\n\
          # TYPE exec_pool_session_turns_reported_total counter\n",
-        "# HELP exec_pool_session_input_tokens_total Uncached input tokens session turns reported, by host and agent kind.\n\
+        "# HELP exec_pool_session_input_tokens_total Uncached input tokens session turns reported, by host, slot and agent kind.\n\
          # TYPE exec_pool_session_input_tokens_total counter\n",
-        "# HELP exec_pool_session_output_tokens_total Output tokens session turns reported, by host and agent kind.\n\
+        "# HELP exec_pool_session_output_tokens_total Output tokens session turns reported, by host, slot and agent kind.\n\
          # TYPE exec_pool_session_output_tokens_total counter\n",
-        "# HELP exec_pool_session_cache_read_tokens_total Input tokens read from the prompt cache, by host and agent kind.\n\
+        "# HELP exec_pool_session_cache_read_tokens_total Input tokens read from the prompt cache, by host, slot and agent kind.\n\
          # TYPE exec_pool_session_cache_read_tokens_total counter\n",
-        "# HELP exec_pool_session_cache_creation_tokens_total Input tokens written to the prompt cache, by host and agent kind.\n\
+        "# HELP exec_pool_session_cache_creation_tokens_total Input tokens written to the prompt cache, by host, slot and agent kind.\n\
          # TYPE exec_pool_session_cache_creation_tokens_total counter\n",
+        "# HELP exec_pool_sessions_reported_total Sessions with a turn that reported its usage on the slot, by host, slot and agent kind.\n\
+         # TYPE exec_pool_sessions_reported_total counter\n",
     ];
-    let row_of = |host: &str, agent: &str| {
+    let row_of = |host: &str, slot: &str, agent: &str| {
         rows.iter().find(|r| {
             r.try_get::<_, &str>(0).ok() == Some(host)
-                && r.try_get::<_, Option<&str>>(1).ok().flatten() == Some(agent)
+                && r.try_get::<_, &str>(1).ok() == Some(slot)
+                && r.try_get::<_, Option<&str>>(2).ok().flatten() == Some(agent)
         })
     };
     for (i, head) in heads.iter().enumerate() {
         out.push_str(head);
         let name = head.split_whitespace().nth(2).unwrap_or_default();
-        for host in &all {
+        for (host, slot) in &all {
             for agent in AGENTS {
-                let n: i64 = row_of(host, agent)
-                    .map(|r| r.try_get(i.saturating_add(2)))
+                let n: i64 = row_of(host, slot, agent)
+                    .map(|r| r.try_get(i.saturating_add(3)))
                     .transpose()?
                     .unwrap_or(0);
-                let _ = writeln!(out, "{name}{{host=\"{host}\",agent=\"{agent}\"}} {n}");
+                let _ = writeln!(
+                    out,
+                    "{name}{{host=\"{host}\",worker=\"{slot}\",agent=\"{agent}\"}} {n}"
+                );
             }
         }
     }
     out.push_str(
-        "# HELP exec_pool_session_cost_usd_total The cost session turns reported, in US dollars, by host and agent kind.\n\
+        "# HELP exec_pool_session_cost_usd_total The cost session turns reported, in US dollars, by host, slot and agent kind.\n\
          # TYPE exec_pool_session_cost_usd_total counter\n",
     );
-    for host in &all {
+    for (host, slot) in &all {
         for agent in AGENTS {
-            let cost: f64 = row_of(host, agent)
-                .map(|r| r.try_get(7))
+            let cost: f64 = row_of(host, slot, agent)
+                .map(|r| r.try_get(9))
                 .transpose()?
                 .unwrap_or(0.0);
             let _ = writeln!(
                 out,
-                "exec_pool_session_cost_usd_total{{host=\"{host}\",agent=\"{agent}\"}} {cost}"
+                "exec_pool_session_cost_usd_total{{host=\"{host}\",worker=\"{slot}\",agent=\"{agent}\"}} {cost}"
             );
         }
     }

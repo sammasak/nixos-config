@@ -24,11 +24,13 @@
   # the always-on heavy host: msi and asus are off at night
   homelab.scheduledGate.enable = true;
   # Shunt on for slot pool1 alone; the host and the other slots stay off, so the collector compares on and off (#625).
+  # A 300K compaction window for pool2 alone, not pool1, so the two switches never share a slot (#626).
   services.devEnvironments.guestModules = [
     (
       { devEnvironment, ... }:
       {
         sam.claude.bulkReader.enable = devEnvironment.name == "pool1";
+        sam.claude.autoCompactWindow = if devEnvironment.name == "pool2" then 300000 else null;
       }
     )
   ];

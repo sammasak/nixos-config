@@ -2868,10 +2868,25 @@ fn session_metrics_count_turns_wakes_and_tokens() {
     has("exec_pool_session_wake_seconds_count{host=\"msi-ms7758\",source=\"timer\"} 0");
     has("exec_pool_session_host_changes_total{host=\"asus-b460m\"} 1");
     has("exec_pool_session_host_changes_total{host=\"msi-ms7758\"} 1");
-    has("exec_pool_session_turns_reported_total{host=\"msi-ms7758\",agent=\"claude\"} 1");
-    has("exec_pool_session_cache_read_tokens_total{host=\"msi-ms7758\",agent=\"claude\"} 3000");
-    has("exec_pool_session_cost_usd_total{host=\"msi-ms7758\",agent=\"claude\"} 0.5");
-    has("exec_pool_session_cost_usd_total{host=\"asus-b460m\",agent=\"claude\"} 0");
+    // usage on the host and slot its turn ran on; a turn that reported none counts no session there
+    has(
+        "exec_pool_session_turns_reported_total{host=\"msi-ms7758\",worker=\"pool1\",agent=\"claude\"} 1",
+    );
+    has(
+        "exec_pool_session_cache_read_tokens_total{host=\"msi-ms7758\",worker=\"pool1\",agent=\"claude\"} 3000",
+    );
+    has(
+        "exec_pool_session_cost_usd_total{host=\"msi-ms7758\",worker=\"pool1\",agent=\"claude\"} 0.5",
+    );
+    has(
+        "exec_pool_session_cost_usd_total{host=\"asus-b460m\",worker=\"pool1\",agent=\"claude\"} 0",
+    );
+    has(
+        "exec_pool_sessions_reported_total{host=\"msi-ms7758\",worker=\"pool1\",agent=\"claude\"} 1",
+    );
+    has(
+        "exec_pool_sessions_reported_total{host=\"asus-b460m\",worker=\"pool1\",agent=\"claude\"} 0",
+    );
     has(
         "exec_pool_sessions_parked_seconds_bucket{host=\"msi-ms7758\",agent=\"claude\",le=\"86400\"} 1",
     );
