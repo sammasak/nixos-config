@@ -232,6 +232,9 @@ def run(d, url, bare, fsock, manifest):
 
     upd = b"%s %s refs/heads/pool/t-1\x00 report-status\n" % (b"0" * 40, b"1" * 40)
     pkt = b"%04x%s0000" % (len(upd) + 4, upd)
+    shallow = b"shallow %s\n" % (b"2" * 40)
+    check(raw(fsock, "pool1", b"%04x%s" % (len(shallow) + 4, shallow) + pkt) != 403,
+          "a shallow clone's push, its capabilities after the shallow line, passes the filter")
     check(raw(fsock, None, pkt) == 403 and raw(fsock, "pool9", pkt) == 403,
           "a request with no slot, or a slot the filter does not know, is refused")
     check(raw(fsock, "pool1", b"zzzz") == 403 and raw(fsock, "pool1", pkt[:10]) == 403

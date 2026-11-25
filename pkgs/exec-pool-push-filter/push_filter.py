@@ -101,11 +101,13 @@ def updates(body: Body) -> tuple[list[str], bytes]:
             raise Refused(f"pkt-line length {n} in the commands")
         line = body.exact(n - 4)
         head += line
-        text = line.split(b"\x00", 1)[0] if first else line
-        first = False
-        cmd = text.rstrip(b"\n").decode("utf-8", "replace")
+        cmd = line.rstrip(b"\n").decode("utf-8", "replace")
         if SHALLOW.fullmatch(cmd):
             continue
+        # the capabilities ride on the first update, after a shallow clone's shallow lines
+        if first:
+            cmd = cmd.split("\x00", 1)[0]
+        first = False
         m = UPDATE.fullmatch(cmd)
         if m is None:
             raise Refused(f"not a ref update: {cmd[:80]!r}")
