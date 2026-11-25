@@ -377,6 +377,20 @@ Do not: delete a dock whose slot has `dock-busy` beside its run directories (`/v
 holds a running turn or unpushed work.
 Rollback: none; the alert clears when the docks fall under 70%.
 
+## ExecPoolCompactionWindowCostlier
+
+Fires: over the last day, the Claude turns on a pool host's slots with a declared `sam.claude.autoCompactWindow`
+(`variant`, the window in tokens) cost over 1.5 times per turn what the same host's default slots cost, with Shunt off
+on both sides and at least 10 turns on each, for an hour. Read from the `host_variant:exec_pool_session_*:increase1d`
+records (`modules/homelab/monitoring/rules/exec-pool.yaml`): the queue's per-slot usage joined with
+`claude_auto_compact_window_info` on the slot's host. This is #626's live comparison judging the window worse.
+First: the "Compaction window on versus off" table in the Agent harnesses dashboard (Sessions row): tokens per turn and
+per session, turns per session and auto compactions per session per variant. One long session on the on side can carry a
+day; `exec-pool list` names the sessions.
+Rollback: set that slot's `sam.claude.autoCompactWindow` back to null in its host's guest module
+(`hosts/acer-swift/configuration.nix` for acer's `pool2`) and deploy the host; the slot's next turn starts with Claude's
+default. The alert clears when the day's ratio falls under 1.5.
+
 ## ShuntDelegationFailing
 
 Fires: over a quarter of the bulk-read delegations in the collector's 24 h window failed with auth, rate_limited,

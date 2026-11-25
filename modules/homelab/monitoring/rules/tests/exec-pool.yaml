@@ -259,3 +259,176 @@ tests:
               description: "1 session(s) last run on acer-swift have waited 10 minutes after their last turn parked as turn_error with no automatic continue left, so nothing wakes them. Find it with exec-pool list (parked turn_error), read exec-pool status ID and exec-pool logs ID for what failed, fix the cause, then exec-pool send ID --prompt TEXT telling it what happened (runbook)."
               query: 'exec_pool_sessions_stalled{job="node-exporter",host="acer-swift",reason="turn_error"} > 0'
               runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolsessionstalled"
+
+  # #626 on acer: pool2 (300K window) costs 2 USD a turn against pool3's 1 (both Shunt off), a turn a minute:
+  # 10 turns a side by 10m, firing an hour later. pool1's Shunt side costs 5 and is never the off side; msi has no on side.
+  - interval: 1m
+    input_series:
+      - series: 'claude_auto_compact_window_info{job="node-exporter",node="acer-swift",worker="pool1",variant="default",shunt="on"}'
+        values: '1x1600'
+      - series: 'claude_auto_compact_window_info{job="node-exporter",node="acer-swift",worker="pool2",variant="300000",shunt="off"}'
+        values: '1x1600'
+      - series: 'claude_auto_compact_window_info{job="node-exporter",node="acer-swift",worker="pool3",variant="default",shunt="off"}'
+        values: '1x1600'
+      - series: 'claude_auto_compact_window_info{job="node-exporter",node="msi-ms7758",worker="pool1",variant="default",shunt="off"}'
+        values: '1x1600'
+      - series: 'exec_pool_session_turns_reported_total{job="node-exporter",node="acer-swift",host="acer-swift",worker="pool1",agent="claude"}'
+        values: '0+1x1600'
+      - series: 'exec_pool_session_cost_usd_total{job="node-exporter",node="acer-swift",host="acer-swift",worker="pool1",agent="claude"}'
+        values: '0+5x1600'
+      - series: 'exec_pool_sessions_reported_total{job="node-exporter",node="acer-swift",host="acer-swift",worker="pool1",agent="claude"}'
+        values: '0+1x1600'
+      - series: 'exec_pool_session_input_tokens_total{job="node-exporter",node="acer-swift",host="acer-swift",worker="pool1",agent="claude"}'
+        values: '0+100x1600'
+      - series: 'exec_pool_session_cache_read_tokens_total{job="node-exporter",node="acer-swift",host="acer-swift",worker="pool1",agent="claude"}'
+        values: '0+900x1600'
+      - series: 'exec_pool_session_output_tokens_total{job="node-exporter",node="acer-swift",host="acer-swift",worker="pool1",agent="claude"}'
+        values: '0x1600'
+      - series: 'exec_pool_session_cache_creation_tokens_total{job="node-exporter",node="acer-swift",host="acer-swift",worker="pool1",agent="claude"}'
+        values: '0x1600'
+      - series: 'exec_pool_session_turns_reported_total{job="node-exporter",node="acer-swift",host="acer-swift",worker="pool2",agent="claude"}'
+        values: '0+1x1600'
+      - series: 'exec_pool_session_cost_usd_total{job="node-exporter",node="acer-swift",host="acer-swift",worker="pool2",agent="claude"}'
+        values: '0+2x1600'
+      - series: 'exec_pool_sessions_reported_total{job="node-exporter",node="acer-swift",host="acer-swift",worker="pool2",agent="claude"}'
+        values: '0+1x1600'
+      - series: 'exec_pool_session_input_tokens_total{job="node-exporter",node="acer-swift",host="acer-swift",worker="pool2",agent="claude"}'
+        values: '0+100x1600'
+      - series: 'exec_pool_session_cache_read_tokens_total{job="node-exporter",node="acer-swift",host="acer-swift",worker="pool2",agent="claude"}'
+        values: '0+900x1600'
+      - series: 'exec_pool_session_output_tokens_total{job="node-exporter",node="acer-swift",host="acer-swift",worker="pool2",agent="claude"}'
+        values: '0x1600'
+      - series: 'exec_pool_session_cache_creation_tokens_total{job="node-exporter",node="acer-swift",host="acer-swift",worker="pool2",agent="claude"}'
+        values: '0x1600'
+      - series: 'exec_pool_session_turns_reported_total{job="node-exporter",node="acer-swift",host="acer-swift",worker="pool3",agent="claude"}'
+        values: '0+1x1600'
+      - series: 'exec_pool_session_cost_usd_total{job="node-exporter",node="acer-swift",host="acer-swift",worker="pool3",agent="claude"}'
+        values: '0+1x1600'
+      - series: 'exec_pool_sessions_reported_total{job="node-exporter",node="acer-swift",host="acer-swift",worker="pool3",agent="claude"}'
+        values: '0+2x1600'
+      - series: 'exec_pool_session_input_tokens_total{job="node-exporter",node="acer-swift",host="acer-swift",worker="pool3",agent="claude"}'
+        values: '0+100x1600'
+      - series: 'exec_pool_session_cache_read_tokens_total{job="node-exporter",node="acer-swift",host="acer-swift",worker="pool3",agent="claude"}'
+        values: '0+900x1600'
+      - series: 'exec_pool_session_output_tokens_total{job="node-exporter",node="acer-swift",host="acer-swift",worker="pool3",agent="claude"}'
+        values: '0x1600'
+      - series: 'exec_pool_session_cache_creation_tokens_total{job="node-exporter",node="acer-swift",host="acer-swift",worker="pool3",agent="claude"}'
+        values: '0x1600'
+      - series: 'exec_pool_session_turns_reported_total{job="node-exporter",node="acer-swift",host="msi-ms7758",worker="pool1",agent="claude"}'
+        values: '0+1x1600'
+      - series: 'exec_pool_session_cost_usd_total{job="node-exporter",node="acer-swift",host="msi-ms7758",worker="pool1",agent="claude"}'
+        values: '0+0.01x1600'
+      - series: 'exec_pool_sessions_reported_total{job="node-exporter",node="acer-swift",host="msi-ms7758",worker="pool1",agent="claude"}'
+        values: '0+1x1600'
+      - series: 'exec_pool_session_input_tokens_total{job="node-exporter",node="acer-swift",host="msi-ms7758",worker="pool1",agent="claude"}'
+        values: '0+100x1600'
+      - series: 'exec_pool_session_cache_read_tokens_total{job="node-exporter",node="acer-swift",host="msi-ms7758",worker="pool1",agent="claude"}'
+        values: '0+900x1600'
+      - series: 'exec_pool_session_output_tokens_total{job="node-exporter",node="acer-swift",host="msi-ms7758",worker="pool1",agent="claude"}'
+        values: '0x1600'
+      - series: 'exec_pool_session_cache_creation_tokens_total{job="node-exporter",node="acer-swift",host="msi-ms7758",worker="pool1",agent="claude"}'
+        values: '0x1600'
+    promql_expr_test:
+      - expr: host_variant:exec_pool_session_turns:increase1d
+        eval_time: 25h
+        exp_samples:
+          - labels: 'host_variant:exec_pool_session_turns:increase1d{host="acer-swift",variant="default",shunt="on"}'
+            value: 1440
+          - labels: 'host_variant:exec_pool_session_turns:increase1d{host="acer-swift",variant="300000",shunt="off"}'
+            value: 1440
+          - labels: 'host_variant:exec_pool_session_turns:increase1d{host="acer-swift",variant="default",shunt="off"}'
+            value: 1440
+          - labels: 'host_variant:exec_pool_session_turns:increase1d{host="msi-ms7758",variant="default",shunt="off"}'
+            value: 1440
+      - expr: round(host_variant:exec_pool_session_tokens:increase1d{host="acer-swift",shunt="off"} / host_variant:exec_pool_sessions:increase1d{host="acer-swift",shunt="off"})
+        eval_time: 25h
+        exp_samples:
+          - labels: '{host="acer-swift",variant="300000",shunt="off"}'
+            value: 1000
+          - labels: '{host="acer-swift",variant="default",shunt="off"}'
+            value: 500
+    alert_rule_test:
+      - eval_time: 65m
+        alertname: ExecPoolCompactionWindowCostlier
+        exp_alerts: []
+      - eval_time: 25h
+        alertname: ExecPoolCompactionWindowCostlier
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, host: acer-swift, variant: "300000", shunt: "off"}
+            exp_annotations:
+              summary: "Pool slots on acer-swift with compaction window 300000 cost over 1.5 times the default per turn"
+              description: "Over the last day, Claude turns on acer-swift's slots with autoCompactWindow 300000 cost 2.00 USD each, over 1.5 times the default slots' there (Shunt off on both, at least 10 turns a side), for an hour. Read the comparison table in the Agent harnesses dashboard (Sessions row), then set that slot's autoCompactWindow back to null in the host's guest module and deploy (runbook)."
+              query: 'host_variant:exec_pool_session_cost_usd:increase1d{host="acer-swift",shunt="off"} / host_variant:exec_pool_session_turns:increase1d{host="acer-swift",shunt="off"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolcompactionwindowcostlier"
+
+  # never fires: 1.2 times the default's cost per turn; and, on msi, twice the cost but under 10 turns a day
+  - interval: 1m
+    input_series:
+      - series: 'claude_auto_compact_window_info{job="node-exporter",node="acer-swift",worker="pool2",variant="300000",shunt="off"}'
+        values: '1x1600'
+      - series: 'claude_auto_compact_window_info{job="node-exporter",node="acer-swift",worker="pool3",variant="default",shunt="off"}'
+        values: '1x1600'
+      - series: 'claude_auto_compact_window_info{job="node-exporter",node="msi-ms7758",worker="pool1",variant="300000",shunt="off"}'
+        values: '1x1600'
+      - series: 'claude_auto_compact_window_info{job="node-exporter",node="msi-ms7758",worker="pool2",variant="default",shunt="off"}'
+        values: '1x1600'
+      - series: 'exec_pool_session_turns_reported_total{job="node-exporter",node="acer-swift",host="acer-swift",worker="pool2",agent="claude"}'
+        values: '0+1x1600'
+      - series: 'exec_pool_session_cost_usd_total{job="node-exporter",node="acer-swift",host="acer-swift",worker="pool2",agent="claude"}'
+        values: '0+1.2x1600'
+      - series: 'exec_pool_sessions_reported_total{job="node-exporter",node="acer-swift",host="acer-swift",worker="pool2",agent="claude"}'
+        values: '0+1x1600'
+      - series: 'exec_pool_session_input_tokens_total{job="node-exporter",node="acer-swift",host="acer-swift",worker="pool2",agent="claude"}'
+        values: '0+100x1600'
+      - series: 'exec_pool_session_cache_read_tokens_total{job="node-exporter",node="acer-swift",host="acer-swift",worker="pool2",agent="claude"}'
+        values: '0+900x1600'
+      - series: 'exec_pool_session_output_tokens_total{job="node-exporter",node="acer-swift",host="acer-swift",worker="pool2",agent="claude"}'
+        values: '0x1600'
+      - series: 'exec_pool_session_cache_creation_tokens_total{job="node-exporter",node="acer-swift",host="acer-swift",worker="pool2",agent="claude"}'
+        values: '0x1600'
+      - series: 'exec_pool_session_turns_reported_total{job="node-exporter",node="acer-swift",host="acer-swift",worker="pool3",agent="claude"}'
+        values: '0+1x1600'
+      - series: 'exec_pool_session_cost_usd_total{job="node-exporter",node="acer-swift",host="acer-swift",worker="pool3",agent="claude"}'
+        values: '0+1x1600'
+      - series: 'exec_pool_sessions_reported_total{job="node-exporter",node="acer-swift",host="acer-swift",worker="pool3",agent="claude"}'
+        values: '0+1x1600'
+      - series: 'exec_pool_session_input_tokens_total{job="node-exporter",node="acer-swift",host="acer-swift",worker="pool3",agent="claude"}'
+        values: '0+100x1600'
+      - series: 'exec_pool_session_cache_read_tokens_total{job="node-exporter",node="acer-swift",host="acer-swift",worker="pool3",agent="claude"}'
+        values: '0+900x1600'
+      - series: 'exec_pool_session_output_tokens_total{job="node-exporter",node="acer-swift",host="acer-swift",worker="pool3",agent="claude"}'
+        values: '0x1600'
+      - series: 'exec_pool_session_cache_creation_tokens_total{job="node-exporter",node="acer-swift",host="acer-swift",worker="pool3",agent="claude"}'
+        values: '0x1600'
+      - series: 'exec_pool_session_turns_reported_total{job="node-exporter",node="acer-swift",host="msi-ms7758",worker="pool1",agent="claude"}'
+        values: '0+0.005x1600'
+      - series: 'exec_pool_session_cost_usd_total{job="node-exporter",node="acer-swift",host="msi-ms7758",worker="pool1",agent="claude"}'
+        values: '0+1x1600'
+      - series: 'exec_pool_sessions_reported_total{job="node-exporter",node="acer-swift",host="msi-ms7758",worker="pool1",agent="claude"}'
+        values: '0+1x1600'
+      - series: 'exec_pool_session_input_tokens_total{job="node-exporter",node="acer-swift",host="msi-ms7758",worker="pool1",agent="claude"}'
+        values: '0+100x1600'
+      - series: 'exec_pool_session_cache_read_tokens_total{job="node-exporter",node="acer-swift",host="msi-ms7758",worker="pool1",agent="claude"}'
+        values: '0+900x1600'
+      - series: 'exec_pool_session_output_tokens_total{job="node-exporter",node="acer-swift",host="msi-ms7758",worker="pool1",agent="claude"}'
+        values: '0x1600'
+      - series: 'exec_pool_session_cache_creation_tokens_total{job="node-exporter",node="acer-swift",host="msi-ms7758",worker="pool1",agent="claude"}'
+        values: '0x1600'
+      - series: 'exec_pool_session_turns_reported_total{job="node-exporter",node="acer-swift",host="msi-ms7758",worker="pool2",agent="claude"}'
+        values: '0+1x1600'
+      - series: 'exec_pool_session_cost_usd_total{job="node-exporter",node="acer-swift",host="msi-ms7758",worker="pool2",agent="claude"}'
+        values: '0+1x1600'
+      - series: 'exec_pool_sessions_reported_total{job="node-exporter",node="acer-swift",host="msi-ms7758",worker="pool2",agent="claude"}'
+        values: '0+1x1600'
+      - series: 'exec_pool_session_input_tokens_total{job="node-exporter",node="acer-swift",host="msi-ms7758",worker="pool2",agent="claude"}'
+        values: '0+100x1600'
+      - series: 'exec_pool_session_cache_read_tokens_total{job="node-exporter",node="acer-swift",host="msi-ms7758",worker="pool2",agent="claude"}'
+        values: '0+900x1600'
+      - series: 'exec_pool_session_output_tokens_total{job="node-exporter",node="acer-swift",host="msi-ms7758",worker="pool2",agent="claude"}'
+        values: '0x1600'
+      - series: 'exec_pool_session_cache_creation_tokens_total{job="node-exporter",node="acer-swift",host="msi-ms7758",worker="pool2",agent="claude"}'
+        values: '0x1600'
+    alert_rule_test:
+      - eval_time: 25h
+        alertname: ExecPoolCompactionWindowCostlier
+        exp_alerts: []

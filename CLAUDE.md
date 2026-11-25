@@ -203,8 +203,10 @@ the session gets the path with a head and tail excerpt; failed commands are unto
   when this option flips.
 
 **Auto-compaction** (`sam.claude.autoCompactWindow`, null by default): sets Claude Code's `autoCompactWindow`; a guest
-sets it through a guest module like the bulk reader. On now: nowhere; `homelab.shuntMetrics` writes
-`claude_auto_compact_window_info{worker,variant}` so a set side compares with the default (#626).
+sets it through a guest module like the bulk reader. On now: acer's pool slot pool2 at 300000 (not pool1, which carries
+Shunt); `homelab.shuntMetrics` writes `claude_auto_compact_window_info{worker,variant,shunt}`, the pool's usage series carry
+the slot as `worker`, and `modules/homelab/monitoring/rules/exec-pool.yaml` records them per variant for the Agent harnesses table and
+ExecPoolCompactionWindowCostlier (#626).
 
 ### Codex
 
