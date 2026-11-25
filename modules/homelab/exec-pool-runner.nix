@@ -110,7 +110,10 @@ let
 in
 {
 
-  imports = [ ./exec-pool-options.nix ];
+  imports = [
+    ./exec-pool-options.nix
+    ./exec-pool-legacy-sessions.nix
+  ];
 
   config = lib.mkIf (cfg.enable && lib.elem "runner" cfg.roles) {
     environment.systemPackages = [ drain ];

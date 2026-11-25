@@ -350,6 +350,20 @@ stderr tail (git exit 128 is usually the repository URL, the credential proxy or
 Do not: raise the task's max attempts to get past it; the cause repeats.
 Rollback: none; the increase ages out of the hour once prepares succeed.
 
+## ExecPoolSessionStalled
+
+Fires: a session last run on `host` has waited for 10 minutes after a turn that parked as `reason` (`turn_error` or
+`turn_timeout`) with no automatic continue left and nothing in its inbox (`exec_pool_sessions_stalled`, the queue's
+textfile on acer). A turn that ends in an error gets up to three continues in a row, due 10, 30 and 90 minutes after
+it (a rate limit is not met again at once); one stopped at its time limit up to two at once, the third waits. Each
+continue is a new turn told what happened, never a replay of its last action. A message starts the count again.
+First: `exec-pool list` names it (parked `turn_error` or `turn_timeout`); `exec-pool status ID` has its turns and
+`exec-pool logs ID` (`--turn N` for an older one) what the agent printed: a rate limit or expired login, a broken
+slot (`exec-pool result ID`), or a task too big for one turn. Fix that, then
+`exec-pool send ID --prompt TEXT` saying what happened and what to do next.
+Do not: send it "continue" while the cause stands; it fails the same way and stalls again after three more turns.
+Rollback: none; the alert clears when the session is woken or cancelled (`exec-pool cancel ID`).
+
 ## ExecPoolSessionsLarge
 
 Fires: on a pool host (acer, msi), the slots' session docks (`/var/lib/workers/.sessions/dock/<slot>/cur`, one session

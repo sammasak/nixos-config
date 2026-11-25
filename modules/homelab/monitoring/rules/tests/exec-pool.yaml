@@ -235,3 +235,27 @@ tests:
               description: "The slots' session docks on msi-ms7758 have held over 70% of the workers' state filesystem (75%) for 30 minutes: running turns' build outputs, or docks kept after a failed park push. Run du -sh /var/lib/workers/.sessions/dock/* as root (runbook)."
               query: 'homelab_dev_env_sessions_bytes{job="node-exporter",node="msi-ms7758"}'
               runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolsessionslarge"
+
+  # a session stalls after its third turn error at 5m: firing 10m later, by host and reason; a timeout one on msi
+  # that a message moves within 10 minutes never fires
+  - interval: 1m
+    input_series:
+      - series: 'exec_pool_sessions_stalled{job="node-exporter",node="acer-swift",host="acer-swift",reason="turn_error"}'
+        values: '0x5 1x30'
+      - series: 'exec_pool_sessions_stalled{job="node-exporter",node="acer-swift",host="msi-ms7758",reason="turn_timeout"}'
+        values: '0x5 1x5 0x25'
+      - series: 'exec_pool_sessions_stalled{job="node-exporter",node="acer-swift",host="msi-ms7758",reason="turn_error"}'
+        values: '0x35'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: ExecPoolSessionStalled
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: ExecPoolSessionStalled
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, host: acer-swift, reason: turn_error}
+            exp_annotations:
+              summary: "An execution pool session last run on acer-swift stopped after repeated turn_error turns"
+              description: "1 session(s) last run on acer-swift have waited 10 minutes after their last turn parked as turn_error with no automatic continue left, so nothing wakes them. Find it with exec-pool list (parked turn_error), read exec-pool status ID and exec-pool logs ID for what failed, fix the cause, then exec-pool send ID --prompt TEXT telling it what happened (runbook)."
+              query: 'exec_pool_sessions_stalled{job="node-exporter",host="acer-swift",reason="turn_error"} > 0'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolsessionstalled"

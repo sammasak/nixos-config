@@ -26,7 +26,7 @@ pub const DOWN: &str = include_str!("../migrations/0001_queue.down.sql");
 /// From 7 each records its floor, the oldest VERSION whose reads and writes stay correct on it: an additive one keeps
 /// the previous floor, so a binary rolled back across it still serves; one an older binary would misread or break by
 /// its writes records its own version.
-const STEPS: [(i32, &str); 18] = [
+const STEPS: [(i32, &str); 19] = [
     (1, UP),
     (2, include_str!("../migrations/0002_submitter.up.sql")),
     (3, include_str!("../migrations/0003_result.up.sql")),
@@ -51,6 +51,7 @@ const STEPS: [(i32, &str); 18] = [
     (16, include_str!("../migrations/0016_priority.up.sql")),
     (17, include_str!("../migrations/0017_transcript.up.sql")),
     (18, include_str!("../migrations/0018_undelivered.up.sql")),
+    (19, include_str!("../migrations/0019_continue_due.up.sql")),
 ];
 const DOWN_SUBMITTER: &str = include_str!("../migrations/0002_submitter.down.sql");
 const DOWN_RESULT: &str = include_str!("../migrations/0003_result.down.sql");
@@ -66,7 +67,7 @@ const DOWN_TURN_LOG: &str = include_str!("../migrations/0015_turn_log.down.sql")
 const DOWN_PRIORITY: &str = include_str!("../migrations/0016_priority.down.sql");
 const DOWN_TRANSCRIPT: &str = include_str!("../migrations/0017_transcript.down.sql");
 const DOWN_UNDELIVERED: &str = include_str!("../migrations/0018_undelivered.down.sql");
-const VERSION: i32 = 18;
+const VERSION: i32 = 19;
 /// The fence's SQLSTATE, raised by `attempts_fence`.
 const FENCED: &str = "XP409";
 const LIVE: &str = "('leased', 'running', 'checkpointing')";
@@ -302,25 +303,33 @@ const DRAINED: &str = "You were paused mid-turn by the pool (its host was poweri
 const TIMED_OUT: &str = "Your last turn hit the time limit. Check your last action, then continue.";
 /// Turns in a row that end in a timeout, no message in between, after which a session waits instead of continuing.
 pub const TIMEOUTS_IN_A_ROW: usize = 3;
+/// A `continue` row's text after a park for a turn that ended in an error: a new turn told so, never a replay.
+const ERRORED: &str = "Your last turn ended in an error (the agent failed or exited, perhaps at a rate limit). Check \
+    the state of your last action before continuing, and do not repeat a push, comment or other outside change you \
+    cannot confirm.";
+/// The delay before each automatic continue after turns in a row that end in an error, no message in between: once
+/// they are spent, the session waits for a message (`exec_pool_sessions_stalled`).
+pub const ERROR_BACKOFF_SECS: [u32; 3] = [600, 1800, 5400];
 
-/// How many of `attempt`'s last turns, the one just parked included, ended in a timeout with no message read since the
-/// first of them; a turn that read a message is the first of a run.
-fn timeouts_in_a_row(
+/// How many of `attempt`'s last turns, the one just parked included, parked for `reason` with no message read since
+/// the first of them (at most `limit`); a turn that read a message is the first of a run.
+fn in_a_row(
     tx: &mut Transaction<'_>,
-    task: &str,
-    attempt: &str,
+    (task, attempt): (&str, &str),
+    reason: ParkReason,
+    limit: usize,
 ) -> Result<usize, QueueError> {
     let mut n: usize = 0;
     for r in tx.query(
         &format!(
             "SELECT e.reason, EXISTS (SELECT FROM inbox i WHERE i.task_id = $1 AND i.kind = 'message' \
              AND i.consumed_epoch = e.lease_epoch) FROM events e WHERE e.attempt_id = $2 \
-             AND e.to_status = 'waiting' ORDER BY e.id DESC LIMIT {TIMEOUTS_IN_A_ROW}"
+             AND e.to_status = 'waiting' ORDER BY e.id DESC LIMIT {limit}"
         ),
         &[&task, &attempt],
     )? {
-        let (reason, told): (&str, bool) = (r.try_get(0)?, r.try_get(1)?);
-        if reason != ParkReason::TurnTimeout.as_str() {
+        let (why, told): (&str, bool) = (r.try_get(0)?, r.try_get(1)?);
+        if why != reason.as_str() {
             break;
         }
         n = n.saturating_add(1);
@@ -960,8 +969,8 @@ impl Store {
     /// Ends a session's turn at `epoch`, in one transaction: running or checkpointing to `waiting` with the try given
     /// back and the slot freed, `park.checkpoint` and `park.result` recorded, the inbox rows up to `park.upto` marked
     /// read at `epoch`; a turn preempted, stopped for a draining host or timed out (up to [`TIMEOUTS_IN_A_ROW`]) leaves a
-    /// `continue` row, and `park.wake` a
-    /// timer row (a `turn_end` with one parks as `waiting_until`). Then, if an unread row is due, the session is queued
+    /// `continue` row, one that ended in an error a `continue` due after its [`ERROR_BACKOFF_SECS`] delay (while any
+    /// is left), and `park.wake` a timer row (a `turn_end` with one parks as `waiting_until`). Then, if an unread row is due, the session is queued
     /// for its next turn. Every change, in order.
     ///
     /// # Errors
@@ -1033,16 +1042,42 @@ impl Store {
                 ],
             )?;
             mark_read(tx, (&task, attempt, epoch), park)?;
+            // the delay before the turn's continue, none for no continue
             let resume = match park.reason {
-                ParkReason::Preempted | ParkReason::HostDraining => true,
-                ParkReason::TurnTimeout => timeouts_in_a_row(tx, &task, attempt)? < TIMEOUTS_IN_A_ROW,
-                _ => false,
+                ParkReason::Preempted | ParkReason::HostDraining => Some(0),
+                ParkReason::TurnTimeout => (in_a_row(
+                    tx,
+                    (&task, attempt),
+                    ParkReason::TurnTimeout,
+                    TIMEOUTS_IN_A_ROW,
+                )? < TIMEOUTS_IN_A_ROW)
+                    .then_some(0),
+                ParkReason::TurnError => {
+                    let n = in_a_row(
+                        tx,
+                        (&task, attempt),
+                        ParkReason::TurnError,
+                        ERROR_BACKOFF_SECS.len().saturating_add(1),
+                    )?;
+                    ERROR_BACKOFF_SECS.get(n.saturating_sub(1)).copied()
+                }
+                _ => None,
             };
-            if resume {
-                tx.execute(
-                    "INSERT INTO inbox (task_id, kind) VALUES ($1, 'continue')",
-                    &[&task],
-                )?;
+            match resume {
+                Some(0) => {
+                    tx.execute(
+                        "INSERT INTO inbox (task_id, kind) VALUES ($1, 'continue')",
+                        &[&task],
+                    )?;
+                }
+                Some(secs) => {
+                    tx.execute(
+                        "INSERT INTO inbox (task_id, kind, due_at) \
+                         VALUES ($1, 'continue', now() + $2::int8 * interval '1 second')",
+                        &[&task, &i64::from(secs)],
+                    )?;
+                }
+                None => {}
             }
             if let Some(w) = &wake {
                 tx.execute(
@@ -1599,6 +1634,7 @@ fn turn(
     let stopped = match parked.as_deref() {
         Some("host_draining") => DRAINED,
         Some("turn_timeout") => TIMED_OUT,
+        Some("turn_error") => ERRORED,
         _ => CONTINUE,
     };
     let transcript = tx
@@ -1934,6 +1970,7 @@ fn sessions(
             "exec_pool_sessions_waiting{{host=\"{host}\",reason=\"{why}\"}} {n}"
         );
     }
+    stalled(tx, out, hosts)?;
     out.push_str(
         "# HELP exec_pool_session_turns_total Session turns parked, by host and park reason.\n\
          # TYPE exec_pool_session_turns_total counter\n",
@@ -1954,6 +1991,37 @@ fn sessions(
     }
     session_durations(tx, out, hosts)?;
     session_totals(tx, out, hosts)
+}
+
+/// Waiting sessions that nothing wakes after a turn that ended in an error or a timeout, by host and that reason: the
+/// automatic continues ([`ERROR_BACKOFF_SECS`], [`TIMEOUTS_IN_A_ROW`]) are spent and only a message moves them.
+fn stalled(tx: &mut Transaction<'_>, out: &mut String, hosts: &[String]) -> Result<(), QueueError> {
+    out.push_str(
+        "# HELP exec_pool_sessions_stalled Waiting sessions whose automatic continues are spent (turn_error, \
+         turn_timeout) and that nothing in their inbox wakes, by host and that reason.\n\
+         # TYPE exec_pool_sessions_stalled gauge\n",
+    );
+    for (host, why, n) in counted(
+        tx,
+        &format!(
+            "SELECT {LAST_HOST}, p.reason, count(*) FROM attempts a JOIN tasks t ON t.id = a.task_id \
+             CROSS JOIN LATERAL (SELECT e.reason FROM events e WHERE e.attempt_id = a.id \
+             AND e.to_status = 'waiting' ORDER BY e.id DESC LIMIT 1) p WHERE t.session AND a.status = 'waiting' \
+             AND p.reason IN ('turn_error', 'turn_timeout') \
+             AND NOT EXISTS (SELECT FROM inbox i WHERE i.task_id = t.id AND i.consumed_epoch IS NULL) GROUP BY 1, 2"
+        ),
+        hosts,
+        &[
+            ParkReason::TurnError.as_str(),
+            ParkReason::TurnTimeout.as_str(),
+        ],
+    )? {
+        let _ = writeln!(
+            out,
+            "exec_pool_sessions_stalled{{host=\"{host}\",reason=\"{why}\"}} {n}"
+        );
+    }
+    Ok(())
 }
 
 /// Turn time, wake latency, closed sessions' turns and age, and how long parked ones sit idle.

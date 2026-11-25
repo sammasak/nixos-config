@@ -38,6 +38,14 @@ code, commit on {branch} with a message whose body has a `Why:` line and push th
 its pre-push hooks run. Never push main or any other branch, never force-push, never skip a hook (no --no-verify, no \
 SKIP=); if a hook refuses the push, say why in your answer. The task:\n\n";
 
+/// What an agent on a GitHub repository is also told, before "The task:" of [`PREFIX`]: `gh pr create` and `gh pr
+/// comment` go through GraphQL, which the slot's GitHub proxy refuses (it bounds no repository), so the REST calls it
+/// passes; `{repo}` is the repository's `owner/name`.
+pub const PULL_REQUEST: &str = "To open a pull request from your branch, or comment on one, call GitHub's REST API: \
+`gh pr create` and `gh pr comment` use GraphQL, which the pool's GitHub proxy refuses. Open it with \
+`gh api repos/{repo}/pulls -f head={branch} -f base=BASE -f title=TITLE -F body=@FILE` and comment with \
+`gh api repos/{repo}/issues/NUMBER/comments -F body=@FILE`; no merge, review or other branch. ";
+
 /// What a session's first turn is also told, before "The task:" of [`PREFIX`]: how to wait for an outside event, and
 /// what a pause keeps.
 pub const SESSION_WAIT: &str = "To wait for an outside event, run `pool-wait --until HH:MM|RFC3339 [--note TEXT]`: \
@@ -52,10 +60,36 @@ across a wait. ";
 /// input: what of its slot survives the turn.
 pub const SESSION_PARK: &str = "Before you end a turn or wait, commit your work and push your branch as above: the next turn may run on another host from a fresh clone of it. The pool keeps what is left uncommitted as a snapshot and the session's transcript, nothing else of the checkout or home: no ignored files, build outputs or running processes. ";
 
-/// The prefix of a session's first turn: [`PREFIX`] with [`SESSION_WAIT`] and [`SESSION_PARK`] before its last
+/// [`PREFIX`] for `task`, with [`PULL_REQUEST`] before its last sentence when its repository is on GitHub.
+///
+/// # Errors
+/// What [`branch`] rejects.
+pub fn prefix(task: &TaskSpec) -> Result<String, Error> {
+    let branch = branch(task)?;
+    let repo = crate::runner::github_push_url(&task.source.repo).and_then(|u| {
+        u.strip_prefix("git@github.com:")
+            .and_then(|r| r.strip_suffix(".git"))
+            .map(str::to_owned)
+    });
+    let out = PREFIX.replace("{branch}", &branch);
+    Ok(match repo {
+        Some(repo) => out.replace(
+            "The task:",
+            &format!(
+                "{}The task:",
+                PULL_REQUEST
+                    .replace("{repo}", &repo)
+                    .replace("{branch}", &branch)
+            ),
+        ),
+        None => out,
+    })
+}
+
+/// The prefix of a session's first turn: [`prefix`] with [`SESSION_WAIT`] and [`SESSION_PARK`] before its last
 /// sentence.
 fn session_prefix(task: &TaskSpec) -> Result<String, Error> {
-    Ok(PREFIX.replace("{branch}", &branch(task)?).replace(
+    Ok(prefix(task)?.replace(
         "The task:",
         &format!("{SESSION_WAIT}{SESSION_PARK}The task:"),
     ))
@@ -90,7 +124,7 @@ pub fn argv(task: &TaskSpec) -> Result<Vec<String>, Error> {
     let Some(prompt) = prompt else {
         return Ok(out);
     };
-    let prefix = PREFIX.replace("{branch}", &branch(task)?);
+    let prefix = prefix(task)?;
     // `--` so a prompt starting with `-` is not read as a flag
     out.extend(["--".to_owned(), format!("{prefix}{prompt}")]);
     Ok(out)
