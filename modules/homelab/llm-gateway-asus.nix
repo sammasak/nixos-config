@@ -68,7 +68,7 @@ in
   {
     assertion =
       !lib.any (m: m.tool_capable or false && lib.hasInfix "unverified" (m.notes or "")) models;
-    message = "${where}: a model is tool_capable while its notes say tool use is unverified (#494); verify a Pi tool loop on asus with the replay, then change the note with the flag.";
+    message = "${where}: a model is tool_capable while its notes say tool use is unverified (#494); verify a Pi tool loop on asus (the #620 canary through the gateway), then change the note with the flag.";
   }
   {
     assertion = !lib.any namesAsus links && !namesAsus hooks;
