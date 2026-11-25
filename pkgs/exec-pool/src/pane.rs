@@ -99,8 +99,9 @@ pub fn seen(list: &Value, pane: &str) -> Option<Seen> {
     })
 }
 
-/// Whether a process the host sees, by its `/proc/PID/cgroup` and `/proc/PID/cmdline`, is a Bash tool command
-/// ([`TOOL_SHELL`]) of the agent in slot `slot`'s step `unit`: in that unit's cgroup inside the slot's container.
+/// Whether a process the host sees is a Bash tool command ([`TOOL_SHELL`]) of the agent in `slot`'s step `unit`.
+///
+/// It is by its `/proc/PID/cgroup`, in that unit's cgroup inside the slot's container, and its `/proc/PID/cmdline`.
 #[must_use]
 pub fn tool_shell(cgroup: &str, cmdline: &[u8], (slot, unit): (&str, &str)) -> bool {
     let container = format!("/container@{slot}.service/");
@@ -135,8 +136,9 @@ impl TurnWatch {
         }
     }
 
-    /// How long the agent has been idle once Herdr shows `seen` at `now_ms` and `jobs` tells whether a Bash tool
-    /// command of its runs, counted from when it settled; `None` while it is not.
+    /// How long the agent has been idle once Herdr shows `seen` at `now_ms`, counted from when it settled.
+    ///
+    /// `None` while it is not, and while `jobs`: a Bash tool command of its runs.
     pub const fn idle_ms(&mut self, seen: Option<Seen>, jobs: bool, now_ms: u64) -> Option<u64> {
         match seen {
             Some(s) if s.settled && !jobs && s.seq > self.before => {
