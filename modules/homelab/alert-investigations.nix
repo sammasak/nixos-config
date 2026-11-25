@@ -90,7 +90,7 @@ in
         StateDirectoryMode = "0755";
         # each command has its own 120 s bound; a run settles and starts a few at most
         TimeoutStartSec = 600;
-        MemoryMax = "128M";
+        MemoryMax = "64M";
         Nice = 10;
         ProtectSystem = "strict";
         # ssh's key and gh's login are read from the home, nothing is written there
