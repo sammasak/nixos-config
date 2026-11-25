@@ -3590,16 +3590,13 @@ fn an_undelivered_turn_keeps_the_error_backoff_and_past_it_counts_as_stalled() {
     assert!(stalled(&metrics), "{metrics}");
     s.send(&id, "and this").unwrap();
     assert!(!stalled(&owner.metrics().unwrap()), "a message moves it");
-    let held: i64 = pg
-        .sql()
-        .query_one(
-            "SELECT count(*) FROM inbox WHERE consumed_epoch IS NULL AND due_at IS NOT NULL",
-            &[],
-        )
-        .unwrap()
-        .get(0);
+    let unread = |cond: &str| -> i64 {
+        let sql = format!("SELECT count(*) FROM inbox WHERE consumed_epoch IS NULL {cond}");
+        pg.sql().query_one(&sql, &[]).unwrap().get(0)
+    };
     assert_eq!(
-        held, 0,
+        unread("AND due_at IS NOT NULL"),
+        0,
         "the message makes it due in the queue, for a runner at any version"
     );
     let (a, epoch, turn) = started(&mut runner);
@@ -3611,15 +3608,7 @@ fn an_undelivered_turn_keeps_the_error_backoff_and_past_it_counts_as_stalled() {
     runner
         .park(&a, epoch, &park(ParkReason::TurnEnd, turn.upto))
         .unwrap();
-    let unread: i64 = pg
-        .sql()
-        .query_one(
-            "SELECT count(*) FROM inbox WHERE consumed_epoch IS NULL",
-            &[],
-        )
-        .unwrap()
-        .get(0);
-    assert_eq!(unread, 0, "both read once delivered");
+    assert_eq!(unread(""), 0, "both read once delivered");
 }
 
 #[test]

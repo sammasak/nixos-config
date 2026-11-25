@@ -265,11 +265,11 @@ tests:
   - interval: 1m
     input_series:
       - series: 'exec_pool_session_stalled{job="node-exporter",node="acer-swift",host="acer-swift",reason="turn_error",task="cli-1"}'
-        values: '_x5 1x30'
+        values: '0x5 1x30'
       - series: 'exec_pool_session_stalled{job="node-exporter",node="acer-swift",host="acer-swift",reason="turn_error",task="cli-2"}'
-        values: '_x11 1x24'
+        values: '0x11 1x24'
       - series: 'exec_pool_session_stalled{job="node-exporter",node="acer-swift",host="msi-ms7758",reason="turn_timeout",task="cli-3"}'
-        values: '_x5 1x3 _x27'
+        values: '0x5 1x3 0x27'
     alert_rule_test:
       - eval_time: 10m
         alertname: ExecPoolSessionStalled
