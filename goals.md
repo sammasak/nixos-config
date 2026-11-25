@@ -104,7 +104,17 @@ turn waiting on its own background command (a build started in the background) l
 which killed the command; a live Bash tool command of the agent in its slot's turn unit now keeps it busy, the 30 minute
 limit still the outer bound. `just pool-merge-check` built exec-pool alone; it now builds each `pkgs/<dir>` the branch
 changes (`pkgsDir.<dir>`) and names them, nothing when none changed, so a lint failing inside a package build (ruff
-E501 last night) is caught before merge. A background subagent (no process of its own) still looks idle.
+E501 last night) is caught before merge.
+
+**25 Nov, branch `pool/cli-8ce84f45f00fc734`** (deploy acer and msi): a turn waiting only on its own background
+subagent no longer looks idle: Claude writes `subagents/agent-<id>.meta.json` under the session's transcript and adds
+`"finished": true` when it ends, so an unfinished one written this turn keeps the agent busy, the 30 minute limit
+still the outer bound. Per merged change (epic 646): `exec-pool sessions [ID]` prints one JSON line per session with
+turns, wall, running, queued, review and waiting time (split by park reason), tokens, cost and the pull request of
+`pool/<task>` as gh finds it (migration 0020, view `session_summaries`). `exec-pool-session-report` on acer logs each
+merged session once to the journal, and the pool dashboard's "Merged sessions (7 d)" table reads it from Loki, with no
+id in a metric label. Follow-up: a runner restarted mid-turn takes its new start as the turn's, so a subagent from
+before the restart is not seen.
 
 **Open, in pick-up order**
 
@@ -125,7 +135,8 @@ E501 last night) is caught before merge. A background subagent (no process of it
 7. `status` and `list` do not show priority.
 8. `HostBehindMain` needs 24 h; black-pi lacked new alert rules for some hours unseen.
 9. lenovo cannot push nixos-config (stale devenv gate) or fetch a new private skills pin as a user.
-10. Cost: about 45 USD of session cost on 24 Nov; track cost per merged PR.
+10. Cost: about 45 USD of session cost on 24 Nov; cost per merged PR is in `exec-pool sessions` and the dashboard
+    table once `pool/cli-8ce84f45f00fc734` deploys to acer; read it after a day.
 11. Store follow-ups in #754; credential slices 3 and 4.
 12. Session state lives in git (#781, merged); its old trees and store are removed by the legacy remover once deployed.
 13. The proxy cannot hold a pull request to the task's own repository and `pool/<task id>` branch: the head is in the
