@@ -2276,8 +2276,8 @@ fn usage(tx: &mut Transaction<'_>, out: &mut String, hosts: &[String]) -> Result
          # TYPE exec_pool_session_cache_read_tokens_total counter\n",
         "# HELP exec_pool_session_cache_creation_tokens_total Input tokens written to the prompt cache, by host, arm and agent kind.\n\
          # TYPE exec_pool_session_cache_creation_tokens_total counter\n",
-        "# HELP exec_pool_sessions_reported_1d Sessions with a turn that reported its usage in the last day, by host, arm and agent kind.\n\
-         # TYPE exec_pool_sessions_reported_1d gauge\n",
+        "# HELP exec_pool_sessions_reported_last_day Sessions with a turn that reported its usage in the last day, by host, arm and agent kind.\n\
+         # TYPE exec_pool_sessions_reported_last_day gauge\n",
     ];
     let row_of = |(host, variant, shunt): &(String, String, String), agent: &str| {
         rows.iter().find(|r| {
@@ -2331,8 +2331,8 @@ fn usage(tx: &mut Transaction<'_>, out: &mut String, hosts: &[String]) -> Result
         .try_get(0)?;
     let _ = write!(
         out,
-        "# HELP exec_pool_sessions_mixed_arms_1d Sessions whose reported turns in the last day ran under more than one arm.\n\
-         # TYPE exec_pool_sessions_mixed_arms_1d gauge\nexec_pool_sessions_mixed_arms_1d {mixed}\n"
+        "# HELP exec_pool_sessions_mixed_arms_last_day Sessions whose reported turns in the last day ran under more than one arm.\n\
+         # TYPE exec_pool_sessions_mixed_arms_last_day gauge\nexec_pool_sessions_mixed_arms_last_day {mixed}\n"
     );
     Ok(())
 }

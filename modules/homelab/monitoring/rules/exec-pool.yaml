@@ -6,7 +6,7 @@
 groups:
   # #626's compaction window comparison: Claude turns by the arm their slot declared (variant: its autoCompactWindow
   # or default; shunt), over a day. A session whose turns ran under two arms counts on each
-  # (exec_pool_sessions_mixed_arms_1d); unknown is a turn from before.
+  # (exec_pool_sessions_mixed_arms_last_day); unknown is a turn from before.
   - name: exec-pool.variants
     rules:
       - record: host_variant:exec_pool_session_turns:increase1d
@@ -15,7 +15,7 @@ groups:
       # sessions with a reported turn in the last day, not new ones: sessions last for days
       - record: host_variant:exec_pool_sessions:1d
         expr: |
-          sum by (host, variant, shunt) (exec_pool_sessions_reported_1d{job="node-exporter",agent="claude"})
+          sum by (host, variant, shunt) (exec_pool_sessions_reported_last_day{job="node-exporter",agent="claude"})
       # uncached input, output, cache read and cache creation together
       - record: host_variant:exec_pool_session_tokens:increase1d
         expr: |
