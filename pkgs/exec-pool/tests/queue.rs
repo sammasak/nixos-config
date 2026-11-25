@@ -3677,3 +3677,76 @@ fn an_undelivered_park_lands_in_a_queue_not_yet_migrated_to_hold_it() {
         "there it wakes at once, as before"
     );
 }
+
+#[test]
+fn a_message_during_a_turn_releases_held_input_for_the_next_turn_not_that_one() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let (a, epoch, first) = started(&mut owner);
+    owner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, first.upto))
+        .unwrap();
+    s.send(&id, "held").unwrap();
+    let (a, epoch, turn) = started(&mut owner);
+    let undelivered = Park {
+        undelivered: true,
+        ..park(ParkReason::TurnError, turn.upto)
+    };
+    owner.park(&a, epoch, &undelivered).unwrap();
+    // a timer due now wakes it before the hold ends: its turn is handed the timer alone
+    pg.sql()
+        .execute(
+            "INSERT INTO inbox (task_id, kind, due_at) VALUES ($1, 'timer', now())",
+            &[&id],
+        )
+        .unwrap();
+    assert_eq!(
+        moves(&owner.reconcile().unwrap()),
+        [(Status::Queued, "wake")]
+    );
+    let (a, epoch, timer) = started(&mut owner);
+    assert!(!timer.input.contains("held"), "{}", timer.input);
+    s.send(&id, "later").unwrap();
+    owner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, timer.upto))
+        .unwrap();
+    let (_, _, next) = started(&mut owner);
+    assert!(
+        next.input.contains("held") && next.input.contains("later"),
+        "the turn that was not handed it did not mark it read: {}",
+        next.input
+    );
+}
+
+#[test]
+fn input_held_past_the_backoff_stalls_its_session_after_a_timer_turn_too() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (_s, id) = session(&pg);
+    let (a, epoch, first) = started(&mut owner);
+    owner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, first.upto))
+        .unwrap();
+    // as hold_input leaves it past the backoff, then a timer comes due
+    pg.sql()
+        .batch_execute(&format!(
+            "INSERT INTO inbox (task_id, kind, body, due_at) VALUES ('{id}', 'message', 'held', 'infinity'); \
+             INSERT INTO inbox (task_id, kind, due_at) VALUES ('{id}', 'timer', now())"
+        ))
+        .unwrap();
+    owner.reconcile().unwrap();
+    let (a, epoch, timer) = started(&mut owner);
+    assert!(!timer.input.contains("held"), "{}", timer.input);
+    owner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, timer.upto))
+        .unwrap();
+    let metrics = owner.metrics().unwrap();
+    assert!(
+        metrics.lines().any(|l| l
+            == format!(
+                "exec_pool_session_stalled{{host=\"msi-ms7758\",reason=\"turn_end\",task=\"{id}\"}} 1"
+            )),
+        "{metrics}"
+    );
+}

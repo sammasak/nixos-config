@@ -2151,12 +2151,13 @@ fn sessions(
 /// Waiting sessions that nothing wakes after a turn that ended in an error or a timeout, by host and that reason, and
 /// each one by its task (so a second stall pages on its own): the automatic continues ([`ERROR_BACKOFF_SECS`],
 /// [`TIMEOUTS_IN_A_ROW`]) are spent and only a message moves them. Input [`hold_input`] held past the backoff wakes
-/// nothing.
+/// nothing, and stalls its session whatever its last turn parked as (a timer's turn may end in between).
 fn stalled(tx: &mut Transaction<'_>, out: &mut String, hosts: &[String]) -> Result<(), QueueError> {
     let from = "FROM attempts a JOIN tasks t ON t.id = a.task_id \
         CROSS JOIN LATERAL (SELECT e.reason FROM events e WHERE e.attempt_id = a.id \
         AND e.to_status = 'waiting' ORDER BY e.id DESC LIMIT 1) p WHERE t.session AND a.status = 'waiting' \
-        AND p.reason IN ('turn_error', 'turn_timeout', 'turn_memory_kill') \
+        AND (p.reason IN ('turn_error', 'turn_timeout', 'turn_memory_kill') OR EXISTS (SELECT FROM inbox i \
+        WHERE i.task_id = t.id AND i.consumed_epoch IS NULL AND i.due_at = 'infinity')) \
         AND NOT EXISTS (SELECT FROM inbox i WHERE i.task_id = t.id AND i.consumed_epoch IS NULL \
         AND i.due_at IS DISTINCT FROM 'infinity')";
     out.push_str(

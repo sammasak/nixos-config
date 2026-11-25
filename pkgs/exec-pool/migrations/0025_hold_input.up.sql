@@ -19,11 +19,12 @@ REVOKE ALL ON FUNCTION hold_input(text, text, int8, int8, int8) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION hold_input(text, text, int8, int8, int8) TO exec_pool_runner;
 
 -- a new message releases every held row before it (only a hold gives a message a due_at), in the queue, not the
--- runner: whatever binary claims the turn after reads them as due, in order
+-- runner: whatever binary claims the turn after reads them as due, in order. Due now(), not NULL: a turn live since
+-- before it was not handed them, and its park marks read only what was due at its lease
 CREATE FUNCTION release_held_input() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 BEGIN
-  UPDATE inbox SET due_at = NULL
+  UPDATE inbox SET due_at = now()
     WHERE task_id = NEW.task_id AND consumed_epoch IS NULL AND id < NEW.id
     AND (due_at = 'infinity'::timestamptz OR (kind = 'message' AND due_at IS NOT NULL));
   RETURN NULL;
@@ -33,5 +34,6 @@ CREATE TRIGGER inbox_release_held_input AFTER INSERT ON inbox
   FOR EACH ROW WHEN (NEW.kind = 'message') EXECUTE FUNCTION release_held_input();
 
 -- additive: a binary at 9 to 24 never holds, reads a held row as not yet due, and a message releases one held past
--- the backoff for it as for any binary
+-- the backoff for it as for any binary; only its stalled gauge misses a session held past the backoff, so an owner
+-- rolled back below 25 pages none until a message comes
 INSERT INTO schema_migrations (version, floor) VALUES (25, 9);
