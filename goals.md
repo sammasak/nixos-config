@@ -120,6 +120,8 @@ The proxy fetches any other repository unsigned and read-only (truespar/scriptor
 13. The proxy cannot hold a pull request to the task's own repository and `pool/<task id>` branch: the head is in the
     request body, which Caddy does not read, and acer's fleet site does not know which slot asks. Today any listed
     repository, any head; a body-reading gate would close it.
+14. A turn whose input never reached the agent is queued again at once, skipping the error backoff, and never counts as
+    stalled (pre-existing; the runner cannot move a message's `due_at`).
 
 ### Paddock SSD-backed MoE expert streaming
 
