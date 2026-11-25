@@ -244,9 +244,10 @@ builds were served only while they were up, and no host asks them (a sleeping ca
 timeout). `modules/core/store-upload.nix` (this branch) closes that: a `post-build-hook` on msi and asus queues each
 built output. A path unit and a 10 min retry timer hand the queue over ssh (the host key, a forced command) to acer,
 which pulls the paths from the sender's harmonia, keeps them under gcroots, and roots its own builds the same way.
-Retention is 14 days and 100 GiB, oldest dropped first. Gauges: `store_upload_queue_paths`,
+Retention is 14 days and 100 GiB of the closures they hold, oldest dropped first. Gauges: `store_upload_queue_paths`,
 `store_upload_sent_paths_total`, `store_upload_last_success_timestamp_seconds` on the senders;
-`store_upload_roots{host}`, `store_upload_roots_bytes{host}` and `store_upload_received_paths_total{host,result}` on acer.
+`store_upload_roots{host}`, `store_upload_roots_bytes{host}`, `store_upload_roots_closure_bytes` and
+`store_upload_received_paths_total{host,result}` on acer.
 
 Follow-ups, in order: (1) the 26 Nov 03:20 run's numbers into the table above; (2) one evaluation of every host shared
 by the probe, the flake check and seventh-host (about 400 s); (3) the flake check's per-output `nix eval` processes
