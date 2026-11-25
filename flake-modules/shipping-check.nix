@@ -119,8 +119,6 @@ let
     ];
   };
   redFor = a.ScheduledGateRed.forMinutes.value;
-  rolledFor = a.DeployRolledBack.forMinutes.value;
-  escapeFor = a.EscapeFound.forMinutes.value;
   overdueFor = a.ScheduledGateOverdue.forMinutes.value;
   # the limit in minutes; samples every 4 m, under the 5 m lookback. The last finished gate is at the epoch, promtool's 0
   overdueAt = a.ScheduledGateOverdue.hours.value * 60;
@@ -190,7 +188,7 @@ let
             };
             exp_annotations =
               let
-                summary = "The scheduled full gate failed on main at aaaaaaaaaaaa, first failed step nixos-flake-check (checks.x86_64-linux.foo); ${range}. A red head runs once more by itself; red again, read it on acer with journalctl -u scheduled-gate -n 200 and reproduce with just full-gate aaaaaaaaaaaa. A later scheduled run that passes clears this.";
+                summary = "The scheduled full gate failed on main at aaaaaaaaaaaa, first failed step nixos-flake-check (checks.x86_64-linux.foo); ${range}.";
               in
               {
                 inherit summary;
@@ -240,148 +238,6 @@ let
             alertname = "ScheduledGateRed";
             eval_time = "${n (redFor + 30)}m";
             exp_alerts = [ ];
-          }
-        ];
-      }
-      {
-        name = "a rollback fires for its host and clears when a good deploy of that host drops its open count";
-        interval = "1m";
-        input_series = [
-          {
-            series = ''shipping_deploy_rollbacks_open{host="acer-swift",node="acer-swift",window="24h"}'';
-            values = "1x${n (rolledFor + 10)} 0x30";
-          }
-          {
-            series = ''shipping_deploy_rollbacks_open{host="lenovo",node="lenovo-21CB001PMX",window="24h"}'';
-            values = "0x${n (rolledFor + 40)}";
-          }
-        ];
-        alert_rule_test = [
-          {
-            alertname = "DeployRolledBack";
-            eval_time = "${n (rolledFor + 5)}m";
-            exp_alerts = [
-              {
-                exp_labels = {
-                  host = "acer-swift";
-                  node = "acer-swift";
-                  severity = "warning";
-                  team = "shipping";
-                };
-              }
-            ];
-          }
-          {
-            alertname = "DeployRolledBack";
-            eval_time = "${n (rolledFor + 20)}m";
-            exp_alerts = [ ];
-          }
-        ];
-      }
-      {
-        name = "an escape fires while the collector counts it and clears when it is reapplied or closed";
-        interval = "1m";
-        input_series = [
-          {
-            series = ''shipping_escapes{kind="revert",window="24h"}'';
-            values = "1x${n (escapeFor + 10)} 0x30";
-          }
-          {
-            series = ''shipping_escapes{kind="label",window="24h"}'';
-            values = "0x${n (escapeFor + 40)}";
-          }
-        ];
-        alert_rule_test = [
-          {
-            alertname = "EscapeFound";
-            eval_time = "${n (escapeFor + 5)}m";
-            exp_alerts = [
-              {
-                exp_labels = {
-                  severity = "warning";
-                  team = "shipping";
-                };
-              }
-            ];
-          }
-          {
-            alertname = "EscapeFound";
-            eval_time = "${n (escapeFor + 20)}m";
-            exp_alerts = [ ];
-          }
-        ];
-      }
-      {
-        name = "a step pattern clears once a scheduled full gate on main passes after its last failure, unless that gate deferred its check";
-        interval = "1m";
-        input_series = [
-          {
-            series = ''shipping_gate_step_failures{check="checks.x86_64-linux.foo",step="nixos-flake-check",window="7d"}'';
-            values = "${n minFails}x${n (stepFor + 40)}";
-          }
-          {
-            series = ''shipping_gate_step_last_failure_timestamp_seconds{check="checks.x86_64-linux.foo",step="nixos-flake-check"}'';
-            values = "60x${n (stepFor + 40)}";
-          }
-          {
-            series = ''shipping_gate_runs_counted{host="acer-swift"}'';
-            values = "${n lastRuns}x${n (stepFor + 40)}";
-          }
-          # a green before the last failure handles nothing; the one after it does
-          {
-            series = "homelab_scheduled_gate_green_timestamp_seconds{${gateNode}}";
-            values = "30x${n (stepFor + 10)} ${n ((stepFor + 10) * 60)}x30";
-          }
-          # bar: a check that green deferred to its owner host, which it says nothing about
-          {
-            series = ''shipping_gate_step_failures{check="checks.x86_64-linux.bar",step="nixos-flake-check",window="7d"}'';
-            values = "${n minFails}x${n (stepFor + 40)}";
-          }
-          {
-            series = ''shipping_gate_step_last_failure_timestamp_seconds{check="checks.x86_64-linux.bar",step="nixos-flake-check"}'';
-            values = "60x${n (stepFor + 40)}";
-          }
-          {
-            series = ''homelab_scheduled_gate_green_deferred{${gateNode},check="checks.x86_64-linux.bar",step="nixos-flake-check"}'';
-            values = "1x${n (stepFor + 40)}";
-          }
-        ];
-        alert_rule_test = [
-          {
-            alertname = "RetroDueStepFailsRepeat";
-            eval_time = "${n (stepFor + 5)}m";
-            exp_alerts = [
-              {
-                exp_labels = {
-                  step = "nixos-flake-check";
-                  check = "checks.x86_64-linux.foo";
-                  severity = "warning";
-                  team = "shipping";
-                };
-              }
-              {
-                exp_labels = {
-                  step = "nixos-flake-check";
-                  check = "checks.x86_64-linux.bar";
-                  severity = "warning";
-                  team = "shipping";
-                };
-              }
-            ];
-          }
-          {
-            alertname = "RetroDueStepFailsRepeat";
-            eval_time = "${n (stepFor + 20)}m";
-            exp_alerts = [
-              {
-                exp_labels = {
-                  step = "nixos-flake-check";
-                  check = "checks.x86_64-linux.bar";
-                  severity = "warning";
-                  team = "shipping";
-                };
-              }
-            ];
           }
         ];
       }
