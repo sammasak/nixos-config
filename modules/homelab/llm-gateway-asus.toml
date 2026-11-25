@@ -1,5 +1,5 @@
 
-# asus as a tier-3 provider beside msi: appended to llm-gateway.toml only when
+# asus as a tier-3 provider beside msi: put before llm-gateway.toml only when
 # homelab.llmGateway.asus.enable is set (llm-gateway.nix), so the catalog the
 # gateway reads without it is the base file alone. asus powers off every night
 # and the owner powers it off by hand (sam.fleet.hosts.asus-b460m.power): a
@@ -20,14 +20,20 @@ drop_fields = ["reasoning_effort", "reasoning"]
 health_url = "http://@asus@:11434/api/tags"
 
 # One model: Ollama keeps one resident (OLLAMA_MAX_LOADED_MODELS 1), so a
-# second would swap weights between requests. After msi in catalog order.
+# second would swap weights between requests. Rendered before llm-gateway.toml,
+# so it is first in tier 3: `local` and `auto`'s floor try it before msi's CPU.
+# qwen3.5:4b, not a pinned gemma4 or qwen2.5-coder: Ollama parses its tool calls
+# (parser qwen3.5) where qwen2.5-coder's template leaves plain-text JSON, and at
+# 3.3 GB it stays on the GPU at 32K beside its KV cache. Until asus holds the tag
+# (homelab.ollama.toolModel.enable there, or `ollama pull qwen3.5:4b`) a call
+# gets 404, which blocks the model for block_secs and fails over.
 [[models]]
 provider = "asus"
-id = "gemma4:e4b-it-qat"
+id = "qwen3.5:4b"
 tier = 3
 cost_class = "free"
 enabled = true
 context_window = 32768
-# false until the replay shows gemma4 completing a Pi tool loop on asus (#494): then true, and the note changes with it
-tool_capable = false
-notes = "tool use unverified: verify a Pi tool loop on asus (#494) before enabling"
+# the gate is the #620 canary through the gateway (#494): if it fails, false again sends tool loops back to hosted models
+tool_capable = true
+notes = "tool calls by Ollama's qwen3.5 parser; Pi tool loop gated by the #620 canary through the gateway (#494)"

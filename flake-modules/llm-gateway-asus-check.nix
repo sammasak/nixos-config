@@ -1,13 +1,13 @@
-# asus as acer's gateway provider: off, the deployed config is the base file's alone (the same store path); on, it is
-# one tier-3 provider after msi; and each wrong fact (modules/homelab/llm-gateway-asus.nix) fails its own assertion.
+# asus as acer's gateway provider: off, the deployed config is the base file's alone (the same store path); on, as
+# acer has it, it is one tier-3 provider before msi; and each wrong fact (modules/homelab/llm-gateway-asus.nix) fails its own assertion.
 { config, lib, ... }:
 let
   host = config.flake.nixosConfigurations.acer-swift;
   acer = host.config;
   inherit (host) pkgs;
-  on =
+  off =
     (host.extendModules {
-      modules = [ { homelab.llmGateway.asus.enable = true; } ];
+      modules = [ { homelab.llmGateway.asus.enable = lib.mkForce false; } ];
     }).config;
   base = builtins.readFile ../modules/homelab/llm-gateway.toml;
   fragment = builtins.readFile ../modules/homelab/llm-gateway-asus.toml;
@@ -57,7 +57,7 @@ let
     wrong-port = edit ":11434/" ":11435/";
     above-tier-3 = edit "tier = 3" "tier = 2";
     no-health-probe = edit "health_url" "# health_url";
-    tool-capable-unverified = edit "tool_capable = false" "tool_capable = true";
+    tool-capable-unverified = edit "Ollama's qwen3.5 parser" "unverified";
     start-requires-asus = unitWith {
       systemd.services.llm-gateway.requires = [ "ollama-asus-reachable.service" ];
     };
@@ -78,7 +78,7 @@ let
     start-requires-asus = "must not require";
     start-probes-asus = "must not require";
   };
-  onCatalog = builtins.fromTOML (rendered + facts.fragment);
+  onCatalog = builtins.fromTOML (facts.fragment + rendered);
   tier3 = map (m: m.provider) (lib.filter (m: m.tier == 3) onCatalog.models);
 in
 {
@@ -90,24 +90,24 @@ in
           failing facts == [ ]
         ) "acer's own asus facts fail: ${toString (failing facts)}";
         assert lib.assertMsg (
-          acer.systemd.services.llm-gateway.serviceConfig.ExecStart == execStart rendered
+          off.systemd.services.llm-gateway.serviceConfig.ExecStart == execStart rendered
         ) "llm-gateway: with asus off the deployed config moved from llm-gateway.toml's rendering";
         assert lib.assertMsg
-          (on.systemd.services.llm-gateway.serviceConfig.ExecStart == execStart (rendered + facts.fragment))
-          "llm-gateway: with asus on the deployed config is not llm-gateway.toml then llm-gateway-asus.toml";
+          (acer.systemd.services.llm-gateway.serviceConfig.ExecStart == execStart (facts.fragment + rendered))
+          "llm-gateway: with asus on the deployed config is not llm-gateway-asus.toml then llm-gateway.toml";
         assert lib.assertMsg (lib.all (
           a: a.assertion
-        ) on.assertions) "acer with asus on fails an assertion";
+        ) off.assertions) "acer with asus off fails an assertion";
         assert lib.assertMsg
           (
             tier3 == [
-              "msi"
-              "msi"
               "asus"
+              "msi"
+              "msi"
             ]
             && lib.any (p: p.name == "asus" && p.max_concurrency == 1) onCatalog.providers
           )
-          "llm-gateway: with asus on, tier 3 is not msi's models then asus's one-slot provider (${toString tier3})";
+          "llm-gateway: with asus on, tier 3 is not asus's one-slot provider then msi's models (${toString tier3})";
         assert lib.assertMsg (
           lib.attrNames seeds == lib.attrNames expect
         ) "llm-gateway-asus: a seed without its expected failure";
