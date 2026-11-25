@@ -47,8 +47,9 @@ let
   slotNames = map (n: "pool${toString n}") (lib.range 1 cfg.slots);
   execDir = "/var/lib/exec-pool-exec";
   # none: the helper bounds every step itself (the park's push included), and a session turn has no bound of its own,
-  # as the owner may work in its pane for hours (each stretch of the agent's work at most timeoutSecs, each pause at
-  # most idleGraceSecs); a stop here would kill the helper with the turn's work in the dock and quarantine the slot
+  # as the owner may work in its pane for hours (each stretch of the agent's work at most timeoutSecs with no
+  # transcript write or running job and four of them with no pause, each pause at most idleGraceSecs);
+  # a stop here would kill the helper with the turn's work in the dock and quarantine the slot
   execTimeout = "infinity";
   # the runner renews it every 10 s while the helper runs, so a run may outlast it; a runner that dies sends its
   # running attempt to review this long after its last renewal
