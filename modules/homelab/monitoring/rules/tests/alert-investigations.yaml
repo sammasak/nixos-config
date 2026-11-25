@@ -1,0 +1,70 @@
+# promtool test rules for alert-investigations.yaml (flake-modules/monitoring-check.nix runs it). lenovo runs the
+# trigger with NodeSystemdUnitFailed switched on.
+rule_files: [../alert-investigations.yaml]
+evaluation_interval: 1m
+tests:
+  # one failed investigation at 30m: firing 15m later, cleared once it is 6 h old; reported ones never fire
+  - interval: 1m
+    input_series:
+      - series: 'homelab_alert_investigations_total{job="node-exporter",node="lenovo-21CB001PMX",alertname="NodeSystemdUnitFailed",outcome="failed"}'
+        values: '0x30 1x420'
+      - series: 'homelab_alert_investigations_total{job="node-exporter",node="lenovo-21CB001PMX",alertname="NodeSystemdUnitFailed",outcome="reported"}'
+        values: '0x10 1x10 2x430'
+      - series: 'homelab_alert_investigations_up{job="node-exporter",node="lenovo-21CB001PMX"}'
+        values: '1x450'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: AlertInvestigationFailed
+        exp_alerts: []
+      - eval_time: 50m
+        alertname: AlertInvestigationFailed
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: lenovo-21CB001PMX, alertname: NodeSystemdUnitFailed}
+            exp_annotations:
+              summary: "Alert investigations on lenovo-21CB001PMX are failing for NodeSystemdUnitFailed"
+              description: "An investigation pool session started by alert-investigations on lenovo-21CB001PMX failed in the last 6 h (its start was refused, the session failed, timed out, ended without a report or pushed a branch), or the trigger has not read Alertmanager for 15 minutes, so a firing alert goes uninvestigated. Run journalctl -u alert-investigations.service there; the reason is in homelab_alert_investigation_failures_total and on the alert's issue."
+              query: 'increase(homelab_alert_investigation_failures_total{job="node-exporter",node="lenovo-21CB001PMX"}[6h]) > 0 or homelab_alert_investigations_up{job="node-exporter",node="lenovo-21CB001PMX"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#alertinvestigationfailed"
+      - eval_time: 7h
+        alertname: AlertInvestigationFailed
+        exp_alerts: []
+
+  # Alertmanager unreachable for 15 minutes fires with no alertname; a 10-minute blip does not
+  - interval: 1m
+    input_series:
+      - series: 'homelab_alert_investigations_up{job="node-exporter",node="lenovo-21CB001PMX"}'
+        values: '1x10 0x10 1x10 0x30'
+      - series: 'homelab_alert_investigations_total{job="node-exporter",node="lenovo-21CB001PMX",alertname="NodeSystemdUnitFailed",outcome="failed"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: AlertInvestigationFailed
+        exp_alerts: []
+      - eval_time: 50m
+        alertname: AlertInvestigationFailed
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: lenovo-21CB001PMX}
+            exp_annotations:
+              summary: "Alert investigations on lenovo-21CB001PMX are failing"
+              description: "An investigation pool session started by alert-investigations on lenovo-21CB001PMX failed in the last 6 h (its start was refused, the session failed, timed out, ended without a report or pushed a branch), or the trigger has not read Alertmanager for 15 minutes, so a firing alert goes uninvestigated. Run journalctl -u alert-investigations.service there; the reason is in homelab_alert_investigation_failures_total and on the alert's issue."
+              query: 'increase(homelab_alert_investigation_failures_total{job="node-exporter",node="lenovo-21CB001PMX"}[6h]) > 0 or homelab_alert_investigations_up{job="node-exporter",node="lenovo-21CB001PMX"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#alertinvestigationfailed"
+
+  # the textfile freezes at 10m: older than 1200 s from 30m, firing 10m later
+  - interval: 1m
+    input_series:
+      - series: 'node_textfile_mtime_seconds{job="node-exporter",node="lenovo-21CB001PMX",file="/var/lib/alert-investigations/alert-investigations.prom"}'
+        values: '0+60x10 600x50'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: AlertInvestigationsStale
+        exp_alerts: []
+      - eval_time: 45m
+        alertname: AlertInvestigationsStale
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: lenovo-21CB001PMX}
+            exp_annotations:
+              summary: "The alert investigation trigger on lenovo-21CB001PMX has stopped"
+              description: "alert-investigations on lenovo-21CB001PMX has not rewritten its textfile for over 20 minutes, so no firing alert is investigated and AlertInvestigationFailed is blind. Run systemctl status alert-investigations.timer alert-investigations.service there."
+              query: 'time() - node_textfile_mtime_seconds{job="node-exporter",node="lenovo-21CB001PMX",file=~".*/alert-investigations[.]prom"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#alertinvestigationsstale"

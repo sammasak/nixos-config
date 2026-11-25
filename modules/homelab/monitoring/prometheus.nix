@@ -145,6 +145,7 @@ in
         ./rules/llm-gateway.yaml
         ./rules/shunt.yaml
         ./rules/exec-pool.yaml
+        ./rules/alert-investigations.yaml
         (import ./rules/homelab.nix { inherit lib hosts; }).file
         llmBench
         shipping

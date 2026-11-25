@@ -1,7 +1,8 @@
 # Alert runbooks
 
 One section per alert in `modules/homelab/monitoring/rules/homelab.yaml`, `modules/homelab/monitoring/rules/shunt.yaml`,
-`modules/homelab/monitoring/rules/exec-pool.yaml`, `modules/homelab/monitoring/rules/llm-gateway.yaml` and Loki's ruler
+`modules/homelab/monitoring/rules/exec-pool.yaml`, `modules/homelab/monitoring/rules/alert-investigations.yaml`,
+`modules/homelab/monitoring/rules/llm-gateway.yaml` and Loki's ruler
 rules, `modules/homelab/monitoring/loki-rules/fake/homelab.yaml`; each alert's `runbook_url` points at its heading here.
 The shipping alerts point at [shipping.md](shipping.md#alerts). The kube-prometheus-stack rules (`general.yaml`,
 `node-exporter.yaml`, `alertmanager.yaml`, `prometheus.yaml` there) keep upstream's runbook,
@@ -364,6 +365,34 @@ slot (`exec-pool result ID`), or a task too big for one turn. Fix that, then
 `exec-pool send ID --prompt TEXT` saying what happened and what to do next.
 Do not: send it "continue" while the cause stands; it fails the same way and stalls again after three more turns.
 Rollback: none; the alert clears when the session is woken or cancelled (`exec-pool cancel ID`).
+
+## AlertInvestigationFailed
+
+Fires: on the host that runs `alert-investigations` (`modules/homelab/alert-investigations.nix`, lenovo, for the
+names in `homelab.alertInvestigations.alerts`), an investigation it started in the last 6 h failed, or for 15 minutes
+it has not read Alertmanager. An investigation is one read-only incident-investigator pool session per firing that
+lasted 15 minutes, its report a comment on the issue titled `Alert: <name>` (label `alert-investigation`); it fails
+when `exec-pool start` refuses it, the session ends `failed`, `cancelled` or `needs_review`, its first turn ends
+without a report, the session pushed `pool/<task id>` (it is read-only), no report came within 3 h (it is cancelled),
+or the report could not be posted. With `alertname`, an investigation of that alert failed; without it, the trigger
+is blind.
+First: on lenovo, `journalctl -u alert-investigations.service` names the session and the reason;
+`homelab_alert_investigation_failures_total` counts them by reason. The issue holds the session id: `exec-pool result
+ID` and `exec-pool logs ID` show what it did. A pushed branch is left for the owner to read and delete. Without
+`alertname`, `curl -sf http://192.168.10.137:9093/-/ready` from lenovo.
+Do not: delete `/var/lib/alert-investigations/state.json` to clear it; the counters and the per-name issue numbers
+live there, and every firing still active would be investigated again.
+Rollback: `homelab.alertInvestigations.alerts = [ ];` on lenovo and deploy; started sessions stay in the pool.
+
+## AlertInvestigationsStale
+
+Fires: `alert-investigations` on the host has not rewritten `/var/lib/alert-investigations/alert-investigations.prom`
+for over 20 minutes: its timer (every 2 minutes) stopped or every run hangs, so nothing is investigated and
+AlertInvestigationFailed cannot fire.
+First: `systemctl status alert-investigations.timer alert-investigations.service` and `journalctl -u
+alert-investigations.service` there. A run waits up to 120 s per command (ssh to the pool host, gh).
+Do not: write the textfile by hand.
+Rollback: as AlertInvestigationFailed's.
 
 ## ExecPoolSessionsLarge
 
