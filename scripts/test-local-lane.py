@@ -28,18 +28,17 @@ def commit(repo, files, msg):
     return git(repo, "rev-parse", "HEAD")
 
 
-def gate(repo, prepared, head, reviewer="echo ok"):
+def gate(repo, prepared, head, reviewer="echo ok", check_args=("--check", "python3 check.py", "--check-file", "check.py")):
     out = subprocess.run([sys.executable, "-I", str(LANE), "gate", "--repo", repo, "--prepared", prepared,
-                          "--head", head, "--check", "python3 check.py", "--check-file", "check.py",
-                          "--scope", "a.txt", "--scope", "docs/", "--task", "Make a.txt say new.",
-                          "--reviewer", reviewer], capture_output=True, text=True)
+                          "--head", head, *check_args, "--scope", "a.txt", "--scope", "docs/",
+                          "--task", "Make a.txt say new.", "--reviewer", reviewer], capture_output=True, text=True)
     return out.returncode, json.loads(out.stdout) if out.stdout.strip() else {"stderr": out.stderr}
 
 
 with tempfile.TemporaryDirectory() as tmp:
     repo = str(pathlib.Path(tmp) / "r")
     subprocess.run(["git", "init", "--quiet", "-b", "main", repo], check=True)
-    commit(repo, {"a.txt": "old\n", "b.txt": "b\n"}, "base")
+    base = commit(repo, {"a.txt": "old\n", "b.txt": "b\n"}, "base")
     prepared = commit(repo, {"check.py": CHECK}, "test: red")
 
     def head(files):
@@ -66,5 +65,16 @@ with tempfile.TemporaryDirectory() as tmp:
 
     rc, v = gate(repo, good, good)
     check(rc == 1 and v.get("failed") == "prepare", f"a check that passes on the prepared commit is refused ({rc}, {v})")
+
+    # the check outside the tree (scripts/lane-checks/): the base is the prepared commit, and the check cannot be edited
+    script = pathlib.Path(tmp) / "lane-check.py"
+    script.write_text(CHECK)
+    outside = ("--check-script", str(script))
+    for name, sha, rc_want in (("a good result passes", good, 0), ("a check still failing fails", cases["check"], 1)):
+        git(repo, "checkout", "--quiet", "--detach", base)
+        fixed = commit(repo, {"a.txt": git(repo, "show", f"{sha}:a.txt") + "\n"}, "pi")
+        rc, v = gate(repo, base, fixed, check_args=outside)
+        check(rc == rc_want and v.get("failed") == ("none" if rc_want == 0 else "check"),
+              f"with the check outside the tree, {name} ({rc}, {v})")
 
 finish()

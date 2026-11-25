@@ -2,15 +2,17 @@
 """The local-model lane (#807): Pi on a local model takes one prepared task, and a gate that never takes its word
 decides. goals.md "Quality gate for a local-model task" is the contract; items 1 to 5 below are its numbers.
 
-  gate --repo DIR --prepared SHA --head SHA --check CMD --check-file PATH... --scope PATH... --task TEXT
-       [--lint CMD] [--reviewer CMD|none] [--check-timeout S]
+  gate --repo DIR --prepared SHA --head SHA (--check CMD --check-file PATH... | --check-script FILE)
+       --scope PATH... --task TEXT [--lint CMD] [--reviewer CMD|none] [--check-timeout S]
       Items 1 to 5 on two commits of a local clone; prints one JSON line, exit 0 pass, 1 fail.
   run  --repo URL --prepared SHA (the gate's flags but --head) [--model M] [--timeout S] [--key K]
       Item 1 on the prepared commit, then `exec-pool submit --agent pi`, wait, the gate on its pushed
       pool/<task> branch, one retry with the gate's output on a fail, and one `local-lane` platform record.
 
-The prepared commit is the base plus the hosted agent's check, which must fail there. A `dir/` scope covers what is
-under it. The reviewer reads a prompt on stdin and must print exactly ok, unsafe or "does not fix the problem" on its
+The hosted agent's check either sits in the repository (the prepared commit is the base plus the check, and item 2
+holds the check files to it) or is a Python FILE outside it (scripts/lane-checks/), run from the tree's root: then the
+prepared commit is the base itself, the gate runs its own copy, and Pi gets the source to run as /tmp/lane-check.py, so
+item 2 holds by construction. Either way it must fail on the prepared commit. A `dir/` scope covers what is under it. The reviewer reads a prompt on stdin and must print exactly ok, unsafe or "does not fix the problem" on its
 first line; anything else fails closed. The check runs under `sh -c` in a detached worktree at each commit."""
 import argparse
 import json
@@ -42,9 +44,11 @@ Diff:
 
 PROMPT = """{task}
 
-Change only these paths: {scope}. Do not edit {checks}: they are the check, and a changed check fails the task. \
-Keep the change under {lines} changed lines. When you are done, run `{check}` and make it pass, then commit with a \
-message whose body has a `Why:` line and push your branch."""
+Change only these paths: {scope}. {guard}Keep the change under {lines} changed lines. When you are done, run \
+`{check}` from the repository root and make it pass, then commit with a message whose body has a `Why:` line and push \
+your branch."""
+IN_TREE = "Do not edit {checks}: they are the check, and a changed check fails the task. "
+OUTSIDE = "The check is this Python file; write it to /tmp/lane-check.py first, unchanged:\n\n{source}\n"
 
 
 def git(repo, *args, check=True):
@@ -88,7 +92,7 @@ def gate(a, head):
 
     if subprocess.run(["git", "-C", repo, "merge-base", "--is-ancestor", prep, head]).returncode != 0:
         return fail("scope", "head does not descend from the prepared commit")
-    if git(repo, "diff", "--name-only", prep, head, "--", *a.check_file).strip():
+    if a.check_file and git(repo, "diff", "--name-only", prep, head, "--", *a.check_file).strip():
         return fail("check-file", "a check file differs from the prepared one")
     changed = git(repo, "diff", "--name-only", "--no-renames", prep, head).split()
     if not changed:
@@ -154,8 +158,10 @@ def cmd_run(a):
         if not ok:
             print(json.dumps(bad))
             return 2
-        prompt = PROMPT.format(task=a.task, scope=", ".join(a.scope), checks=", ".join(a.check_file),
-                               lines=MAX_LINES, check=a.check)
+        guard = (IN_TREE.format(checks=", ".join(a.check_file)) if a.check_file
+                 else OUTSIDE.format(source=pathlib.Path(a.check_script).read_text()))
+        prompt = PROMPT.format(task=a.task, scope=", ".join(a.scope), guard=guard, lines=MAX_LINES,
+                               check=a.check if a.check_file else "python3 -I /tmp/lane-check.py")
         verdict, task = {}, ""
         for attempt in (1, 2):
             task = pool("submit", "--agent", "pi", "--model", a.model, "--repo", url, "--rev", a.prepared,
@@ -188,8 +194,9 @@ def main():
         s = sub.add_parser(name)
         s.add_argument("--repo", required=True)
         s.add_argument("--prepared", required=True)
-        s.add_argument("--check", required=True)
-        s.add_argument("--check-file", action="append", required=True)
+        s.add_argument("--check")
+        s.add_argument("--check-file", action="append", default=[])
+        s.add_argument("--check-script")
         s.add_argument("--scope", action="append", required=True)
         s.add_argument("--task", required=True)
         s.add_argument("--lint")
@@ -200,6 +207,10 @@ def main():
     sub.choices["run"].add_argument("--timeout", type=int, default=3600)
     sub.choices["run"].add_argument("--key", help="a new one runs the same prepared task again")
     a = p.parse_args()
+    if bool(a.check_script) == bool(a.check and a.check_file):
+        p.error("give either --check with --check-file, or --check-script")
+    if a.check_script:
+        a.check = f"python3 -I {shlex.quote(str(pathlib.Path(a.check_script).resolve()))}"
     return cmd_gate(a) if a.cmd == "gate" else cmd_run(a)
 
 
