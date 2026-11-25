@@ -1,6 +1,6 @@
 # homelab.execPool's slots on in QEMU beside a named environment: two idle slots boot, a slot is used, released by
 # dev-env-reset@ and used again without a switch, stops and restarts alone, and sees no host secret or socket.
-# pool1 runs under slot.privateUsers, pool2 in the host's ids (acer's slots), so both kinds boot here.
+# Both slots under slot.privateUsers (msi's); the named instance keeps the host's ids, as acer's slots do.
 # The runtime-host role's closure plus three guests: `nix build .#execution-pool-vm` on msi only.
 {
   pkgs,
@@ -41,7 +41,6 @@ pkgs.testers.runNixOSTest {
         slot.memory = "512M";
         slot.privateUsers = true;
       };
-      services.devEnvironments.instances.pool2.rootInGuest = lib.mkForce false;
       # a stand-in gh login, so the GitHub sidecar starts: the test reaches it, never GitHub
       sam.workers.ghHostsFile = "/var/lib/stub-gh/hosts.yml";
       systemd.services.stub-gh-hosts = {
@@ -55,6 +54,8 @@ pkgs.testers.runNixOSTest {
         '';
       };
       virtualisation.memorySize = 5120;
+      # an image, not the 9p host store: privateUsers binds /nix/store id-mapped, which 9p refuses ("Failed to clone")
+      virtualisation.useNixStoreImage = true;
       # a VM has no client key for the named guest to bind (the hosts have lukas's own)
       systemd.services.stub-client-key = {
         before = [ "container@t.service" ];
@@ -102,19 +103,17 @@ pkgs.testers.runNixOSTest {
     assert not leaked, f"pool1 mounts host paths {leaked}"
     machine.succeed("nixos-container run pool1 -- sh -c 'test ! -e /run/secrets && test -z \"$(ls -A /var/lib/host-credentials 2>/dev/null | grep -vx -e ssh_host_ed25519_key -e [^/]*[.]pub)\"'")
 
-    # pool1 in its own ids (slot.privateUsers), pool2 in the host's: guest root and the slot user are unprivileged
-    # host uids, and the binds, the dock, the GitHub sidecar and the nix daemon all still work for its user
-    base = int(machine.succeed("cat /var/lib/workers/pool1/.id-base"))
-    assert base >= 0x70000000, f"pool1 has no id block of its own: {base}"
-    assert machine.succeed("cat /var/lib/workers/pool2/.id-base").strip() == "0", "pool2 left the host's ids"
-    for n, want in (("pool1", f"0 {base} 65536"), ("pool2", None)):
+    # each slot in its own ids (slot.privateUsers), the named instance in the host's: guest root and the slot user are
+    # unprivileged host uids, and the binds, the dock, the GitHub sidecar and the nix daemon still work for its user
+    bases = {n: int(machine.succeed(f"cat /var/lib/workers/{n}/.id-base")) for n in ("pool1", "pool2", "t")}
+    base = bases["pool1"]
+    assert bases["t"] == 0 and len({base, bases["pool2"]}) == 2 and min(base, bases["pool2"]) >= 0x70000000, f"id blocks: {bases}"
+    for n in ("pool1", "pool2", "t"):
         leader = machine.succeed(f"machinectl show -P Leader {n}").strip()
         got = " ".join(machine.succeed(f"cat /proc/{leader}/uid_map").split())
-        owner = machine.succeed(f"stat -c %u /proc/{leader}").strip()
-        if want:
-            assert got == want and owner == str(base), f"{n}: guest root is host uid {owner}, uid_map {got}"
-        else:
-            assert owner == "0", f"{n}: its root is not the host's: {owner}"
+        owner = int(machine.succeed(f"stat -c %u /proc/{leader}").strip())
+        want = f"0 {bases[n]} 65536" if bases[n] else "0 0 4294967295"
+        assert got == want and owner == bases[n], f"{n}: guest root is host uid {owner}, uid_map {got}"
     assert machine.succeed(f"stat -c %u:%g {home}").strip() == f"{base + 1000}:{base + 100}", "pool1's home is not its user's"
     machine.succeed(guest + "sh -c 'test \"$(id -u)\" = 1000 && touch ~/.probe ~/.cache/nix/probe && rm ~/.probe ~/.cache/nix/probe'")
     machine.fail(guest + "touch /var/lib/host-credentials/x")
@@ -122,7 +121,7 @@ pkgs.testers.runNixOSTest {
 
     # the nix daemon serves pool1's user (allowed-users names it vu-pool1-1000), a store write included
     machine.succeed(guest + "sh -c 'echo probe > /tmp/p && nix-store --add /tmp/p'")
-    machine.succeed("nixos-container run pool2 -- runuser -u lukas -- nix store ping")
+    machine.succeed("nixos-container run t -- runuser -u lukas -- nix store ping")
 
     # the dock as the runner makes it: root's cur, home and work the slot home's owner's
     dock = "/var/lib/workers/.sessions/dock/pool1/cur"
