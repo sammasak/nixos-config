@@ -114,7 +114,7 @@ groups:
           team: homelab
         annotations:
           summary: "{{ $labels.node }} runs hot"
-          description: "{{ $labels.node }}'s {{ $labels.type }} zone has read {{ $value }} °C for 15 minutes, at the Pi's throttle point. Check the fan and airflow; Hosts shows the hottest sensor."
+          description: "{{ $labels.node }}'s {{ $labels.type }} zone has read {{ $value }} °C for 15 minutes, at the Pi's throttle point. Run cat /sys/class/thermal/thermal_zone*/temp there (millidegrees), then check the fan and airflow; https://grafana.sammasak.dev/d/hosts shows the hottest sensor."
           query: 'node_thermal_zone_temp{job="node-exporter",node="{{ $labels.node }}"}'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#nodetemperaturehigh"
 
@@ -316,7 +316,7 @@ groups:
           team: homelab
         annotations:
           summary: "Claude Code on {{ $labels.host }}{{ with $labels.worker }} worker {{ . }}{{ end }} is auto-compacting in a loop"
-          description: "Claude Code on {{ $labels.host }}{{ with $labels.worker }} worker {{ . }}{{ end }} auto-compacted {{ $value }} times in the last hour, over 5: a session keeps refilling its context and compacting, losing its goal and spending cache tokens. Find the session in Loki's compaction events before changing its autoCompactWindow."
+          description: "Claude Code on {{ $labels.host }}{{ with $labels.worker }} worker {{ . }}{{ end }} auto-compacted {{ $value }} times in the last hour, over 5: a session keeps refilling its context and compacting, losing its goal and spending cache tokens. In Grafana Explore on Loki, sum by (attributes_session_id) (count_over_time({observer=\"harness\", service_name=\"claude-code\", event_name=\"compaction\", host_name=\"{{ $labels.host }}\"} | json | attributes_trigger=\"auto\" | attributes_worker=\"{{ $labels.worker }}\" [1h])) names the session: one with most of them is the loop, stop it (a pool slot's: exec-pool list); many with a few each is load. Do so before changing its autoCompactWindow."
           query: 'sum_over_time(host_worker:claude_code_auto_compactions:count1m{host="{{ $labels.host }}",worker="{{ $labels.worker }}"}[1h])'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#claudecompactionloop"
 
