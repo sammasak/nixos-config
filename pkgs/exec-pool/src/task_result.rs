@@ -24,8 +24,8 @@ pub struct TaskResult {
     /// What the agent reported the run cost, from Claude's result JSON; `None` for any other agent or none reported.
     #[serde(default)]
     pub usage: Option<Usage>,
-    /// `branch` holds everything the run's tree had, so the tree may be removed: `None` when the runner cannot tell,
-    /// which keeps a parked session from ever being garbage-collected (queue `session_gc`).
+    /// `branch` holds everything the run's checkout had, nothing left for a snapshot: `None` when the runner cannot
+    /// tell.
     #[serde(default)]
     pub handed_back: Option<bool>,
 }
@@ -157,9 +157,10 @@ mod tests {
             timed_out: false,
             cancelled: false,
             branch: None,
-            tree_lost: None,
             failed_step: None,
-            stored: false,
+            parked_at: None,
+            unkept: None,
+            transcript: None,
             handed_back: None,
             wake: None,
             upto: None,

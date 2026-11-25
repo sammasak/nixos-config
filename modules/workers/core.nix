@@ -1243,7 +1243,7 @@ in
         };
       };
       systemd.services.dev-env-sessions-metrics = {
-        description = "Size the developer environments' session trees and session store, for node-exporter";
+        description = "Size the developer environments' session docks, for node-exporter";
         path = [ pkgs.coreutils ];
         enableStrictShellChecks = true;
         # root that only reads past the guests' modes and writes its own textfile
@@ -1277,16 +1277,12 @@ in
             printf 'homelab_dev_env_sessions_bytes{kind="%s"} %s\n' "$kind" "$b"
             printf 'homelab_dev_env_session_trees{kind="%s"} %s\n' "$kind" "$#"
           }
-          trash=("$d"/.trash/*) parked=()
-          for e in "$d"/.sessions/*/tree; do [[ $e == "$d"/.sessions/dock/tree ]] || parked+=("$e"); done
+          trash=("$d"/.trash/*)
           tb=$(total "''${trash[@]}")
           fs=$(df -B1 --output=size "$d" | tail -n 1 | tr -d ' ')
           [[ $fs =~ ^[0-9]+$ ]] || { echo "df gave no size for $d" >&2; exit 1; }
           {
-            # not .sessions/dock/tree, a slot named tree
-            emit parked "''${parked[@]}"
             emit docked "$d"/.sessions/dock/*/cur
-            emit store "$d"/.sessions-store/*
             # retired homes and removed sessions, freed a week after they were moved there
             printf 'homelab_dev_env_trash_bytes %s\n' "$tb"
             printf 'homelab_dev_env_trash_entries %s\n' "''${#trash[@]}"
@@ -1451,7 +1447,7 @@ in
             }
             {
               assertion = !(w.sessionDock && w.rootInGuest);
-              message = "${i}: sessionDock with rootInGuest: its writable binds are not id-mapped, so a session's tree could not move between slots.";
+              message = "${i}: sessionDock with rootInGuest: its writable binds are not id-mapped, so a session turn's home and checkout would not be the guest user's.";
             }
             {
               assertion = !w.rootInGuest || gid != null;

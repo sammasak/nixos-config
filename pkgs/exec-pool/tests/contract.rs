@@ -2,8 +2,8 @@ use std::collections::BTreeSet;
 
 use exec_pool::{
     Agent, Attempt, CheckpointRef, Error, Event, Kind, Pins, Placement, Receipt, RelPath,
-    Resolution, RetryPolicy, STORE, SchemaVersion, Settle, Slot, SlotState, Status, Submission,
-    TaskSpec, reachable, submit, transition,
+    Resolution, RetryPolicy, SchemaVersion, Settle, Slot, SlotState, Status, Submission, TaskSpec,
+    submit, transition,
 };
 use serde_json::{Value, json};
 
@@ -50,7 +50,6 @@ fn slot() -> Slot {
             nix_closure_digest: Some("sha256-closure-a".to_owned()),
             ..Pins::default()
         },
-        store: false,
     }
 }
 
@@ -184,7 +183,7 @@ fn empty_fields_are_rejected() {
         uri: uri.to_owned(),
         digest: digest.to_owned(),
         generation: 0,
-        hosts: Vec::new(),
+        legacy_hosts: exec_pool::Ignored,
     };
     assert_eq!(cp("", "d").validate(), Err(Error::Empty("uri")));
     assert_eq!(cp("u", "").validate(), Err(Error::Empty("digest")));
@@ -203,37 +202,19 @@ fn empty_fields_are_rejected() {
 }
 
 #[test]
-fn a_parked_session_is_reachable_only_where_its_tree_is() {
-    let at = |hosts: &[&str]| CheckpointRef {
-        schema_version: SchemaVersion::CURRENT,
-        uri: "session-tree://acer-swift/t-1".to_owned(),
-        digest: "unhashed".to_owned(),
-        generation: 3,
-        hosts: hosts.iter().map(|&h| h.to_owned()).collect(),
-    };
-    assert!(
-        reachable(None, "msi-ms7758", false),
-        "a first turn runs anywhere"
-    );
-    assert!(
-        reachable(Some(&at(&[])), "msi-ms7758", false),
-        "a checkpoint from before sessions names no host"
-    );
-    assert!(reachable(Some(&at(&["acer-swift"])), "acer-swift", false));
-    assert!(!reachable(Some(&at(&["acer-swift"])), "msi-ms7758", false));
-    assert!(
-        !reachable(Some(&at(&["acer-swift"])), "msi-ms7758", true),
-        "the store does not hold it"
-    );
-    assert!(reachable(
-        Some(&at(&["acer-swift", STORE])),
-        "msi-ms7758",
-        true
-    ));
-    assert!(
-        !reachable(Some(&at(&["acer-swift", STORE])), "msi-ms7758", false),
-        "a host that cannot pull from the store"
-    );
+fn a_checkpoint_names_no_host_and_a_slot_no_store() {
+    // an older binary's park still parses, its hosts dropped: the work is on the remote, on no host
+    let old: CheckpointRef = serde_json::from_value(json!({
+        "schema_version": 1, "uri": "https://example.org/r.git#refs/pool-wip/t-1", "digest": "s1",
+        "generation": 3, "hosts": ["acer-swift"]
+    }))
+    .unwrap();
+    assert!(serde_json::to_value(&old).unwrap().get("hosts").is_none());
+    let stray = json!({ "schema_version": 1, "uri": "u", "digest": "d", "token": "x" });
+    assert!(serde_json::from_value::<CheckpointRef>(stray).is_err());
+    let mut slot = serde_json::to_value(slot()).unwrap();
+    slot["store"] = json!(true);
+    assert!(serde_json::from_value::<Slot>(slot).is_err());
 }
 
 #[test]

@@ -212,9 +212,10 @@ fn a_session_turn_is_told_the_prefix_when_it_starts_and_its_input_alone_after() 
         turn_input(&t, "fix the lint", Turn::Start).unwrap(),
         format!(
             "{}fix the lint",
-            PREFIX
-                .replace("{branch}", "pool/t-655")
-                .replace("The task:", &format!("{SESSION_WAIT}The task:"))
+            PREFIX.replace("{branch}", "pool/t-655").replace(
+                "The task:",
+                &format!("{SESSION_WAIT}{}The task:", exec_pool::agent::SESSION_PARK)
+            )
         )
     );
     assert!(

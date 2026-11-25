@@ -3,15 +3,11 @@
 {
   imports = [ ../../modules/homelab/exec-pool-runner.nix ];
 
-  sam.workers.executionPool = {
+  homelab.execPool = {
     enable = true;
+    roles = [ "runner" ];
     slots = 4;
     agents = [ "claude" ];
+    queueListener = "exec-pool-db";
   };
-  homelab.execPool.runner = {
-    enable = true;
-    queue = "exec-pool-db";
-    store = "acer-swift";
-  };
-  homelab.execPool.sessionGc.enable = true;
 }

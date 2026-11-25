@@ -19,7 +19,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use exec_pool::queue::{
-    Logs, METRICS_UNAVAILABLE, Park, QueueError, Store, Submitted, Turn, TurnLog,
+    Logs, METRICS_UNAVAILABLE, Park, QueueError, Store, Submitted, TRANSCRIPT_BYTES, Transcript,
+    Turn, TurnLog,
 };
 use exec_pool::task_result::{TaskResult, Usage};
 use exec_pool::wake::Wake;
@@ -163,7 +164,6 @@ fn slot(id: &str) -> Slot {
         capabilities: BTreeSet::from(["read_only".to_owned()]),
         agents: BTreeSet::from([Agent::None]),
         pins: Pins::default(),
-        store: false,
     }
 }
 
@@ -239,12 +239,12 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
         .query_one("SELECT max(version) FROM schema_migrations", &[])
         .unwrap()
         .get(0);
-    assert_eq!(version, 16);
+    assert_eq!(version, 18);
     submit(&mut s, &task("t-1", 1));
     // a newer binary's additive migration keeps the floor: this one still serves the database, as after a rollback
     pg.sql()
         .execute(
-            "INSERT INTO schema_migrations (version, floor) VALUES (17, 16)",
+            "INSERT INTO schema_migrations (version, floor) VALUES (19, 18)",
             &[],
         )
         .unwrap();
@@ -252,17 +252,17 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
     assert!(s.claim(&slot("s0"), 60).unwrap().is_some());
     // one this binary would misread, or one that names no floor, is refused
     pg.sql()
-        .execute("INSERT INTO schema_migrations (version) VALUES (18)", &[])
+        .execute("INSERT INTO schema_migrations (version) VALUES (20)", &[])
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(18))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(20))));
     pg.sql()
         .execute(
-            "UPDATE schema_migrations SET floor = 18 WHERE version = 18",
+            "UPDATE schema_migrations SET floor = 20 WHERE version = 20",
             &[],
         )
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(18))));
-    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(18))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(20))));
+    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(20))));
 }
 
 #[test]
@@ -560,7 +560,7 @@ fn the_cli_reaches_a_remote_queue_by_its_units_password_credential() {
     std::fs::create_dir_all(&dir).unwrap();
     let cli = |conninfo: &str| {
         Command::new(env!("CARGO_BIN_EXE_exec-pool"))
-            .arg("sessions")
+            .arg("list")
             .env("EXEC_POOL_DB", conninfo)
             .env("CREDENTIALS_DIRECTORY", &dir)
             .output()
@@ -1736,11 +1736,13 @@ fn park(reason: ParkReason, upto: i64) -> Park {
             uri: "checkpoint://s/1".to_owned(),
             digest: "sha256-x".to_owned(),
             generation: 0,
-            hosts: vec!["msi-ms7758".to_owned()],
+            legacy_hosts: exec_pool::Ignored,
         }),
         result: TaskResult::new(Some(Outcome::Succeeded), Some(0), "the turn's answer"),
         upto,
+        undelivered: false,
         wake: None,
+        transcript: None,
     }
 }
 
@@ -1886,7 +1888,7 @@ fn a_send_queues_a_waiting_session_and_two_sends_arrive_once_in_order() {
 }
 
 #[test]
-fn a_parked_session_is_claimed_only_on_a_host_that_holds_its_tree() {
+fn a_session_is_claimed_by_any_host_parked_or_not() {
     let pg = Pg::new();
     let mut owner = pg.migrated();
     let (mut s, id) = session(&pg);
@@ -1898,67 +1900,22 @@ fn a_parked_session_is_claimed_only_on_a_host_that_holds_its_tree() {
         .park(&a, epoch, &park(ParkReason::TurnEnd, 0))
         .unwrap();
     s.send(&id, "one").unwrap();
-    assert!(
-        owner.claim(&acer, 60).unwrap().is_none(),
-        "the tree is on msi alone"
-    );
-    let (_, _, turn) = started(&mut owner);
-    let checkpoint = turn
-        .checkpoint
-        .expect("a later turn carries its checkpoint");
-    assert_eq!(
-        (checkpoint.generation, checkpoint.hosts),
-        (epoch, vec!["msi-ms7758".to_owned()])
-    );
-}
-
-#[test]
-fn a_session_in_the_store_is_claimed_by_any_host_that_reaches_it() {
-    let pg = Pg::new();
-    let mut owner = pg.migrated();
-    let (mut s, id) = session(&pg);
-    let mut acer = claude_slot();
-    acer.host = "acer-swift".to_owned();
-    let (a, epoch, _) = started(&mut owner);
-    let mut stored = park(ParkReason::TurnEnd, 0);
-    if let Some(c) = &mut stored.checkpoint {
-        c.hosts.push(exec_pool::STORE.to_owned());
-    }
-    owner.park(&a, epoch, &stored).unwrap();
-    s.send(&id, "one").unwrap();
-    assert!(
-        owner.claim(&acer, 60).unwrap().is_none(),
-        "a host that cannot pull from the store"
-    );
-    acer.store = true;
-    let claim = owner.claim(&acer, 60).unwrap().unwrap();
-    let checkpoint = claim.turn.unwrap().checkpoint.unwrap();
-    assert_eq!(
-        (checkpoint.generation, checkpoint.hosts),
-        (
-            epoch,
-            vec!["msi-ms7758".to_owned(), exec_pool::STORE.to_owned()]
-        )
-    );
-}
-
-#[test]
-fn a_first_turn_that_never_parked_is_claimed_only_where_it_ran() {
-    let pg = Pg::new();
-    let mut owner = pg.migrated();
-    let (mut s, id) = session(&pg);
-    let mut acer = claude_slot();
-    acer.host = "acer-swift".to_owned();
-    let (a, _, _) = started(&mut owner);
+    let claim = owner
+        .claim(&acer, 60)
+        .unwrap()
+        .expect("its work is on its remote: any host");
+    let turn = claim.turn.unwrap();
+    assert_eq!(turn.checkpoint.map(|c| c.generation), Some(epoch));
+    // a turn whose lease was lost while it ran, before its park: nothing of it is on acer either
+    let epoch = claim.attempt.lease_epoch;
+    owner.apply(&a, &ev(epoch, Kind::Start), None).unwrap();
     overdue(&pg, &a);
     assert_eq!(owner.reconcile().unwrap().len(), 1);
+    assert_eq!(status(&pg, &a).0, "needs_review");
     s.send(&id, "go on").unwrap();
-    assert!(
-        owner.claim(&acer, 60).unwrap().is_none(),
-        "its tree and transcript, if any, are on msi"
-    );
-    let (_, _, turn) = started(&mut owner);
-    assert_eq!((turn.first, turn.checkpoint), (false, None));
+    let mut asus = claude_slot();
+    asus.host = "asus-b460m".to_owned();
+    assert!(owner.claim(&asus, 60).unwrap().is_some());
 }
 
 #[test]
@@ -2496,6 +2453,8 @@ fn the_runner_runs_a_turn_and_neither_role_writes_or_reads_what_it_may_not() {
             format!("SELECT start_session('{}')", agent_task()),
             "DELETE FROM inbox".to_owned(),
             "UPDATE inbox SET body = 'x'".to_owned(),
+            "SELECT cost_usd FROM turns".to_owned(),
+            "UPDATE turns SET delivered = false".to_owned(),
             format!("INSERT INTO inbox (task_id, kind, body) VALUES ('{id}', 'message', 'x')"),
             format!("SELECT send_timer('{id}', 'x', now())"),
         ],
@@ -2679,19 +2638,6 @@ fn a_timer_already_due_wakes_at_the_park_or_the_next_reconcile() {
     ));
 }
 
-/// Moves a session's last change `days` into the past, as the clock would: past the fence, which refuses any write to a
-/// final attempt.
-fn aged(pg: &Pg, attempt: &str, days: i32) {
-    let mut c = pg.sql();
-    c.batch_execute("SET session_replication_role = replica")
-        .unwrap();
-    c.execute(
-            "UPDATE attempts SET changed_at = now() - make_interval(days => $2), fence = lease_epoch WHERE id = $1",
-            &[&attempt, &days],
-        )
-        .unwrap();
-}
-
 #[test]
 fn session_metrics_count_turns_wakes_and_tokens() {
     let pg = Pg::new();
@@ -2706,10 +2652,6 @@ fn session_metrics_count_turns_wakes_and_tokens() {
         cache_creation_tokens: 400,
         cost_usd: Some(0.5),
     });
-    // a tree asus holds too, so the next turn may run there
-    if let Some(c) = &mut reported.checkpoint {
-        c.hosts.push("asus-b460m".to_owned());
-    }
     owner.park(&a, epoch, &reported).unwrap();
     s.send(&id, "next").unwrap();
     // the next turn on another host
@@ -2752,164 +2694,7 @@ fn session_metrics_count_turns_wakes_and_tokens() {
     has(
         "exec_pool_sessions_parked_seconds_bucket{host=\"msi-ms7758\",agent=\"claude\",le=\"86400\"} 1",
     );
-    has("exec_pool_sessions_gc_eligible 0");
-    has("exec_pool_sessions_stale 0");
-    has("exec_pool_sessions_gc_kept 0");
     assert!(!m.contains(&id), "no id in a label");
-}
-
-/// `exec-pool sessions --gc` as the submitter: one JSON object per line.
-fn gc_cli(pg: &Pg) -> Vec<serde_json::Value> {
-    let out = Command::new(env!("CARGO_BIN_EXE_exec-pool"))
-        .args(["sessions", "--gc"])
-        .env(
-            "EXEC_POOL_DB",
-            pg.conninfo()
-                .replace("user=exec_pool ", "user=exec_pool_submit "),
-        )
-        .output()
-        .unwrap();
-    assert_eq!(out.status.code(), Some(0));
-    let lines: Vec<serde_json::Value> = String::from_utf8(out.stdout)
-        .unwrap()
-        .lines()
-        .map(|l| serde_json::from_str(l).unwrap())
-        .collect();
-    lines
-}
-
-/// A session `key` whose one turn parked with `handed_back`, then was cancelled 8 days ago.
-fn finished(
-    pg: &Pg,
-    (s, owner): (&mut Store, &mut Store),
-    key: &str,
-    handed_back: Option<bool>,
-) -> String {
-    let mut spec: TaskSpec = serde_json::from_value(agent_task()).unwrap();
-    key.clone_into(&mut spec.idempotency_key);
-    let (id, _) = s.start_session(&spec, 0).unwrap();
-    let (attempt, epoch, _) = started(owner);
-    let mut parked = park(ParkReason::TurnEnd, 0);
-    parked.result.handed_back = handed_back;
-    owner.park(&attempt, epoch, &parked).unwrap();
-    s.cancel(&id).unwrap();
-    aged(pg, &attempt, 8);
-    id
-}
-
-#[test]
-fn session_gc_lists_only_what_the_queue_knows_is_safe_to_remove() {
-    let pg = Pg::new();
-    let mut owner = pg.migrated();
-    let (mut s, id) = session(&pg);
-    let (a, epoch, _) = started(&mut owner);
-    owner
-        .park(&a, epoch, &park(ParkReason::TurnEnd, 0))
-        .unwrap();
-    // fourteen days untouched with no word on its tree: stale, kept
-    aged(&pg, &a, 15);
-    let shown = s.sessions(false).unwrap();
-    assert_eq!(shown.len(), 1);
-    assert_eq!(
-        (
-            &shown[0]["eligible"],
-            &shown[0]["stale"],
-            &shown[0]["hosts"]
-        ),
-        (&json!(false), &json!(true), &json!(["msi-ms7758"]))
-    );
-    assert!(s.sessions(true).unwrap().is_empty());
-    let m = owner.metrics().unwrap();
-    assert!(m.lines().any(|l| l == "exec_pool_sessions_stale 1"));
-    assert!(m.lines().any(
-        |l| l == "exec_pool_sessions_parked_seconds_bucket{host=\"msi-ms7758\",agent=\"claude\",le=\"1209600\"} 0"
-    ));
-    // its last turn's branch held its tree: eligible
-    pg.sql()
-        .execute("UPDATE turns SET handed_back = true", &[])
-        .unwrap();
-    assert_eq!(s.sessions(true).unwrap()[0]["task_id"], json!(id));
-    // a later turn that left it waiting without its own row (a settle, an older runner) is not known: kept
-    let row_epoch: i64 = pg
-        .sql()
-        .query_one("SELECT lease_epoch FROM attempts WHERE id = $1", &[&a])
-        .unwrap()
-        .get(0);
-    pg.sql()
-        .execute(
-            "UPDATE turns SET lease_epoch = lease_epoch - 1 WHERE attempt_id = $1",
-            &[&a],
-        )
-        .unwrap();
-    assert!(s.sessions(true).unwrap().is_empty());
-    assert_eq!(s.sessions(false).unwrap()[0]["stale"], json!(true));
-    pg.sql()
-        .execute(
-            "UPDATE turns SET lease_epoch = $2 WHERE attempt_id = $1",
-            &[&a, &row_epoch],
-        )
-        .unwrap();
-    assert_eq!(s.sessions(true).unwrap()[0]["task_id"], json!(id));
-    // an unread message keeps it
-    pg.sql()
-        .execute(
-            "INSERT INTO inbox (task_id, kind, body, due_at) VALUES ($1, 'timer', 'later', now() + interval '1 day')",
-            &[&id],
-        )
-        .unwrap();
-    assert!(s.sessions(true).unwrap().is_empty());
-
-    // needs_review is never eligible, however old; a final session is after 7 days, only if its branch held its tree
-    let mut other: TaskSpec = serde_json::from_value(agent_task()).unwrap();
-    other.idempotency_key = "cli:2".to_owned();
-    let (review, _) = s.start_session(&other, 0).unwrap();
-    let (b, _, _) = started(&mut owner);
-    overdue(&pg, &b);
-    owner.reconcile().unwrap();
-    aged(&pg, &b, 400);
-    let gone = finished(&pg, (&mut s, &mut owner), "cli:3", Some(true));
-    let unpushed = finished(&pg, (&mut s, &mut owner), "cli:4", Some(false));
-    let unknown = finished(&pg, (&mut s, &mut owner), "cli:5", None);
-    // never ran a turn: no tree, and nothing known of one
-    other.idempotency_key = "cli:6".to_owned();
-    let (unrun, _) = s.start_session(&other, 0).unwrap();
-    s.cancel(&unrun).unwrap();
-    aged(&pg, &format!("{unrun}.a"), 8);
-    let eligible: Vec<_> = s
-        .sessions(true)
-        .unwrap()
-        .iter()
-        .map(|v| v["task_id"].clone())
-        .collect();
-    assert_eq!(eligible, [json!(gone)]);
-    for kept in [&review, &unpushed, &unknown, &unrun] {
-        assert!(!eligible.contains(&json!(kept)));
-    }
-    let m = owner.metrics().unwrap();
-    // unpushed and unknown ran a turn; unrun has no tree to keep
-    for want in [
-        "exec_pool_sessions_gc_kept 2",
-        "exec_pool_sessions{host=\"msi-ms7758\",state=\"needs_review\"} 1",
-        // the one that never ran has no host
-        "exec_pool_session_age_seconds_count{host=\"msi-ms7758\",agent=\"claude\"} 3",
-        "exec_pool_session_age_seconds_count{host=\"none\",agent=\"claude\"} 1",
-        "exec_pool_session_turns_bucket{host=\"msi-ms7758\",agent=\"claude\",le=\"1\"} 3",
-        "exec_pool_session_turns_bucket{host=\"none\",agent=\"claude\",le=\"1\"} 1",
-    ] {
-        assert!(m.lines().any(|l| l == want), "{want}");
-    }
-
-    let lines = gc_cli(&pg);
-    assert_eq!(lines.len(), 1);
-    assert_eq!(lines[0]["task_id"], json!(gone));
-    assert_eq!(lines[0]["state"], "cancelled");
-    // the remover's path, the runner's name for it
-    let dir = exec_pool::workspace::Sessions::hex(&gone);
-    assert_eq!(lines[0]["dir"], json!(dir));
-    assert_eq!(
-        (&lines[0]["eligible"], &lines[0]["handed_back"]),
-        (&json!(true), &json!(true))
-    );
 }
 
 #[test]
@@ -3061,6 +2846,87 @@ fn the_submitter_sets_a_priority_once_and_within_its_bound() {
 }
 
 #[test]
+fn a_parked_transcript_is_bounded_kept_compressed_handed_to_the_next_turn_and_dropped_once_final() {
+    let pg = Pg::new();
+    let _owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let mut runner = runner(&pg);
+    let (a, epoch, first) = started(&mut runner);
+    assert_eq!(
+        first.transcript, None,
+        "nothing to resume on the first turn"
+    );
+    // as compressible as a transcript's JSON lines
+    let body = "{\"type\":\"assistant\",\"message\":{\"content\":\"the same line again\"}}\n"
+        .repeat(20_000)
+        .into_bytes();
+    let t = Transcript {
+        project: "-session-cur-work".to_owned(),
+        body: body.clone(),
+    };
+    let with = |t: Transcript, upto| Park {
+        transcript: Some(t),
+        ..park(ParkReason::TurnEnd, upto)
+    };
+    let over = Transcript {
+        body: vec![b'x'; TRANSCRIPT_BYTES + 1],
+        ..t.clone()
+    };
+    assert!(matches!(
+        runner.park(&a, epoch, &with(over, first.upto)),
+        Err(QueueError::Range("transcript"))
+    ));
+    let outside = Transcript {
+        project: "..".to_owned(),
+        ..t.clone()
+    };
+    assert!(matches!(
+        runner.park(&a, epoch, &with(outside, first.upto)),
+        Err(QueueError::Range("transcript project"))
+    ));
+    runner
+        .park(&a, epoch, &with(t.clone(), first.upto))
+        .expect("a refused transcript left the turn live");
+    let (raw, stored): (i32, i32) = pg
+        .sql()
+        .query_one(
+            "SELECT octet_length(body), pg_column_size(body) FROM transcripts",
+            &[],
+        )
+        .map(|r| (r.get(0), r.get(1)))
+        .unwrap();
+    assert_eq!(usize::try_from(raw).unwrap(), body.len());
+    assert!(
+        stored < raw / 10,
+        "kept compressed: {stored} of {raw} bytes"
+    );
+
+    s.send(&id, "next").unwrap();
+    let (a, epoch, second) = started(&mut runner);
+    assert_eq!(second.transcript.as_ref(), Some(&t), "on any host's claim");
+    runner
+        .park(&a, epoch, &park(ParkReason::TurnError, second.upto))
+        .unwrap();
+    s.send(&id, "again").unwrap();
+    let (a, epoch, third) = started(&mut runner);
+    assert_eq!(
+        third.transcript.map(|t| t.body),
+        Some(body),
+        "a park with no transcript keeps the last one"
+    );
+    runner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, third.upto))
+        .unwrap();
+    s.cancel(&id).unwrap();
+    let left: i64 = pg
+        .sql()
+        .query_one("SELECT count(*) FROM transcripts", &[])
+        .unwrap()
+        .get(0);
+    assert_eq!(left, 0, "a final session is never resumed");
+}
+
+#[test]
 fn a_session_whose_pane_or_prompt_keeps_failing_parks_and_a_send_wakes_it() {
     let pg = Pg::new();
     let mut owner = pg.migrated();
@@ -3093,4 +2959,40 @@ fn a_session_whose_pane_or_prompt_keeps_failing_parks_and_a_send_wakes_it() {
             (a.clone(), Status::Queued)
         );
     }
+}
+
+#[test]
+fn a_turn_whose_input_never_reached_the_agent_hands_it_to_the_next() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let undelivered = |upto| Park {
+        undelivered: true,
+        ..park(ParkReason::TurnError, upto)
+    };
+    let (a, epoch, first) = started(&mut owner);
+    assert!(first.first);
+    owner.park(&a, epoch, &undelivered(first.upto)).unwrap();
+    s.send(&id, "one").unwrap();
+    let (a, epoch, again) = started(&mut owner);
+    assert!(
+        again.first,
+        "the prompt never reached it: still the first turn"
+    );
+    assert_eq!(again.input, first.input);
+    owner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, again.upto))
+        .unwrap();
+    s.send(&id, "two").unwrap();
+    let (a, epoch, later) = started(&mut owner);
+    assert!(!later.first);
+    assert!(later.input.contains("two"), "{}", later.input);
+    owner.park(&a, epoch, &undelivered(later.upto)).unwrap();
+    s.send(&id, "three").unwrap();
+    let (_, _, next) = started(&mut owner);
+    assert!(
+        next.input.contains("two") && next.input.contains("three"),
+        "the undelivered message is handed again: {}",
+        next.input
+    );
 }

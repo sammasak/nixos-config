@@ -11,7 +11,6 @@
     ../../modules/homelab/llm-gateway.nix
     ../../modules/homelab/authentik.nix
     ../../modules/homelab/exec-pool.nix
-    ../../modules/homelab/exec-pool-store.nix
     ../../modules/homelab/monitoring/node-exporter.nix
     ../../modules/homelab/nav-metrics.nix
     ../../modules/homelab/shunt-metrics.nix
@@ -50,23 +49,22 @@
       "herman"
       "a1"
     ];
-    executionPool = {
-      enable = true;
-      slots = 3;
-      # no codex: this host sets no sam.workers.codexAuthFile
-      agents = [
-        "claude"
-        "pi"
-      ];
-    };
   };
-  homelab.execPool.runner = {
+  homelab.execPool = {
     enable = true;
-    store = "acer-swift";
+    roles = [
+      "queue"
+      "runner"
+    ];
+    slots = 3;
+    # no codex: this host sets no sam.workers.codexAuthFile
+    agents = [
+      "claude"
+      "pi"
+    ];
+    # msi's runner claims from this queue over the fleet LAN (exec-pool-db listener)
+    remoteRunners = true;
   };
-  homelab.execPool.sessionGc.enable = true;
-  # msi's runner claims from this queue over the fleet LAN (exec-pool-db listener)
-  homelab.execPool.remoteRunners = true;
   # the #494 usage spike: the workers' cgroup counters every minute (scripts/guest-records.py --usage)
   services.devEnvironments.records.usage = "1min";
   sam.herdr.trustedDirs = map (d: "/home/${config.sam.profile.username}/${d}") [

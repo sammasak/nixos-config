@@ -48,11 +48,17 @@ uncommitted changes. What does not: running processes in the slot (dev servers, 
 flight). Before you stop or wait, commit and push your work to your branch; do not rely on a background process \
 across a wait. ";
 
-/// The prefix of a session's first turn: [`PREFIX`] with [`SESSION_WAIT`] before its last sentence.
+/// What a session turn is told about its park, on its first turn before "The task:" and after every later turn's
+/// input: what of its slot survives the turn.
+pub const SESSION_PARK: &str = "Before you end a turn or wait, commit your work and push your branch as above: the next turn may run on another host from a fresh clone of it. The pool keeps what is left uncommitted as a snapshot and the session's transcript, nothing else of the checkout or home: no ignored files, build outputs or running processes. ";
+
+/// The prefix of a session's first turn: [`PREFIX`] with [`SESSION_WAIT`] and [`SESSION_PARK`] before its last
+/// sentence.
 fn session_prefix(task: &TaskSpec) -> Result<String, Error> {
-    Ok(PREFIX
-        .replace("{branch}", &branch(task)?)
-        .replace("The task:", &format!("{SESSION_WAIT}The task:")))
+    Ok(PREFIX.replace("{branch}", &branch(task)?).replace(
+        "The task:",
+        &format!("{SESSION_WAIT}{SESSION_PARK}The task:"),
+    ))
 }
 
 /// The branch an attempt of `task` works and pushes on: `pool/<task id>`.

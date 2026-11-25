@@ -421,7 +421,7 @@ let
 in {
   listener = { inherit (msi.sam.fleet.listeners.github-egress) host port from url; };
   msi = { caddy = caddy msi; creds = msi.systemd.services.dev-env-egress.serviceConfig.LoadCredential; paths = builtins.attrNames msi.systemd.paths; };
-  acer = { caddy = caddy acer; repos = acer.sam.workers.executionPool.github.repos; msiAddress = acer.sam.fleet.hosts.msi-ms7758.address; };
+  acer = { caddy = caddy acer; repos = acer.homelab.execPool.repos; msiAddress = acer.sam.fleet.hosts.msi-ms7758.address; };
 }
 """
 
@@ -889,7 +889,7 @@ in {
   inventory = builtins.any (p: (p.name or "") == "worker-pool-inventory") c.environment.systemPackages;
 }
 """
-POOL_ON = "{ sam.workers.executionPool = { enable = true; slots = %d; }; }"
+POOL_ON = "{ homelab.execPool = { enable = true; slots = %d; }; }"
 NAMED = '{ sam.workers.instances.t = { }; sam.workers.shutdownNotice = "Mon-Fri 20:40"; }'
 
 
@@ -903,22 +903,19 @@ def without_msi_pool(case):
 
 # (name, module, expected message substring) on msi with the pool on; each must fail an assertion
 POOL_CASES = [(name, without_msi_pool(case), want) for name, case, want in [
-    ("slots above the pool", "{ sam.workers.executionPool = { enable = true; slots = 6; }; }", "their memory.reserved adds up to 12288M, more than pool.memory 10240M"),
-    ("a slot's name declared by hand", "{ sam.workers.executionPool = { enable = true; slots = 1; }; sam.workers.instances.pool1 = { }; }", "pool1 is a pool slot's name"),
-    ("a slot's name declared in the core", "{ sam.workers.executionPool = { enable = true; slots = 1; }; services.devEnvironments.instances.pool1 = { }; }", "pool1 is a pool slot's name"),
-    ("a slot's name retired", '{ sam.workers.executionPool = { enable = true; slots = 1; }; sam.workers.retired = [ "pool1" ]; }', "pool1 is a pool slot's name"),
-    ("a slot with the push key", '{ sam.workers.executionPool = { enable = true; slots = 1; credentials = [ "id_ed25519" ]; }; }', "never with the host user's SSH key"),
-    ("a credential the host has not", '{ sam.workers.executionPool = { enable = true; slots = 1; credentials = [ "nope" ]; }; }', "pool1.credentials names one that"),
-    ("codex without a codex login", '{ sam.workers.executionPool = { enable = true; slots = 1; agents = [ "codex" ]; }; }', "signed with the API key in sam.workers.codexAuthFile"),
-    ("pi on a host without the Pi key", '{ sam.workers.executionPool = { enable = true; slots = 1; agents = [ "pi" ]; }; }', "signed with the sops secret llm_gateway_pi_key"),
-    ("a session dock with rootInGuest", "{ sam.workers.executionPool = { enable = true; slots = 1; rootInGuest = true; }; }", "sessionDock with rootInGuest"),
+    ("slots above the pool", "{ homelab.execPool = { enable = true; slots = 6; }; }", "their memory.reserved adds up to 12288M, more than pool.memory 10240M"),
+    ("a slot's name declared by hand", "{ homelab.execPool = { enable = true; slots = 1; }; sam.workers.instances.pool1 = { }; }", "pool1 is a pool slot's name"),
+    ("a slot's name declared in the core", "{ homelab.execPool = { enable = true; slots = 1; }; services.devEnvironments.instances.pool1 = { }; }", "pool1 is a pool slot's name"),
+    ("a slot's name retired", '{ homelab.execPool = { enable = true; slots = 1; }; sam.workers.retired = [ "pool1" ]; }', "pool1 is a pool slot's name"),
+    ("codex without a codex login", '{ homelab.execPool = { enable = true; slots = 1; agents = [ "codex" ]; }; }', "signed with the API key in sam.workers.codexAuthFile"),
+    ("pi on a host without the Pi key", '{ homelab.execPool = { enable = true; slots = 1; agents = [ "pi" ]; }; }', "signed with the sops secret llm_gateway_pi_key"),
 ]]
 # acer (a pi host, the gateway's own) with every agent: one proxy route each, placeholders in the guest, no credential bound
 POOL_ALL = r"""
 let
   c = ((builtins.getFlake (toString %(root)s)).nixosConfigurations.acer-swift.extendModules { modules = [ {
     sam.workers.codexAuthFile = "/home/lukas/.codex/auth.json";
-    sam.workers.executionPool.agents = [ "claude" "codex" "pi" ];
+    homelab.execPool.agents = [ "claude" "codex" "pi" ];
   } ]; }).config;
   g = c.containers.pool1.config;
 in {
@@ -933,8 +930,8 @@ in {
 }
 """
 POOL_TYPED = [(name, without_msi_pool(case), want) for name, case, want in [
-    ("negative slots", "{ sam.workers.executionPool = { enable = true; slots = -1; }; }", "is not of type `unsigned integer"),
-    ("a slot reserve that is no size", '{ sam.workers.executionPool = { enable = true; slots = 1; memory.reserved = "2 GB"; }; }', "is not of type `string matching the pattern"),
+    ("negative slots", "{ homelab.execPool = { enable = true; slots = -1; }; }", "is not of type `unsigned integer"),
+    ("a slot reserve that is no size", '{ homelab.execPool = { enable = true; slots = 1; slot.memory = "2 GB"; }; }', "is not of type `string matching the pattern"),
 ]]
 POOL_THROW = r"""
 let c = ((builtins.getFlake (toString %(root)s)).nixosConfigurations.msi-ms7758.extendModules { modules = [ ({ lib, ... }: %(case)s) ]; }).config;
@@ -951,9 +948,9 @@ def pool_eval(case, toplevel=False):
 def check_pool_compat():
     # a whole msi each, one at a time: five in one process ran a 16G host out of memory
     absent = pool_eval("{ }", True)
-    off = pool_eval("{ sam.workers.executionPool = { enable = false; slots = 2; }; }", True)
+    off = pool_eval("{ homelab.execPool = { enable = false; slots = 2; }; }", True)
     check(absent.get("units") and absent.get("toplevel") and absent == off,
-          f"executionPool off (unset, or enable = false with slots = 2) moves no worker unit, container or toplevel on msi ({absent.get('error') or [k for k in absent if absent[k] != off.get(k)]})")
+          f"homelab.execPool off (unset, or enable = false with slots = 2) moves no worker unit, container or toplevel on msi ({absent.get('error') or [k for k in absent if absent[k] != off.get(k)]})")
     named = ["t"]
     check(absent.get("instances") == absent.get("declared") == absent.get("agents") == named
           and absent.get("herdr") == [f"worker-herdr-{n}" for n in named] and not absent.get("inventory"),
@@ -980,13 +977,13 @@ def check_pool_compat():
               and {k: v for k, v in on.get("containers", {}).items() if k not in names} == absent.get("containers") and on.get("inventory") == (n > 0),
               f"slots = {n}: a container@, dev-env-reset@ drop-in, worker- and worker-herdr- unit per slot, the named workers' units and containers unchanged, worker-pool-inventory {'installed' if n else 'absent'} ({sorted(mine)}, moved {sorted(moved)})")
     # agents = [ "claude" ]: the slot gets a named Claude worker's route, the anthropic proxy, and nothing more
-    on = pool_eval('{ sam.workers.executionPool = { enable = true; slots = 1; agents = [ "claude" ]; }; }')
+    on = pool_eval('{ homelab.execPool = { enable = true; slots = 1; agents = [ "claude" ]; }; }')
     s = on.get("slots", {}).get("pool1", {})
     extra = [x for x in s.get("sockets", []) if x.endswith("-egress")] + [b for b in s.get("binds", []) if b.startswith(("/run/secrets", "/run/user", "/run/credentials", "/run/egress", "/var/lib/host-credentials/")) and not b.endswith(("/ssh_host_ed25519_key", ".pub"))]
     check(on.get("failing") == [] and s.get("agent") == "none" and s.get("credentials") == [] and s.get("headlessAgents") == ["claude"]
           and s.get("baseUrl") == "http://127.0.0.1:4100" and extra == ["anthropic-egress", "github-egress", "/run/egress"]
           and on.get("agents") == named and on.get("shutdown") == absent.get("shutdown"),
-          f"executionPool.agents = [ \"claude\" ]: pool1 stays agent none with no credential, gets only the anthropic and github egress and its ANTHROPIC_BASE_URL, and starts no session ({on.get('error') or on.get('failing') or {**s, 'extra': extra} })")
+          f"homelab.execPool.agents = [ \"claude\" ]: pool1 stays agent none with no credential, gets only the anthropic and github egress and its ANTHROPIC_BASE_URL, and starts no session ({on.get('error') or on.get('failing') or {**s, 'extra': extra} })")
     out = run_eval(POOL_ALL % {"root": json.dumps(ROOT)})
     a = json.loads(out.stdout) if out.returncode == 0 else {"error": out.stderr.strip()[-600:]}
     # acer's pool1 pushes through the GitHub proxy (check_runner) and holds nothing of the host's
@@ -995,16 +992,16 @@ def check_pool_compat():
     check(a.get("failing") == [] and a.get("sockets") == ["anthropic-egress", "github-egress", "llm-gateway-egress", "openai-egress"] and not leaked
           and a.get("codexKey") == "held-by-the-host" and a.get("codexUrl") == 'openai_base_url = "http://127.0.0.1:4103/v1"' and a.get("pi") is True
           and {"llm_gateway_pi_key:/run/secrets/llm_gateway_pi_key", "codex-auth.json:/home/lukas/.codex/auth.json"} <= set(a.get("creds", [])),
-          f"executionPool.agents = [ \"claude\" \"codex\" \"pi\" ] on acer: pool1 gets the anthropic, github, openai and llm-gateway proxies, Codex and Pi pointed at them with placeholders, and the keys only in the proxy's credentials ({a.get('error') or {**a, 'leaked': leaked} })")
+          f"homelab.execPool.agents = [ \"claude\" \"codex\" \"pi\" ] on acer: pool1 gets the anthropic, github, openai and llm-gateway proxies, Codex and Pi pointed at them with placeholders, and the keys only in the proxy's credentials ({a.get('error') or {**a, 'leaked': leaked} })")
     # POOL_CASES were prefetched; a whole msi per type error, one at a time
     outs = [run_eval(fleet(c[1])) for c in POOL_CASES]
     typed = [subprocess.run(["nix", "eval", "--impure", "--json", "--expr", POOL_THROW % {"root": json.dumps(ROOT), "case": c[1]}], capture_output=True, text=True)
              for c in POOL_TYPED]
     for (name, _, want), out in zip(POOL_CASES, outs):
         failing = json.loads(out.stdout) if out.returncode == 0 else []
-        check(any(want in m for m in failing), f"executionPool, {name}: fails \"{want}\" ({failing or out.stderr.strip()[-300:]})")
+        check(any(want in m for m in failing), f"homelab.execPool, {name}: fails \"{want}\" ({failing or out.stderr.strip()[-300:]})")
     for (name, _, want), out in zip(POOL_TYPED, typed):
-        check(out.returncode != 0 and want in out.stderr, f"executionPool, {name}: a type error naming \"{want}\" ({out.stderr.strip()[-300:]})")
+        check(out.returncode != 0 and want in out.stderr, f"homelab.execPool, {name}: a type error naming \"{want}\" ({out.stderr.strip()[-300:]})")
 
 
 # the session dock (modules/workers/core.nix sessionDock): each pool slot binds its own .sessions/dock/<name> read-write
@@ -1328,114 +1325,6 @@ def check_submitter():
 
 
 
-SESSIONS_GC = r"""
-let u = (builtins.getFlake (toString %(root)s)).nixosConfigurations.acer-swift.config.systemd.units;
-in (import <nixpkgs> { }).linkFarm "gc" [
-  { name = "gc"; path = u."exec-pool-sessions-gc.service".unit; }
-  { name = "list"; path = u."exec-pool-sessions-list.service".unit; }
-]
-"""
-
-SESSIONS_GC_MSI = r"""
-let c = (builtins.getFlake (toString %(root)s)).nixosConfigurations.msi-ms7758.config.systemd.services;
-  s = c.exec-pool-sessions-list; g = c.exec-pool-sessions-gc;
-in { inherit (s.environment) EXEC_POOL_DB; inherit (s.serviceConfig) User LoadCredential PrivateNetwork;
-  gc = { inherit (g.serviceConfig) PrivateNetwork RestrictAddressFamilies; cred = g.serviceConfig ? LoadCredential; env = g.environment ? EXEC_POOL_DB; }; }
-"""
-
-
-def check_sessions_gc():
-    """Runs acer's session remover against a scratch state dir and a written `sessions` list; msi's lists over TCP."""
-    out = subprocess.run(["nix", "build", "--no-link", "--print-out-paths", "--impure", "--expr", SESSIONS_GC % {"root": json.dumps(ROOT)}],
-                         capture_output=True, text=True)
-    unit = pathlib.Path(out.stdout.strip(), "gc/exec-pool-sessions-gc.service") if out.returncode == 0 else None
-    lunit = pathlib.Path(out.stdout.strip(), "list/exec-pool-sessions-list.service") if out.returncode == 0 else None
-    exe = re.search(r"^ExecStart=(\S+)", unit.read_text(), re.M) if unit else None
-    pre = re.search(r"^ExecStart=(\S+)", lunit.read_text(), re.M) if lunit else None
-    if not exe or not pre:
-        check(False, f"acer's session remover and its lister are on ({out.stderr.strip()[-300:]})")
-        return
-    g = unit.read_text()
-    check("User=exec_pool" in lunit.read_text() and "User=" not in g and "PrivateNetwork=true" in g
-          and "Requires=exec-pool-sessions-list.service" in g
-          and re.search(r"exec-pool sessions > /run/exec-pool-sessions-gc-list/sessions.tmp$", pathlib.Path(pre.group(1)).read_text(), re.M) is not None,
-          "acer lists every session as exec_pool, by peer, in its own unit; root's remover, after it, has no network")
-    out = run_eval(SESSIONS_GC_MSI % {"root": json.dumps(ROOT)})
-    got = json.loads(out.stdout) if out.returncode == 0 else {}
-    check(got.get("EXEC_POOL_DB", "").endswith("dbname=exec_pool user=exec_pool_runner") and got.get("User") == "exec_pool"
-          and got.get("PrivateNetwork") is False and [c.split(":")[0] for c in got.get("LoadCredential", [])] == ["db-password"]
-          and got.get("gc") == {"PrivateNetwork": True, "RestrictAddressFamilies": ["AF_UNIX"], "cred": False, "env": False},
-          f"msi's lister reads acer's queue as exec_pool_runner with its runner's password credential; root's remover has neither network nor credential ({got or out.stderr.strip()[-300:]})")
-    text = pathlib.Path(exe.group(1)).read_text()
-    with tempfile.TemporaryDirectory() as d:
-        state, metrics, own, listed = (pathlib.Path(d, n) for n in ("state", "metrics", "own", "sessions"))
-        # the runner's directory name for a task id (workspace.rs Sessions::hex); t1 is a real id's
-        ids = {"t1": "cli-c86629271199d5b7", "t2": "cli-2", "t3": "cli-3", "t4": "cli-4", "o1": "cli-o1", "o2": "cli-o2"}
-        hx = lambda i: ids.get(i, i).encode().hex()
-        for p in (state / ".trash", metrics, own, state / ".sessions/dock/pool1/cur/work"):
-            p.mkdir(parents=True)
-        for t in ("t1", "t3", "o1"):
-            (state / ".sessions" / hx(t) / "tree/work").mkdir(parents=True)
-        (state / ".sessions" / hx("t2")).mkdir()
-        for c in ("t1", "t2", "o2"):
-            (state / ".sessions-store" / hx(c) / "tree").mkdir(parents=True)
-        script = text.replace("/run/exec-pool-sessions-gc-list/sessions", str(listed)).replace("/var/lib/exec-pool-sessions-gc", str(own))
-        script = script.replace("/var/lib/workers", str(state)).replace("/run/exec-pool-sessions-gc", str(metrics))
-        pathlib.Path(d, "gc").write_text(script)
-        line = lambda i, eligible=True, handed_back=True, dir=None: json.dumps({"task_id": ids.get(i, i), "dir": dir or hx(i), "state": "cancelled", "last_change": "2026-11-01T00:00:00Z",
-                                                                      "hosts": ["acer-swift"], "eligible": eligible, "handed_back": handed_back})
-        known = lambda i: json.dumps({"task_id": ids[i], "dir": hx(i), "eligible": False, "handed_back": None})
-
-        # the list as `exec-pool sessions` prints it: t1 to t4 known, the given lines eligible; None: no list
-        def run(eligible, listed_ok=True):
-            listed.unlink(missing_ok=True)
-            if listed_ok:
-                given = {json.loads(e).get("task_id") for e in eligible if e.startswith("{")}
-                listed.write_text("".join(e + "\n" for e in eligible) + "".join(known(i) + "\n" for i in ("t1", "t2", "t3", "t4") if ids[i] not in given))
-            return subprocess.run(["bash", str(pathlib.Path(d, "gc"))], capture_output=True, text=True)
-
-        r = run([line("t1"), line("t2")])
-        events = [json.loads(l) for l in r.stdout.splitlines() if l.startswith("{")]
-        trash = sorted(p.name.rsplit("-", 2)[0] for p in (state / ".trash").iterdir())
-        check(r.returncode == 0 and trash == [f"session-{hx('t1')}", f"store-{hx('t1')}"] and not (state / ".sessions" / hx("t1")).exists()
-              and (state / ".sessions" / hx("t3") / "tree").is_dir() and (state / ".sessions-store" / hx("t2")).is_dir() and (state / ".sessions" / hx("t2")).is_dir()
-              and (state / ".sessions/dock/pool1/cur/work").is_dir()
-              and [(e["event"], e.get("kind")) for e in events] == [("removed", "session"), ("removed", "store"), ("skipped", None)]
-              and all(e.get("state") == "cancelled" and e.get("hosts") == ["acer-swift"] and e.get("task_id") == ids["t1"] for e in events[:2]),
-              f"an eligible parked tree, named by the hex of its id cli-c86629271199d5b7, and its store copy move to .trash with one JSON line each; a docked one, an ineligible one and the dock stay ({r.returncode}, {trash}, {events}, {r.stderr.strip()[-200:]})")
-        prom = (metrics / "sessions-gc.prom").read_text() if (metrics / "sessions-gc.prom").exists() else ""
-        check('homelab_exec_pool_sessions_removed_total{kind="session"} 1' in prom and 'homelab_exec_pool_sessions_removed_total{kind="store"} 1' in prom
-              and 'homelab_exec_pool_sessions_orphaned{kind="parked"} 1' in prom and 'homelab_exec_pool_sessions_orphaned{kind="store"} 1' in prom
-              and (state / ".sessions" / hx("o1") / "tree").is_dir() and (state / ".sessions-store" / hx("o2")).is_dir(),
-              f"the removed totals count each move, and a tree the queue does not know is counted as an orphan and stays ({prom!r})")
-        (state / "outside").mkdir()
-        r = run([line("t9", dir="../outside"), line("t1")])
-        prom = (metrics / "sessions-gc.prom").read_text()
-        check(r.returncode != 0 and (state / "outside").is_dir() and 'homelab_exec_pool_sessions_removed_total{kind="session"} 1' in prom
-              and r.stdout.count('"refused"') == 1,
-              f"a dir that is not a hex name is refused and fails the run, moving nothing; the totals carry over runs ({r.returncode}, {r.stdout.strip()[-300:]})")
-        r = run(["not json", line("t3")])
-        check(r.returncode != 0 and (state / ".sessions" / hx("t3") / "tree").is_dir() and (metrics / "sessions-gc.prom").read_text() == prom,
-              f"a list that does not parse fails the run before any move ({r.returncode})")
-        (state / ".sessions" / hx("t3") / "tree/work/x").write_text("x")
-        r = run([line("t3")], listed_ok=False)
-        check(r.returncode != 0 and (state / ".sessions" / hx("t3") / "tree").is_dir() and (metrics / "sessions-gc.prom").read_text() == prom,
-              f"no list (the lister failed) fails the run with nothing moved and the textfile left as it was ({r.returncode})")
-        r = run([line("t3", handed_back=False), line("t3x", eligible=False)])
-        check(r.returncode == 0 and (state / ".sessions" / hx("t3") / "tree/work/x").exists() and '"removed"' not in r.stdout,
-              f"a line the queue calls eligible whose branch was not handed back whole, or one it does not call eligible, moves nothing ({r.returncode}, {r.stdout.strip()[-300:]})")
-        prom = (metrics / "sessions-gc.prom").read_text()
-        (state / ".sessions" / hx("t4")).symlink_to(state / ".sessions" / hx("t3"))
-        (state / ".sessions-store" / hx("t4") / "tree").mkdir(parents=True)
-        own.joinpath("removed-store").write_text("garbage")
-        r = run([line("t8", dir="dock"), line("t4")])
-        prom = (metrics / "sessions-gc.prom").read_text()
-        check(r.returncode != 0 and (state / ".sessions/dock/pool1/cur/work").is_dir() and (state / ".sessions-store" / hx("t4") / "tree").is_dir()
-              and (state / ".sessions" / hx("t3") / "tree/work/x").exists() and r.stdout.count('"refused"') == 2
-              and 'homelab_exec_pool_sessions_removed_total{kind="store"} 0' in prom,
-              f"the id dock and a session that is a link are refused, the latter's store copy kept; a counter that is not a number restarts at 0 ({r.returncode}, {r.stdout.strip()[-300:]}, {prom!r})")
-
-
 def main():
     # every evaluation below that is not expected to throw, in chunks of PREFETCH_CHUNK per process instead of one process
     # each: the order of the checks, and so of their lines, is unchanged. The TYPED cases must throw, so each stays its own.
@@ -1496,7 +1385,6 @@ def main():
           f"an instance without rootInGuest is unchanged: host uids, plain binds, sudo with a password ({ok})")
     check_host_network()
     check_submitter()
-    check_sessions_gc()
     out = nix_eval("{ }", NO_ROOT)
     got = json.loads(out.stdout) if out.returncode == 0 else {}
     check(got.get("allowed") == ["*"] and got.get("mounts") == want_mounts,

@@ -1,254 +1,308 @@
-//! A session tree's attach and detach on a temp dir, as the root helper does them around each turn: the tree comes
-//! back at the same dock path with its uncommitted work and the agent's transcript as they were.
+//! A session's park and resume against a local bare remote, as the helper runs them in a slot: a dirty tree with
+//! uncommitted, staged, deleted, untracked and unpushed work comes back identical in a fresh clone, ignored files
+//! left behind, and a park that leaves nothing uncommitted removes the snapshot. `git` must be on PATH.
 
 #![allow(
     clippy::unwrap_used,
+    clippy::indexing_slicing,
     reason = "the fixture's helpers: a failure there is the test failing"
 )]
 
+use std::collections::BTreeMap;
 use std::fs;
-use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
-use std::path::Path;
+use std::os::unix::fs::PermissionsExt as _;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
-use exec_pool::sync::{self, Depot};
-use exec_pool::workspace::{Error, Sessions};
+use exec_pool::snapshot::{Git, Plan, Resume, landed, listed, plan};
 
-fn write(path: &Path, bytes: &[u8]) {
+const BRANCH: &str = "pool/t-1";
+const WIP: &str = "refs/pool-wip/t-1";
+
+fn run(argv: &[String]) -> String {
+    let out = Command::new(&argv[0]).args(&argv[1..]).output().unwrap();
+    assert!(
+        out.status.success(),
+        "{argv:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8(out.stdout).unwrap().trim_end().to_owned()
+}
+
+fn git(dir: &Path, args: &[&str]) -> String {
+    let mut cmd = vec![
+        "env".to_owned(),
+        "GIT_CONFIG_GLOBAL=/dev/null".to_owned(),
+        "GIT_CONFIG_NOSYSTEM=1".to_owned(),
+        "git".to_owned(),
+        "-C".to_owned(),
+        dir.display().to_string(),
+    ];
+    cmd.extend(args.iter().map(|&a| a.to_owned()));
+    run(&cmd)
+}
+
+fn write(path: &Path, bytes: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, bytes).unwrap();
 }
 
-#[test]
-fn a_tree_attaches_to_a_slots_dock_and_comes_back_intact_at_the_same_path() {
-    let root = std::env::temp_dir().join(format!("exec-pool-sessions-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
-    for slot in ["pool1", "pool2"] {
-        fs::create_dir_all(root.join("dock").join(slot)).unwrap();
+/// Every file under `dir` but `.git`'s, with its bytes and whether it is executable.
+fn files(dir: &Path) -> BTreeMap<PathBuf, (Vec<u8>, bool)> {
+    fn walk(root: &Path, dir: &Path, out: &mut BTreeMap<PathBuf, (Vec<u8>, bool)>) {
+        for e in fs::read_dir(dir).unwrap() {
+            let p = e.unwrap().path();
+            let rel = p.strip_prefix(root).unwrap().to_owned();
+            if rel == Path::new(".git") {
+                continue;
+            }
+            if p.is_dir() {
+                walk(root, &p, out);
+            } else {
+                let exec = fs::metadata(&p).unwrap().permissions().mode() & 0o100 != 0;
+                out.insert(rel, (fs::read(&p).unwrap(), exec));
+            }
+        }
     }
-    let me = fs::metadata(std::env::temp_dir()).unwrap();
-    let (uid, gid) = (me.uid(), me.gid());
-    let s = Sessions::new(root.clone());
-    let tree = s.tree("t-1");
-    assert_eq!(tree, root.join("742d31/tree"));
-    assert!(matches!(
-        s.attach("t-1", "pool1", uid),
-        Err(Error::NoTree(_))
-    ));
-    s.create("t-1", (uid, gid)).unwrap();
-    // the guest user may enter the tree's root but not change it: only home and work are its own
-    let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o7777;
-    assert_eq!(mode(&tree), 0o711);
-    assert_eq!(mode(&tree.join("home")), 0o700);
-    s.attach("t-1", "pool1", uid).unwrap();
-    let docked = s.docked("pool1");
-    assert_eq!(docked, root.join("dock/pool1/cur"));
-    assert!(s.dock_busy("pool1") && !tree.exists());
-    // the turn: the agent's transcript and an uncommitted change, at the paths the guest sees under /session/cur
-    let transcript = b"{\"type\":\"user\",\"message\":\"nonce 4711\"}\n";
+    let mut out = BTreeMap::new();
+    walk(dir, dir, &mut out);
+    out
+}
+
+/// The clone a turn makes: the remote's default branch, the agent's identity in its own config.
+fn clone(remote: &str, into: &Path) {
+    run(&[
+        "env",
+        "GIT_CONFIG_GLOBAL=/dev/null",
+        "GIT_CONFIG_NOSYSTEM=1",
+        "git",
+        "clone",
+        "--quiet",
+        "-c",
+        "user.name=pool",
+        "-c",
+        "user.email=pool@example.invalid",
+        "--",
+        remote,
+        &into.display().to_string(),
+    ]
+    .map(str::to_owned));
+}
+
+/// The park as the helper runs it: what the remote holds, the plan, and the snapshot pushed or removed.
+fn park(g: &Git<'_>, remote: &str, index: &Path) -> Plan {
+    let heads = run(&g.head());
+    let (head, head_tree) = heads.split_once('\n').unwrap();
+    let remote_refs = run(&g.list(remote, BRANCH, WIP));
+    let [read, add, write] = g.tree(&index.display().to_string());
+    run(&read);
+    run(&add);
+    let tree = run(&write);
+    let branch = listed(&remote_refs, &format!("refs/heads/{BRANCH}"));
+    let wip = listed(&remote_refs, WIP);
+    let p = plan(
+        (branch.as_deref(), wip.as_deref()),
+        (head, head_tree),
+        &tree,
+    );
+    match p {
+        Plan::Snapshot => {
+            let commit = run(&g.commit(&tree, "pool: snapshot of t-1"));
+            run(&g.push(remote, Some(&commit), WIP));
+            assert!(landed(
+                &run(&g.list(remote, BRANCH, WIP)),
+                WIP,
+                Some(&commit)
+            ));
+        }
+        Plan::Clear => {
+            run(&g.push(remote, None, WIP));
+            assert!(landed(&run(&g.list(remote, BRANCH, WIP)), WIP, None));
+        }
+        Plan::Clean => {}
+    }
+    let _ = fs::remove_file(index);
+    p
+}
+
+/// The resume as a turn runs it in a fresh clone at `into`.
+fn resume(remote: &str, into: &Path) -> Resume {
+    clone(remote, into);
+    let checkout = into.display().to_string();
+    let g = Git {
+        env: "env",
+        git: "git",
+        checkout: &checkout,
+    };
+    let remote_refs = run(&g.list(remote, BRANCH, WIP));
+    let r = Resume::of(
+        listed(&remote_refs, &format!("refs/heads/{BRANCH}")),
+        listed(&remote_refs, WIP),
+    );
+    for (_, step) in r.steps(&g, (BRANCH, "main", WIP)) {
+        run(&step);
+    }
+    r
+}
+
+#[test]
+fn a_dirty_tree_comes_back_identical_in_a_fresh_clone_and_a_clean_park_drops_the_snapshot() {
+    let root = std::env::temp_dir().join(format!("exec-pool-snapshot-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    let bare = root.join("remote.git");
+    let remote = bare.display().to_string();
+    run(&["git", "init", "--quiet", "--bare", "-b", "main", &remote].map(str::to_owned));
+    let seed = root.join("seed");
+    clone(&remote, &seed);
+    git(&seed, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    write(&seed.join(".gitignore"), "target/\n");
+    write(&seed.join("src/lib.rs"), "fn a() {}\n");
+    write(&seed.join("README.md"), "readme\n");
+    // tracked although an ignore rule matches it
+    write(&seed.join("target/keep"), "kept\n");
+    git(&seed, &["add", "--all"]);
+    git(&seed, &["add", "--force", "target/keep"]);
+    git(&seed, &["commit", "--quiet", "-m", "seed"]);
+    git(&seed, &["push", "--quiet", "origin", "main"]);
+
+    // a first turn: the agent pushes its branch, then commits once more, leaves work uncommitted and stops
+    let a = root.join("a");
+    let resumed = resume(&remote, &a);
+    assert_eq!(resumed, Resume::Rev);
+    write(&a.join("src/lib.rs"), "fn a() {}\nfn pushed() {}\n");
+    git(&a, &["commit", "--quiet", "-am", "pushed"]);
+    git(&a, &["push", "--quiet", "origin", BRANCH]);
     write(
-        &docked.join("home/.claude/projects/-session-cur-work/u.jsonl"),
-        transcript,
+        &a.join("src/lib.rs"),
+        "fn a() {}\nfn pushed() {}\nfn local() {}\n",
     );
-    write(&docked.join("work/src/lib.rs"), b"fn uncommitted() {}\n");
-    // another tree cannot attach over it, and the task's own cannot attach twice
-    s.create("t-2", (uid, gid)).unwrap();
-    assert!(matches!(
-        s.attach("t-2", "pool1", uid),
-        Err(Error::DockBusy(_))
-    ));
-    assert!(matches!(
-        s.attach("t-1", "pool2", uid),
-        Err(Error::NoTree(_))
-    ));
-    s.detach("t-1", "pool1").unwrap();
-    assert!(!s.dock_busy("pool1"));
-    assert!(matches!(s.detach("t-1", "pool1"), Err(Error::NoTree(_))));
-    // the next turn on another slot finds it at the same guest path
-    s.attach("t-1", "pool2", uid).unwrap();
-    let again = s.docked("pool2");
+    git(&a, &["commit", "--quiet", "-am", "committed, not pushed"]);
+    write(&a.join("src/lib.rs"), "fn uncommitted() {}\n");
+    fs::remove_file(a.join("README.md")).unwrap();
+    write(&a.join("staged.txt"), "staged\n");
+    git(&a, &["add", "staged.txt"]);
+    write(&a.join("notes/todo.md"), "untracked\n");
+    write(&a.join("bin/run"), "#!/bin/sh\n");
+    fs::set_permissions(a.join("bin/run"), fs::Permissions::from_mode(0o755)).unwrap();
+    write(&a.join("target/build.out"), "ignored build output\n");
+    let checkout = a.display().to_string();
+    let ga = Git {
+        env: "env",
+        git: "git",
+        checkout: &checkout,
+    };
+    let index = root.join("snapshot.index");
+    assert_eq!(park(&ga, &remote, &index), Plan::Snapshot);
     assert_eq!(
-        fs::read(again.join("home/.claude/projects/-session-cur-work/u.jsonl")).unwrap(),
-        transcript
+        git(&a, &["status", "--porcelain"]).lines().count(),
+        5,
+        "the park changes nothing in the checkout"
+    );
+
+    // the next turn, on another host: a fresh clone
+    let b = root.join("b");
+    let resumed = resume(&remote, &b);
+    assert!(matches!(resumed, Resume::Snapshot(_)));
+    let mut want = files(&a);
+    want.remove(Path::new("target/build.out"));
+    assert!(
+        !b.join("target/build.out").exists(),
+        "ignored: never pushed"
+    );
+    assert_eq!(files(&b), want);
+    assert_eq!(
+        git(&b, &["rev-parse", "HEAD"]),
+        git(&a, &["rev-parse", "HEAD"]),
+        "the unpushed commit is the branch's again"
     );
     assert_eq!(
-        fs::read(again.join("work/src/lib.rs")).unwrap(),
-        b"fn uncommitted() {}\n"
+        git(&b, &["rev-parse", "--abbrev-ref", "HEAD"]),
+        BRANCH,
+        "on its branch"
     );
-    // a tree whose owner is not the slot home's does not attach
-    assert!(matches!(
-        s.attach("t-2", "pool1", uid.wrapping_add(1)),
-        Err(Error::Owner { .. })
-    ));
-    s.detach("t-1", "pool2").unwrap();
+    let status = git(&b, &["status", "--porcelain"]);
+    assert!(
+        status.contains(" D README.md") && status.contains("?? notes/"),
+        "{status}"
+    );
+    assert!(
+        git(&b, &["diff", "--cached"]).is_empty(),
+        "uncommitted, none staged"
+    );
+
+    // the agent commits and pushes everything: its park removes the snapshot, and the turn after restores none
+    let checkout = b.display().to_string();
+    let gb = Git {
+        env: "env",
+        git: "git",
+        checkout: &checkout,
+    };
+    git(&b, &["add", "--all"]);
+    git(&b, &["commit", "--quiet", "-m", "all of it"]);
+    git(&b, &["push", "--quiet", "origin", BRANCH]);
+    assert_eq!(park(&gb, &remote, &index), Plan::Clear);
+    assert_eq!(park(&gb, &remote, &index), Plan::Clean);
+    let c = root.join("c");
+    assert!(matches!(resume(&remote, &c), Resume::Branch(_)));
+    assert_eq!(files(&c), files(&b));
+    assert!(git(&c, &["status", "--porcelain"]).is_empty());
     fs::remove_dir_all(&root).unwrap();
 }
 
 #[test]
-fn an_unprepared_tree_is_made_afresh_and_a_prepared_one_is_kept() {
-    let root = std::env::temp_dir().join(format!("exec-pool-prepared-{}", std::process::id()));
+fn a_push_the_checkouts_config_sends_elsewhere_is_not_taken_for_a_park() {
+    let root = std::env::temp_dir().join(format!("exec-pool-redirect-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
-    let me = fs::metadata(std::env::temp_dir()).unwrap();
-    let owner = (me.uid(), me.gid());
-    let s = Sessions::new(root.clone());
-    s.create("t-1", owner).unwrap();
-    // a first turn whose clone failed half-way, before the mark
-    write(&s.tree("t-1").join("work/partial"), b"x");
-    s.create("t-1", owner).unwrap();
-    assert!(!s.tree("t-1").join("work/partial").exists());
-    fs::write(s.prepared("t-1"), "").unwrap();
-    assert!(matches!(s.create("t-1", owner), Err(Error::TreeExists(_))));
+    fs::create_dir_all(&root).unwrap();
+    let (bare, decoy) = (root.join("remote.git"), root.join("decoy.git"));
+    let remote = bare.display().to_string();
+    for r in [&bare, &decoy] {
+        run(&[
+            "git",
+            "init",
+            "--quiet",
+            "--bare",
+            "-b",
+            "main",
+            &r.display().to_string(),
+        ]
+        .map(str::to_owned));
+    }
+    let seed = root.join("seed");
+    clone(&remote, &seed);
+    git(&seed, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    write(&seed.join("a"), "a\n");
+    git(&seed, &["add", "--all"]);
+    git(&seed, &["commit", "--quiet", "-m", "seed"]);
+    git(&seed, &["push", "--quiet", "origin", "main"]);
+    let a = root.join("a");
+    resume(&remote, &a);
+    write(&a.join("a"), "changed\n");
+    // the agent points the real remote at another repository in its checkout's own config
+    git(
+        &a,
+        &[
+            "config",
+            &format!("url.{}.insteadOf", decoy.display()),
+            &remote,
+        ],
+    );
+    let checkout = a.display().to_string();
+    let g = Git {
+        env: "env",
+        git: "git",
+        checkout: &checkout,
+    };
+    let [read, add, write_tree] = g.tree(&root.join("i").display().to_string());
+    run(&read);
+    run(&add);
+    let tree = run(&write_tree);
+    let commit = run(&g.commit(&tree, "snapshot"));
+    run(&g.push(&remote, Some(&commit), WIP));
+    assert!(
+        !landed(&run(&g.list(&remote, BRANCH, WIP)), WIP, Some(&commit)),
+        "the real remote has no snapshot: the park must fail"
+    );
     fs::remove_dir_all(&root).unwrap();
-}
-
-/// Whether rsync can keep a mode in a user xattr under `root`, as the store does: the hosts' ext4 can, a build sandbox's
-/// tmpfs may not, and then the test says so and skips.
-fn xattrs(rsync: &str, root: &Path) -> bool {
-    fs::write(root.join("probe"), b"").unwrap();
-    // read-only, so the copy has to record its mode
-    fs::set_permissions(root.join("probe"), fs::Permissions::from_mode(0o444)).unwrap();
-    let probe = std::process::Command::new(rsync)
-        .args(["-a", "-M--fake-super"])
-        .arg(root.join("probe"))
-        .arg(root.join("probed"))
-        .output()
-        .unwrap();
-    if !probe.status.success() {
-        eprintln!(
-            "skipped: no user xattrs under {}: {}",
-            root.display(),
-            String::from_utf8_lossy(&probe.stderr)
-        );
-        let _ = fs::remove_dir_all(root);
-    }
-    probe.status.success()
-}
-
-/// A session tree as a turn leaves it on acer: a transcript, uncommitted work, a hard link, a Home Manager link (it
-/// dangles on the other host until the next attach relinks it), a key the agent copied in, a gh and a Claude login, a
-/// read-only git object.
-fn parked(acer: &Sessions, (uid, gid): (u32, u32)) -> std::path::PathBuf {
-    acer.create("t-1", (uid, gid)).unwrap();
-    let tree = acer.tree("t-1");
-    write(&tree.join("home/.claude/projects/w/u.jsonl"), b"transcript");
-    write(&tree.join("work/repo/dirty.txt"), b"uncommitted");
-    write(&tree.join("home/.ssh/id_ed25519"), b"a key");
-    write(&tree.join("home/.config/gh/hosts.yml"), b"a login");
-    write(&tree.join("home/.claude/.credentials.json"), b"a login");
-    write(&tree.join("work/repo/.git/objects/ab/cd"), b"object");
-    fs::hard_link(
-        tree.join("work/repo/dirty.txt"),
-        tree.join("work/repo/twin"),
-    )
-    .unwrap();
-    std::os::unix::fs::symlink("/nix/store/x-home-files/.bashrc", tree.join("home/.bashrc"))
-        .unwrap();
-    let set = |p: &Path, m: u32| fs::set_permissions(p, fs::Permissions::from_mode(m)).unwrap();
-    set(&tree.join("work/repo/.git/objects/ab/cd"), 0o444);
-    set(&tree.join("work/repo/.git/objects/ab"), 0o555);
-    tree
-}
-
-#[test]
-fn a_parked_tree_goes_to_the_store_and_comes_back_on_another_host_as_it_was() {
-    let root = std::env::temp_dir().join(format!("exec-pool-store-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
-    let (acer, msi) = (
-        Sessions::new(root.join("acer")),
-        Sessions::new(root.join("msi")),
-    );
-    let me = fs::metadata(std::env::temp_dir()).unwrap();
-    let (uid, gid) = (me.uid(), me.gid());
-    let stored = root.join("store");
-    fs::create_dir_all(&stored).unwrap();
-    // acer's own store, and msi's way to it: here a shell standing in for ssh and the forced command's cd
-    let local = Depot::Local {
-        root: stored.clone(),
-        owner: format!("{uid}:{gid}"),
-    };
-    let remote = Depot::Remote {
-        dest: "acer".to_owned(),
-        ssh: format!(
-            "bash -c 'cd {} && shift && exec \"$@\"' ssh",
-            stored.display()
-        ),
-    };
-    let rsync = std::env::var("EXEC_POOL_TEST_RSYNC").unwrap_or_else(|_| "rsync".to_owned());
-    if !xattrs(&rsync, &root) {
-        return;
-    }
-    let hex = Sessions::hex("t-1");
-    let tree = parked(&acer, (uid, gid));
-    let mode = |p: &Path| fs::symlink_metadata(p).unwrap().permissions().mode() & 0o7777;
-    let set = |p: &Path, m: u32| fs::set_permissions(p, fs::Permissions::from_mode(m)).unwrap();
-    let dir = acer.dir("t-1");
-    fs::write(dir.join(sync::GENERATION), "5").unwrap();
-
-    // parked on acer, into its own store
-    sync::push((&rsync, "chown"), &local, (&dir, &hex), 5).unwrap();
-    assert_eq!(sync::generation(&stored.join(&hex)), Some(5));
-
-    // woken on msi
-    let theirs = msi.dir("t-1");
-    assert!(
-        sync::pull(&rsync, &remote, (&theirs, &hex), 6, (uid, gid)).is_err(),
-        "the store holds 5"
-    );
-    assert!(!msi.tree("t-1").exists() && !theirs.join("incoming").exists());
-    assert_eq!(
-        sync::pull(&rsync, &remote, (&theirs, &hex), 5, (uid, gid)),
-        Ok(5)
-    );
-    let got = msi.tree("t-1");
-    assert_eq!(sync::generation(&theirs), Some(5));
-    assert_eq!(
-        fs::read(got.join("home/.claude/projects/w/u.jsonl")).unwrap(),
-        b"transcript"
-    );
-    assert_eq!(
-        fs::read(got.join("work/repo/dirty.txt")).unwrap(),
-        b"uncommitted"
-    );
-    assert_eq!(fs::metadata(got.join("work/repo/twin")).unwrap().nlink(), 2);
-    assert_eq!(
-        fs::read_link(got.join("home/.bashrc")).unwrap(),
-        Path::new("/nix/store/x-home-files/.bashrc")
-    );
-    assert_eq!(mode(&got), 0o711);
-    assert_eq!(mode(&got.join("home")), 0o700);
-    assert_eq!(mode(&got.join("work/repo/.git/objects/ab/cd")), 0o444);
-    assert_eq!(mode(&got.join("work/repo/.git/objects/ab")), 0o555);
-    assert_eq!(fs::metadata(got.join("work")).unwrap().uid(), uid);
-    assert!(
-        !got.join("home/.ssh").exists()
-            && !got.join("home/.config/gh/hosts.yml").exists()
-            && !got.join("home/.claude/.credentials.json").exists(),
-        "a key or a login never leaves its host"
-    );
-
-    // parked on msi at a later turn: its tree replaces the store's copy, nothing of the old one left behind, a file
-    // in a read-only directory included
-    fs::remove_file(got.join("work/repo/twin")).unwrap();
-    set(&got.join("work/repo/.git/objects/ab"), 0o755);
-    fs::remove_file(got.join("work/repo/.git/objects/ab/cd")).unwrap();
-    set(&got.join("work/repo/.git/objects/ab"), 0o555);
-    fs::write(theirs.join(sync::GENERATION), "7").unwrap();
-    sync::push((&rsync, "chown"), &remote, (&theirs, &hex), 7).unwrap();
-    assert_eq!(sync::generation(&stored.join(&hex)), Some(7));
-    assert!(!stored.join(&hex).join("tree/work/repo/twin").exists());
-    assert!(
-        !stored
-            .join(&hex)
-            .join("tree/work/repo/.git/objects/ab/cd")
-            .exists()
-    );
-
-    // acer's run at 6 lost its lease to msi's at 7: it does not put its older tree back
-    fs::write(dir.join(sync::GENERATION), "6").unwrap();
-    assert!(sync::push((&rsync, "chown"), &local, (&dir, &hex), 6).is_err());
-    assert_eq!(sync::generation(&stored.join(&hex)), Some(7));
-
-    for d in [&tree, &got] {
-        set(&d.join("work/repo/.git/objects/ab"), 0o755);
-    }
-    let _ = fs::remove_dir_all(&root);
 }

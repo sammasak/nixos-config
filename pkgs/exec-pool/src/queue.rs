@@ -15,10 +15,9 @@ use serde_json::Value;
 
 use crate::task_result::TaskResult;
 use crate::wake::Wake;
-use crate::workspace::Sessions;
 use crate::{
     Attempt, CheckpointRef, Error, Event, Kind, ParkReason, Placement, Receipt, Resolution,
-    RetryPolicy, SchemaVersion, Settle, Slot, Status, TaskSpec, reachable, transition,
+    RetryPolicy, SchemaVersion, Settle, Slot, Status, TaskSpec, transition,
 };
 
 pub const UP: &str = include_str!("../migrations/0001_queue.up.sql");
@@ -27,7 +26,7 @@ pub const DOWN: &str = include_str!("../migrations/0001_queue.down.sql");
 /// From 7 each records its floor, the oldest VERSION whose reads and writes stay correct on it: an additive one keeps
 /// the previous floor, so a binary rolled back across it still serves; one an older binary would misread or break by
 /// its writes records its own version.
-const STEPS: [(i32, &str); 16] = [
+const STEPS: [(i32, &str); 18] = [
     (1, UP),
     (2, include_str!("../migrations/0002_submitter.up.sql")),
     (3, include_str!("../migrations/0003_result.up.sql")),
@@ -50,6 +49,8 @@ const STEPS: [(i32, &str); 16] = [
     (14, include_str!("../migrations/0014_timer.up.sql")),
     (15, include_str!("../migrations/0015_turn_log.up.sql")),
     (16, include_str!("../migrations/0016_priority.up.sql")),
+    (17, include_str!("../migrations/0017_transcript.up.sql")),
+    (18, include_str!("../migrations/0018_undelivered.up.sql")),
 ];
 const DOWN_SUBMITTER: &str = include_str!("../migrations/0002_submitter.down.sql");
 const DOWN_RESULT: &str = include_str!("../migrations/0003_result.down.sql");
@@ -63,7 +64,9 @@ const DOWN_DRAIN_REASON: &str = include_str!("../migrations/0013_drain_reason.do
 const DOWN_TIMER: &str = include_str!("../migrations/0014_timer.down.sql");
 const DOWN_TURN_LOG: &str = include_str!("../migrations/0015_turn_log.down.sql");
 const DOWN_PRIORITY: &str = include_str!("../migrations/0016_priority.down.sql");
-const VERSION: i32 = 16;
+const DOWN_TRANSCRIPT: &str = include_str!("../migrations/0017_transcript.down.sql");
+const DOWN_UNDELIVERED: &str = include_str!("../migrations/0018_undelivered.down.sql");
+const VERSION: i32 = 18;
 /// The fence's SQLSTATE, raised by `attempts_fence`.
 const FENCED: &str = "XP409";
 const LIVE: &str = "('leased', 'running', 'checkpointing')";
@@ -236,6 +239,31 @@ pub struct Turn {
     pub first: bool,
     /// Where the last park left the session's tree; `None` before its first park.
     pub checkpoint: Option<CheckpointRef>,
+    /// The agent's transcript as the last park that had one left it; `None` on the first turn.
+    pub transcript: Option<Transcript>,
+}
+
+/// The largest transcript the queue keeps for a session, as `transcripts.body` bounds it.
+pub const TRANSCRIPT_BYTES: usize = 32 << 20;
+
+/// A session's agent transcript: what `--resume` reads, kept in the queue alone (it holds tool output).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Transcript {
+    /// The directory under `~/.claude/projects` it was found in, one path component.
+    pub project: String,
+    pub body: Vec<u8>,
+}
+
+impl Transcript {
+    /// Whether `project` names one directory, as the queue's check does.
+    #[must_use]
+    pub fn valid_project(project: &str) -> bool {
+        (1..=255).contains(&project.len())
+            && !matches!(project, "." | "..")
+            && project
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+    }
 }
 
 /// How a session's turn ends, for [`Store::park`].
@@ -249,9 +277,16 @@ pub struct Park {
     pub result: TaskResult,
     /// [`Turn::upto`] of the claim the turn ran.
     pub upto: i64,
+    /// The turn's input never reached the agent (`runner::parks_undelivered`): nothing is marked read, and the next
+    /// turn is handed it again.
+    #[serde(default)]
+    pub undelivered: bool,
     /// The time the turn asked to be woken at (`pool-wait`), put in the inbox as a timer row.
     #[serde(default)]
     pub wake: Option<Wake>,
+    /// The agent's transcript after the turn, replacing the session's; `None` keeps the one it has.
+    #[serde(skip)]
+    pub transcript: Option<Transcript>,
 }
 
 /// What a `continue` row reads as in a turn's input: a turn stopped before it ended.
@@ -372,8 +407,6 @@ const fn reason(kind: &Kind, to: Status) -> &'static str {
 /// attempt has waited queued, so a low priority is not starved; then the oldest.
 const CLAIM_ORDER: &str =
     "t.priority + floor(extract(epoch FROM now() - a.changed_at) / 600) DESC, a.changed_at, a.id";
-const RAN_ON: &str = "CASE WHEN t.session THEN (SELECT e.host FROM events e WHERE e.attempt_id = a.id \
-    AND e.to_status = 'running' ORDER BY e.id DESC LIMIT 1) END";
 
 /// The columns an attempt row is read with, under `a` (attempts) and `t` (tasks).
 const ATTEMPT_COLS: &str = "a.id, a.task_id, a.lease_epoch, a.tries, a.status, a.host, a.slot, a.pins, \
@@ -696,7 +729,7 @@ impl Store {
             None => Err(QueueError::NotMigrated),
             Some(v) if v > VERSION => Err(QueueError::SchemaAhead(v)),
             Some(_) => Ok(tx.batch_execute(&format!(
-                "{DOWN_PRIORITY}{DOWN_TURN_LOG}{DOWN_TIMER}{DOWN_DRAIN_REASON}{DOWN_CLAIM_HOST}{DOWN_SESSION_METRICS}{DOWN_SESSION}{DOWN_SLOTS}{DOWN_QUARANTINE}{DOWN_CANCEL}{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"
+                "{DOWN_UNDELIVERED}{DOWN_TRANSCRIPT}{DOWN_PRIORITY}{DOWN_TURN_LOG}{DOWN_TIMER}{DOWN_DRAIN_REASON}{DOWN_CLAIM_HOST}{DOWN_SESSION_METRICS}{DOWN_SESSION}{DOWN_SLOTS}{DOWN_QUARANTINE}{DOWN_CANCEL}{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"
             ))?),
         })
     }
@@ -801,10 +834,9 @@ impl Store {
         })
     }
 
-    /// Leases the queued attempt that fits `slot` for `lease_secs` and whose checkpoint is [`reachable`] from its host (a
-    /// session that ran but never parked: only where it ran) with the highest priority, its task's plus one for every
-    /// 10 minutes it has waited, the oldest among equals, skipping rows another claimer holds. A live one is never
-    /// stopped for it.
+    /// Leases the queued attempt that fits `slot` for `lease_secs` with the highest priority, its task's plus one for
+    /// every 10 minutes it has waited, the oldest among equals, skipping rows another claimer holds. A live one is never
+    /// stopped for it. Any host may take a session's turn: its work is on its remote and its transcript here.
     ///
     /// # Errors
     /// What [`Slot::validate`] rejects, or what the database reports (a slot with a live lease already included).
@@ -822,10 +854,10 @@ impl Store {
                 &[&slot.host, &slot.id, &agents],
             )?;
             // read every queued task unlocked, then lock only the one taken, so a claimer holds no row it skips; a
-            // session's checkpoint, and the host its last try ran on, as they were read
+            // session's checkpoint as it was read
             let candidates = tx.query(
                 &format!(
-                    "SELECT a.id, t.spec, a.checkpoint, {RAN_ON} FROM attempts a JOIN tasks t ON t.id = a.task_id \
+                    "SELECT a.id, t.spec, a.checkpoint FROM attempts a JOIN tasks t ON t.id = a.task_id \
                      WHERE a.status = 'queued' ORDER BY {CLAIM_ORDER}"
                 ),
                 &[],
@@ -833,7 +865,6 @@ impl Store {
             for candidate in &candidates {
                 let task: TaskSpec = serde_json::from_value(candidate.try_get(1)?)?;
                 let raw: Option<Value> = candidate.try_get(2)?;
-                let ran_on: Option<&str> = candidate.try_get(3)?;
                 // one this runner cannot read is not its to take, and does not stop it taking another
                 let Ok(checkpoint) = raw
                     .clone()
@@ -842,12 +873,7 @@ impl Store {
                 else {
                     continue;
                 };
-                // a session that ran but never parked has its tree, if any, where it ran
-                let placed = match (&checkpoint, ran_on) {
-                    (None, Some(h)) => h == slot.host,
-                    (c, _) => reachable(c.as_ref(), &slot.host, slot.store),
-                };
-                if task.fits(slot).is_err() || !placed {
+                if task.fits(slot).is_err() {
                     continue;
                 }
                 let id: &str = candidate.try_get(0)?;
@@ -855,9 +881,9 @@ impl Store {
                     &format!(
                         "SELECT {ATTEMPT_COLS} FROM attempts a JOIN tasks t ON t.id = a.task_id \
                          WHERE a.id = $1 AND a.status = 'queued' AND a.checkpoint IS NOT DISTINCT FROM $2 \
-                         AND {RAN_ON} IS NOT DISTINCT FROM $3 FOR UPDATE OF a SKIP LOCKED"
+                         FOR UPDATE OF a SKIP LOCKED"
                     ),
-                    &[&id, &raw, &ran_on],
+                    &[&id, &raw],
                 )?;
                 let Some(row) = rows.first() else { continue };
                 let row = locked(row)?;
@@ -986,13 +1012,14 @@ impl Store {
             let mut changes = vec![change];
             let epoch = i64_of("epoch", epoch)?;
             insert_result(tx, attempt, epoch, &park.result)?;
+            put_transcript(tx, &task, epoch, park.transcript.as_ref())?;
             let usage = park.result.usage;
             let tokens = |f: fn(&crate::task_result::Usage) -> u64| {
                 usage.as_ref().map(|u| i64_of("tokens", f(u))).transpose()
             };
             tx.execute(
                 "INSERT INTO turns (attempt_id, lease_epoch, input_tokens, output_tokens, cache_read_tokens, \
-                 cache_creation_tokens, cost_usd, handed_back) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                 cache_creation_tokens, cost_usd, handed_back, delivered) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
                 &[
                     &attempt,
                     &epoch,
@@ -1002,15 +1029,10 @@ impl Store {
                     &tokens(|u| u.cache_creation_tokens)?,
                     &usage.and_then(|u| u.cost_usd),
                     &park.result.handed_back,
+                    &!park.undelivered,
                 ],
             )?;
-            tx.execute(
-                // what the claim handed over: up to upto, and due when it leased (its event's `at` is the claim's now())
-                "UPDATE inbox SET consumed_epoch = $3 WHERE task_id = $1 AND id <= $2 AND consumed_epoch IS NULL \
-                 AND (due_at IS NULL OR due_at <= (SELECT max(e.at) FROM events e \
-                 WHERE e.attempt_id = $4 AND e.lease_epoch = $3 AND e.to_status = 'leased'))",
-                &[&task, &park.upto, &epoch, &attempt],
-            )?;
+            mark_read(tx, (&task, attempt, epoch), park)?;
             let resume = match park.reason {
                 ParkReason::Preempted | ParkReason::HostDraining => true,
                 ParkReason::TurnTimeout => timeouts_in_a_row(tx, &task, attempt)? < TIMEOUTS_IN_A_ROW,
@@ -1368,34 +1390,6 @@ impl Store {
         })
     }
 
-    /// Every session as `session_gc` decides its garbage collection (its task, state, last change, hosts, and whether
-    /// it is eligible or stale) and its directory's name (`dir`, [`Sessions::hex`]), oldest change first; only the
-    /// eligible ones with `eligible_only`.
-    ///
-    /// # Errors
-    /// What the database reports.
-    pub fn sessions(&mut self, eligible_only: bool) -> Result<Vec<Value>, QueueError> {
-        self.tx(|tx| {
-            tx.query(
-                "SELECT jsonb_build_object('task_id', task, 'state', state, 'last_change', changed_at, 'hosts', hosts, \
-                 'handed_back', handed_back, 'eligible', eligible, 'stale', stale, 'kept', kept) \
-                 FROM session_gc WHERE eligible OR NOT $1 ORDER BY changed_at, task",
-                &[&eligible_only],
-            )?
-            .iter()
-            .map(|r| {
-                let mut v: Value = r.try_get(0)?;
-                // the name of its directory under .sessions and .sessions-store, as the runner names it
-                let dir = v.get("task_id").and_then(Value::as_str).map(Sessions::hex);
-                if let (Value::Object(m), Some(dir)) = (&mut v, dir) {
-                    m.insert("dir".to_owned(), Value::String(dir));
-                }
-                Ok(v)
-            })
-            .collect()
-        })
-    }
-
     /// The newest `limit` tasks, newest first, as [`Store::task`] shows them without their events.
     ///
     /// # Errors
@@ -1574,7 +1568,9 @@ fn turn(
 ) -> Result<Option<Turn>, QueueError> {
     let row = tx.query_one(
         "SELECT session, session_uuid::text, NOT EXISTS (SELECT FROM events e \
-         WHERE e.attempt_id = $2 AND e.to_status = 'running') FROM tasks WHERE id = $1",
+         WHERE e.attempt_id = $2 AND e.to_status = 'running' AND NOT EXISTS (SELECT FROM turns u \
+         WHERE u.attempt_id = e.attempt_id AND u.lease_epoch = e.lease_epoch AND NOT u.delivered)) \
+         FROM tasks WHERE id = $1",
         &[&task.id, &attempt],
     )?;
     if !row.try_get::<_, bool>(0)? {
@@ -1589,6 +1585,7 @@ fn turn(
             upto: 0,
             first,
             checkpoint,
+            transcript: None,
         }));
     }
     let parked: Option<String> = tx
@@ -1604,6 +1601,18 @@ fn turn(
         Some("turn_timeout") => TIMED_OUT,
         _ => CONTINUE,
     };
+    let transcript = tx
+        .query_opt(
+            "SELECT project, body FROM transcripts WHERE task_id = $1",
+            &[&task.id],
+        )?
+        .map(|r| {
+            Ok::<_, QueueError>(Transcript {
+                project: r.try_get(0)?,
+                body: r.try_get(1)?,
+            })
+        })
+        .transpose()?;
     let mut input = String::new();
     let mut upto = 0;
     // a stopped turn's continue goes first, though what that turn was told is older than it
@@ -1630,7 +1639,52 @@ fn turn(
         upto,
         first,
         checkpoint,
+        transcript,
     }))
+}
+
+/// Marks the inbox rows the turn of `attempt` at `epoch` was handed read, unless its input never reached the agent.
+fn mark_read(
+    tx: &mut Transaction<'_>,
+    (task, attempt, epoch): (&str, &str, i64),
+    park: &Park,
+) -> Result<(), QueueError> {
+    if park.undelivered {
+        return Ok(());
+    }
+    tx.execute(
+        // what the claim handed over: up to upto, and due when it leased (its event's `at` is the claim's now())
+        "UPDATE inbox SET consumed_epoch = $3 WHERE task_id = $1 AND id <= $2 AND consumed_epoch IS NULL \
+         AND (due_at IS NULL OR due_at <= (SELECT max(e.at) FROM events e \
+         WHERE e.attempt_id = $4 AND e.lease_epoch = $3 AND e.to_status = 'leased'))",
+        &[&task, &park.upto, &epoch, &attempt],
+    )?;
+    Ok(())
+}
+
+/// Replaces `task`'s transcript with `t`, the one its turn at `epoch` left; `None` keeps the one it has.
+fn put_transcript(
+    tx: &mut Transaction<'_>,
+    task: &str,
+    epoch: i64,
+    t: Option<&Transcript>,
+) -> Result<(), QueueError> {
+    let Some(t) = t else {
+        return Ok(());
+    };
+    if t.body.len() > TRANSCRIPT_BYTES {
+        return Err(QueueError::Range("transcript"));
+    }
+    if !Transcript::valid_project(&t.project) {
+        return Err(QueueError::Range("transcript project"));
+    }
+    tx.execute(
+        "INSERT INTO transcripts (task_id, lease_epoch, project, body) VALUES ($1, $2, $3, $4) \
+         ON CONFLICT (task_id) DO UPDATE SET lease_epoch = EXCLUDED.lease_epoch, project = EXCLUDED.project, \
+         body = EXCLUDED.body, updated_at = now() WHERE transcripts.lease_epoch <= EXCLUDED.lease_epoch",
+        &[&task, &epoch, &t.project, &t.body],
+    )?;
+    Ok(())
 }
 
 /// Upper bounds of the duration histograms, in seconds: ten seconds to four hours.
@@ -1834,8 +1888,8 @@ const PARKED: &str = "e.to_status = 'waiting' AND e.from_status IN ('running', '
     AND e.reason IN ('turn_end', 'waiting_until', 'preempted', 'host_draining', 'turn_error', 'turn_timeout')";
 
 /// The sessions' series: by state, turns by park reason and their durations, wake latency by source, closed sessions'
-/// turns and age, how long parked ones sit idle, host changes between turns, the tokens and cost turns report, and
-/// what `session_gc` would remove or keeps as stale. A session's host is the one its attempt last ran on.
+/// turns and age, how long parked ones sit idle, host changes between turns and the tokens and cost turns report. A
+/// session's host is the one its attempt last ran on.
 fn sessions(
     tx: &mut Transaction<'_>,
     out: &mut String,
@@ -1993,8 +2047,7 @@ fn session_durations(
     Ok(())
 }
 
-/// The oldest parked session, host changes, what `session_gc` would remove or keeps, and the usage turns reported, by
-/// the host the turn ran on.
+/// The oldest parked session, host changes and the usage turns reported, by the host the turn ran on.
 fn session_totals(
     tx: &mut Transaction<'_>,
     out: &mut String,
@@ -2002,31 +2055,18 @@ fn session_totals(
 ) -> Result<(), QueueError> {
     let waiting =
         "FROM attempts a JOIN tasks t ON t.id = a.task_id WHERE t.session AND a.status = 'waiting'";
-    let row = tx.query_one(
-        &format!(
-            "SELECT coalesce(max(extract(epoch FROM now() - a.changed_at)), 0)::float8, \
-             (SELECT count(*) FILTER (WHERE eligible) FROM session_gc), \
-             (SELECT count(*) FILTER (WHERE stale) FROM session_gc), \
-             (SELECT count(*) FILTER (WHERE kept) FROM session_gc) {waiting}"
-        ),
-        &[],
-    )?;
-    let (oldest, eligible, stale, kept): (f64, i64, i64, i64) = (
-        row.try_get(0)?,
-        row.try_get(1)?,
-        row.try_get(2)?,
-        row.try_get(3)?,
-    );
+    let oldest: f64 = tx
+        .query_one(
+            &format!(
+                "SELECT coalesce(max(extract(epoch FROM now() - a.changed_at)), 0)::float8 {waiting}"
+            ),
+            &[],
+        )?
+        .try_get(0)?;
     let _ = write!(
         out,
         "# HELP exec_pool_sessions_parked_oldest_seconds How long the longest-unchanged waiting session has sat (0 with none).\n\
          # TYPE exec_pool_sessions_parked_oldest_seconds gauge\nexec_pool_sessions_parked_oldest_seconds {oldest}\n\
-         # HELP exec_pool_sessions_gc_eligible Sessions session_gc lets the remover delete.\n\
-         # TYPE exec_pool_sessions_gc_eligible gauge\nexec_pool_sessions_gc_eligible {eligible}\n\
-         # HELP exec_pool_sessions_stale Sessions waiting unchanged for 14 days that session_gc keeps: their tree may hold unpushed work.\n\
-         # TYPE exec_pool_sessions_stale gauge\nexec_pool_sessions_stale {stale}\n\
-         # HELP exec_pool_sessions_gc_kept Sessions final for 7 days that ran a turn and session_gc keeps: their tree was not handed back whole.\n\
-         # TYPE exec_pool_sessions_gc_kept gauge\nexec_pool_sessions_gc_kept {kept}\n\
          # HELP exec_pool_session_host_changes_total Session turns started on another host than the turn before, by the host it started on.\n\
          # TYPE exec_pool_session_host_changes_total counter\n"
     );

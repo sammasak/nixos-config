@@ -7,7 +7,7 @@ and the owners; it adds no daemon, database, socket, port, Nix option or host ch
 
 | Concern | Owner | Where |
 |---|---|---|
-| Static slot capacity (how many reusable nspawn slots a host declares, their closure, cgroups, egress) | NixOS `services.devEnvironments`, changed only by a reviewed deploy | `modules/workers/core.nix`, `modules/workers/default.nix`, `modules/workers/execution-pool.nix` |
+| Static slot capacity (how many reusable nspawn slots a host declares, their closure, cgroups, egress) | NixOS `homelab.execPool` into `services.devEnvironments`, changed only by a reviewed deploy | `modules/workers/core.nix`, `modules/workers/default.nix`, `modules/workers/execution-pool.nix` |
 | Task and attempt state (queued to terminal, leases, epochs, idempotency keys) | the queue (#651, PostgreSQL) | `pkgs/exec-pool/src/queue.rs`, CLI `exec-pool-queue`; on acer (`modules/homelab/exec-pool.nix`) |
 | Slot assignment on a host (claim, start, stop, sanitise, resource accounting) | a host-local runner (#652) | `pkgs/exec-pool/src/runner.rs`, `exec-pool-runner`; `modules/homelab/exec-pool-runner.nix`, on acer and msi, one per slot |
 | The inner tool loop | the native Claude, Codex and Pi CLIs, unchanged | `docs/herdr.md` |
@@ -27,7 +27,8 @@ disagrees with its status (required while leased, running or checkpointing, abse
 record rejects unknown fields, so no token, secret or credential can ride along: a task names a `credential_class`
 the host resolves. `TaskSpec::fits` admits a slot only when it is idle, offers the task's agent and capabilities and equals
 every pin the task sets (`runner_version`, `nix_closure_digest`, `agent_version`, `skill_revision`, reserved for #657).
-`CheckpointRef` names where a session's tree is: its generation (the lease epoch that parked it) and hosts.
+`CheckpointRef` names where a parked session's work is on its remote: `uri` the repository and full ref name, `digest`
+the commit (`absent` before anything was pushed) and `generation` the lease epoch that parked it. It names no host.
 
 States (`pkgs/exec-pool/src/state.rs`, snake_case on the wire):
 
@@ -62,7 +63,7 @@ agent session (its id the queue's `session_uuid`) that lives across
 leases. Each lease is one **turn**, and a turn ends in a **park** to `waiting`, never in a settle: `turn_end` when the
 agent finished its turn, `turn_error` when its call failed or left no verdict, `turn_timeout` when it was stopped at
 the turn's time limit, `waiting_until` when it finished and asked for a timer (later also `host_draining`,
-`preempted`). A failed turn never fails the session. The time limit is `homelab.execPool.runner.timeoutSecs`
+`preempted`). A failed turn never fails the session. The time limit is `homelab.execPool.timeoutSecs`
 (default 1800 s, the same bound as a one-shot run). A timed-out turn leaves a `continue` row, so the session resumes
 its own transcript in a new turn told to check its last action; the third timeout in a row with no message read
 since the first parks with no `continue` row and stays in `waiting` until a message. A
@@ -70,8 +71,7 @@ since the first parks with no `continue` row and stays in `waiting` until a mess
 agent's own `pool-wait`) at its `due_at`. It queues the session again, and the next claim carries the turn's input (the task's prompt on the
 first turn, the messages since on a later one) and `upto`, the last message it holds, which the park hands back. A
 turn with no result, or whose lease was lost, goes to `needs_review` as any run does. The park records the result and
-a `CheckpointRef` (`generation` the lease epoch, `hosts` the host that holds the session's tree), so a send wakes it
-where its tree is. One-shot tasks keep the lifecycle above unchanged.
+a `CheckpointRef`; any host that fits may claim the next turn. One-shot tasks keep the lifecycle above unchanged.
 
 ## Queue (#651)
 
@@ -100,8 +100,8 @@ histograms `exec_pool_queue_wait_seconds{host,agent}` and `exec_pool_run_seconds
 `reason="lease_expired"`. The queue renders every host's series on acer, so `host` is the slot's host from the queue's
 rows (an attempt's or session's last lease, a turn's own lease; `none` before any), not the scrape's `node`. Ids, slots
 and prompts stay in the log line, never in a label. Each slot's exec helper counts, in its own host's textfile,
-`exec_pool_store_transfers_total{op,result}` and `exec_pool_prepare_failures_total{step}` (a run that failed before
-its agent: the step's unit, or `admit`, `attach`, `manifest`, `turn`, `herdr`, `prompt`), split by `node`; such a run's result output is
+`exec_pool_park_push_failures_total{slot}` (a park's push that failed, each try) and `exec_pool_prepare_failures_total{step}`
+(a run that failed before its agent: the step's unit, or `admit`, `dock`, `list`, `manifest`, `turn`, `herdr`, `prompt`), split by `node`; such a run's result output is
 `prepare failed at <step> (exit N):` and its stderr tail, so `exec-pool result` shows why. When the render fails for any reason it prints only `exec_pool_queue_up 0`
 and exits non-zero; the collector installs stdout whatever the exit code, so a missing source reads as absent, not as
 zero traffic or as the last good counts.
@@ -124,7 +124,7 @@ JSON `is_error` decides for Claude, the exit code for the rest; a signal, or a C
 
 ## Runner (#652)
 
-`exec-pool-runner-<slot>` (`modules/homelab/exec-pool-runner.nix`, `homelab.execPool.runner`; on acer for `pool1` to `pool3`, and
+`exec-pool-runner-<slot>` (`modules/homelab/exec-pool-runner.nix`, `homelab.execPool`'s `runner` role; on acer for `pool1` to `pool3`, and
 on msi for its slots against acer's queue as `exec_pool_runner` over TCP) loops: `reconcile`, `claim` for its slot
 (its agents and capabilities; with a poweroff timer only while the claim's hold ends before it), `start`, then
 `systemctl start exec-pool-exec@<slot>`, then `checkpoint` and the settle or park, the result recorded
@@ -147,49 +147,88 @@ segments, at most 256 KiB together); the runner puts that tail in the queue's `t
 heartbeat and once more before the settle or park, so `exec-pool logs ID [-f] [--turn N]` reads a turn, running or
 not, from any host, at most 10 s behind. It holds only what the agent printed, which its transcript holds too.
 
-A session turn runs in the task's **tree**, `${stateDir}/.sessions/<hex task id>/tree/{home,work}` on the host, root's
-only. The helper attaches it for the turn by renaming it to the slot's dock `${stateDir}/.sessions/dock/<slot>/cur`,
-which the guest sees at `/session/cur` (the tree's root root-owned 0711, its `home` and `work` the guest user's),
-the same path in every slot on every host: HOME `/session/cur/home`, cwd
-`/session/cur/work/<workdir>`, TMPDIR in the slot home's workspace as for a one-shot run. A dock that still holds a
-tree refuses the attach. The first turn creates the tree (owned as the slot home is) and clones and checks out into it;
-until that finished, a later turn makes it afresh. Every turn links the guest user's current Home Manager files into
-the session's HOME (they dangle after a deploy), probes for Claude's transcript `$HOME/.claude/projects/*/<uuid>.jsonl`
-and runs interactive Claude as a named worker ran it (`fish -c 'claude $argv'`, Herdr's launcher with the worker
-settings, `--dangerously-skip-permissions`, no `-p`) with `--resume <uuid>` when it exists and `--session-id <uuid>`
-when it does not; a probe that does not finish fails the turn's preparing. The agent runs as the step unit
-`exec-pool-task` inside `dtach -N /session/cur/home/.exec-pool-agent.sock`, and the helper opens a workspace in the
-host user's Herdr (`pane::label`: the slot and the task's key) whose pane runs the slot's entry point `<prefix>-<slot>
-turn`, which attaches to that terminal over the slot's ssh as `claude`, so Herdr sees and names the agent
-(`pane::agent_name`: the task id) as it did a named worker, and the owner watches and types into it there. Once
-Claude draws its prompt the helper prompts the turn's input with `herdr agent prompt` (the hand-back rules before it
-on a session's first turn; over 3000 bytes it is written to `/session/cur/home/.exec-pool-input.md` and the prompt
-names the file). The agent is idle when Herdr reports it idle or done at a state after the prompt for 5 s
-(`pane::TurnWatch`). Idle is the session's **pause**, whatever it waits for (a review, a gate, the owner): the agent
-stays in its pane for `homelab.execPool.runner.idleGraceSecs` (600 s; `idleGraceBusySecs`, 60 s, while a task is
-queued and no slot is idle on any host), and whatever the owner types in the pane, or a message `exec-pool send`
-puts in the session's inbox meanwhile (the runner hands it over in its turn hint `turn.json` beside the manifest,
-`runner::TurnHint`, every heartbeat; the helper prompts it, and the park marks it read), works on in the same turn.
-Once the grace runs out (at once when the agent called `pool-wait`) the helper closes Claude with ctrl+c twice and
-parks the session as `turn_end` (`waiting_until` with a timer); its verdict is its transcript's last assistant
-message (`pane::verdict`, as the Claude result line the settle reads; an error unless the agent was idle with
-one). The time limit counts the agent's work since it was last idle, so a pause never times a turn out, and the
-helper's unit has no start timeout of its own; a drain in the pause parks the turn as ended. A prompt that never reached the agent (no new
-transcript line), a pane that did not open or Herdr not running parks the session as `turn_error` (failed step `prompt`,
-`turn` or `herdr`), its tree kept, and its next message wakes it: a retry would fail the same way until the session's
-attempts ran out and it ended `failed`. The park marks the turn's input read, so the helper keeps it in the tree
-(`~/.exec-pool-undelivered`, `runner::UNDELIVERED`) and the next turn delivers it before its own; a turn whose agent
-ran removes it. Mail is prompted only into an agent Herdr calls settled, and marked read only once Herdr took it; a
-prompt Herdr refused (a blocked agent) fails the step rather than press Enter into a dialog. Every workspace the turn opened is closed by id after it, whatever happened.
-A runner with `sessionSurface = "headless"` (no `EXEC_POOL_HERDR`) runs the turn in Claude's print mode instead, with
-no pane and no pause, as before the pane. Before the agent starts the helper writes the startup
-dialogs a named worker's home has accepted into the session's `~/.claude.json`. The helper marks the dock busy (`/var/lib/exec-pool-exec/<slot>/dock-busy`) before the attach and clears
-the mark only after the detach, so whatever stops it in between (an error, its timeout, a kill) leaves the runner to
-quarantine the slot rather than reset and reuse it. Once the turn's units are gone from the guest (or the guest is
-down) it detaches the tree; one it could not detach stays in the dock, marked. A prepared tree missing, or one with
-other ids than the slot's, sends the turn to `needs_review` rather than spending its attempts. Known limits: a guest
-process outside the step units (none is started but the pane's `dtach -a`, which ends with the agent's terminal) would
-keep the tree's inode after the detach; nothing yet removes the trees of sessions that ended. Codex and Pi run no sessions yet.
+### Session state: the branch, the snapshot, the transcript
+
+A session's durable state is two things, and nothing else of a turn survives its park: its branch `pool/<task id>` and
+snapshot ref on the task's remote, and the agent's transcript in the queue. No tree is copied between hosts.
+
+A turn runs in the slot's **dock** `${stateDir}/.sessions/dock/<slot>/cur`, which the guest sees at `/session/cur`
+(root-owned 0711, its `home` and `work` the guest user's), the same path in every slot on every host: HOME
+`/session/cur/home`, cwd `/session/cur/work/<workdir>`, TMPDIR in the slot home's workspace as for a one-shot run. The
+helper makes it afresh each turn (`workspace::Dock`), with the transcript the runner put beside the manifest at
+`/session/cur/transcript.jsonl` (0640, the guest's group).
+
+**Resume** (every turn, any host): the guest lists the branch and the snapshot ref on the remote (`git ls-remote`
+through the slot's GitHub sidecar), clones the repository into the empty checkout and, by what the listing shows
+(`snapshot::Resume`): nothing pushed yet, a new branch at the task's rev; the branch alone, the branch at its commit;
+a snapshot, the snapshot fetched, the branch at its parent and the snapshot's tree restored into the working tree only
+(`git restore --worktree --no-overlay`), so it reads as uncommitted changes, untracked files included. The remote is
+not changed. Then the guest user's current Home Manager files are linked into the empty HOME, the transcript copied to
+`$HOME/.claude/projects/<project>/<uuid>.jsonl`, and the agent runs with `--resume <uuid>` when the probe finds it,
+`--session-id <uuid>` (and the hand-back rules) when not; a probe that does not finish fails the turn's preparing.
+
+**The agent step.** Interactive Claude as a named worker ran it (`fish -c 'claude $argv'`, Herdr's launcher with the
+worker settings, `--dangerously-skip-permissions`, no `-p`), as the step unit `exec-pool-task` inside `dtach -N
+/session/cur/home/.exec-pool-agent.sock`; the helper opens a workspace in the host user's Herdr (`pane::label`: the slot
+and the task's key) whose pane runs the slot's entry point `<prefix>-<slot> turn`, which attaches to that terminal over
+the slot's ssh as `claude`, so Herdr sees and names the agent (`pane::agent_name`: the task id) and the owner watches
+and types into it there. Once Claude draws its prompt the helper prompts the turn's input with `herdr agent prompt`
+(over 3000 bytes it is written to `/session/cur/home/.exec-pool-input.md` and the prompt names the file). The agent is
+idle when Herdr reports it idle or done at a state after the prompt for 5 s (`pane::TurnWatch`). Idle is the session's
+**pause**: the agent stays in its pane for `homelab.execPool.idleGraceSecs` (600 s; `idleGraceBusySecs`, 60 s, while a
+task is queued and no slot is idle on any host), and whatever the owner types in the pane, or a message `exec-pool send`
+puts in the inbox meanwhile (handed over in the turn hint `turn.json` beside the manifest, `runner::TurnHint`, every
+heartbeat; the helper prompts it, and the park marks it read), works on in the same turn. Once the grace runs out (at
+once when the agent called `pool-wait`) the helper closes Claude with ctrl+c twice and the turn parks as `turn_end`
+(`waiting_until` with a timer); its verdict is its transcript's last assistant message (`pane::verdict`). The time
+limit counts the agent's work since it was last idle, so a pause never times a turn out, and the helper's unit has no
+start timeout of its own; a drain in the pause parks the turn as ended. A prompt that never reached the agent (no new
+transcript line), a pane that did not open or Herdr not running parks the session as `turn_error` (failed step
+`prompt`, `turn` or `herdr`) with its input **undelivered**: the park marks nothing read and a first turn stays first
+(`turns.delivered`, migration 0018), so its next message wakes it with that input again, the task's prompt included.
+Mail is prompted only into an agent Herdr calls settled, and marked read only once Herdr took it; a prompt Herdr refused
+(a blocked agent) fails the step rather than press Enter into a dialog. Every workspace the turn opened is closed by id
+after it. With `homelab.execPool.sessionSurface = "headless"` (no `EXEC_POOL_HERDR`) the turn runs in Claude's print
+mode (`claude -p --output-format json`) instead, with no pane and no pause. Before the agent starts the helper writes the
+startup dialogs a named worker's home has accepted into the session's `~/.claude.json`.
+
+**Park** (turn end, timeout, drain, cancel of the turn): after the agent's step, the agent having been told on its
+first turn and after every later turn's input to commit and push before it stops or waits (`agent::SESSION_PARK`):
+1. the transcript is copied out by the guest as its user into the runner's runtime directory (at most 32 MiB);
+2. the helper makes a snapshot tree with git plumbing in a scratch index (`read-tree HEAD`, `add --all`,
+   `write-tree`): tracked and untracked files, not ignored ones;
+3. by `snapshot::plan`: when HEAD is the remote branch's commit and the tree is HEAD's, nothing is left and the
+   snapshot ref, if one is there, is deleted; otherwise a snapshot commit on HEAD (`commit-tree`) is pushed to
+   `refs/pool-wip/<task id>`, replacing the last park's (`+<commit>:refs/pool-wip/<task id>`). An unpushed commit
+   is in the snapshot's history, so it comes back too;
+4. the push is tried again with a growing pause for up to 30 minutes (each failure counted,
+   `exec_pool_park_push_failures_total`), stopped early by a cancel, not by a drain. A push counts only once a listing
+   from outside the checkout (so its config, which the agent may have changed, does not apply) shows the ref at the
+   pushed commit, or gone after a delete;
+5. the runner parks with the result, the `CheckpointRef` of where the work is, and the transcript (`transcripts`,
+   migration 0017: one row per session, lz4 compressed, at most 32 MiB, never older than the stored epoch, removed when
+   the session is final). It is never pushed to GitHub: it can hold tool output.
+
+A park whose push did not get through is not a clean park: the turn goes to `needs_review`, its dock stays with its
+work and is marked (`/var/lib/exec-pool-exec/<slot>/dock-busy`, which names it), and the runner quarantines the slot
+(ExecPoolParkPushFailing, ExecPoolSlotQuarantined). The dock is removed and its mark cleared only once the work is on
+the remote, or the turn's agent never ran. A transcript over the bound also sends the turn to review.
+
+The snapshot ref is outside `refs/heads`: it is no branch, so it opens no pull request, starts no CI and is never
+merged; a later turn restores it as uncommitted work, which reaches a branch only through the agent's own commit and
+push under the repository's hooks. Its push skips the checkout's hooks (`core.hooksPath=/dev/null`): they gate code
+bound for a branch. It is the one ref the pool overwrites (`+`), and only that session's. The sidecar passes git's
+receive-pack for a listed repository whole, so it limits no ref. The helper marks the dock busy before making it, so
+whatever stops it before the close leaves the runner to quarantine the slot rather than reset and reuse it. Known
+limits: a guest process outside the step units would keep running in the dock past the turn (none is started);
+Codex and Pi run no sessions yet; a needs_review session sent a message before its kept dock was pushed resumes
+without that work, and nothing retries a kept dock's push after the park's 30 minutes (an operator pushes it); a
+session whose transcript outgrows 32 MiB goes to review at every park; a branch pushed by someone else after the park
+is not merged in at the resume (the checkout is the park's, so the agent's next push is refused until it merges); an
+untracked nested repository is kept as a gitlink, its files lost, and a file over GitHub's 100 MB limit fails the push. Migration 0017 keeps
+floor 9: until every runner host runs this binary, an older runner that claims a session turn finds no tree for its
+checkpoint and sends the turn to review (no work lost, nothing replayed); this binary reads an older one's checkpoints
+and drops their `hosts`.
 
 Settling a one-shot run (`runner::decide`): a cancel is `cancelled`; a clone or checkout that fails never started the
 task's argv, so the attempt goes back to `queued`. A timeout, a guest that went away, or a missing result (or one for
@@ -199,7 +238,7 @@ included. The command runs as a oneshot unit, so only exit 0 is clean, and syste
 counts as no exit code. A helper that finds its attempt's run directory already there refuses to run it again. An
 event the queue refuses, or one whose commit is unknown, is never re-sent: the lease expires and `reconcile` decides.
 The runner resets the slot at startup (its state then is unknown) and after every run. A reset that fails three times,
-or a dock left holding a tree, writes `/var/lib/exec-pool-runner/<slot>.quarantined` and a row in the queue's
+or a dock left marked (work not on its remote), writes `/var/lib/exec-pool-runner/<slot>.quarantined` and a row in the queue's
 `quarantined_slots` (ExecPoolSlotQuarantined), and that slot is not claimed for again until an operator removes the
 marker. Every state change is one JSON line with its ids, and the `run` line carries exit code, output tails,
 `claim_to_exec_ms`, `exec_ms`, `prepare_ms` and `run_ms`. `slot_reset` carries `sanitize_ms`. There are no metric
@@ -207,10 +246,61 @@ labels but states, agents, reasons and hosts.
 
 A deploy never needs an idle pool: `just deploy` drains a pool host first (`exec-pool-drain on`, the request every
 runner reads at `/run/exec-pool-runner/drain`, held until cleared or 2 h pass), so its runners stop claiming and park
-a running session turn as `host_draining` with a `continue` row, which wakes it at once on another host with the store
-or on this one after the deploy; a one-shot run is not stopped, and a runner restarted under it adopts it. The recipe
+a running session turn as `host_draining` with a `continue` row, which wakes it at once on any other host; a one-shot run is not stopped, and a runner restarted under it adopts it. The recipe
 waits up to 15 minutes for the host's helpers, deploys, and clears the request whatever deploy-rs returned. A settle
 or park the queue cannot take because it is restarting (its own host deployed) is retried while the lease lasts.
+
+## Turning it on
+
+One option set, `homelab.execPool` (`modules/homelab/exec-pool-options.nix`), read by three parts: the slots
+(`modules/workers/execution-pool.nix`, on every host through `modules/workers`), the runner
+(`modules/homelab/exec-pool-runner.nix`) and the queue (`modules/homelab/exec-pool.nix`, which turns on this host's
+PostgreSQL, so it is imported only where the queue runs; it imports the other two).
+
+| Option | Default | What |
+|---|---|---|
+| `enable` | false | the pool on this host |
+| `roles` | `[ ]` | `queue` and/or `runner`; neither: slots alone |
+| `slots` | 0 | slots `pool1..poolN` |
+| `slot.memory`, `slot.cpu` | `"2G"`, 2 | each slot's reserve |
+| `repos` | the owner's repositories | what the GitHub sidecar signs for a slot: fetch, push (branch and snapshot ref), gh |
+| `agents` | `[ ]` | `claude`, `codex`, `pi`; sessions run claude |
+| `capabilities` | `[ ]` | what each slot offers a task |
+| `timeoutSecs` | 1800 | a one-shot run's or a session turn's time limit |
+| `queueListener` | null | a runner's remote queue (a `sam.fleet` listener); null: this host's |
+| `remoteRunners` | false | the queue admits `exec_pool_runner` over TCP |
+| `drainSecs` | 600 | how long before a power window's poweroff (`sam.fleet.hosts.<host>.power`) the runner stops a run |
+
+Refused at evaluation: `queue` in `roles` without `exec-pool.nix` imported, or that module without it; a runner with
+no slots or no agents; a runner with the local queue and a `queueListener`, or without both; `remoteRunners` without
+the queue; `roles` without `enable`; a slot name another instance uses. A slot holds no credential and no root. The
+agent CLIs are the workers' guest packages (`modules/workers/default.nix`), not pool options. A host with the queue and
+three slots, and one with four slots claiming from it:
+
+```nix
+# the queue host
+{
+  imports = [ ../../modules/homelab/exec-pool.nix ];
+  homelab.execPool = {
+    enable = true;
+    roles = [ "queue" "runner" ];
+    slots = 3;
+    agents = [ "claude" ];
+    remoteRunners = true;
+  };
+}
+# a runner host
+{
+  imports = [ ../../modules/homelab/exec-pool-runner.nix ];
+  homelab.execPool = {
+    enable = true;
+    roles = [ "runner" ];
+    slots = 4;
+    agents = [ "claude" ];
+    queueListener = "exec-pool-db";
+  };
+}
+```
 
 ## Not `sam.agentRuntime`
 
@@ -218,7 +308,7 @@ The historical `sam.agentRuntime` (#133, #138) made one ephemeral nspawn instanc
 absent on main, its module directory was deleted in #210 (`git show 5a40362 --stat`). The current `modules/workers`
 declares long-lived, named instances (`sam.workers.instances`, a `worker-herdr-<name>` unit per agent), each a Nix
 deploy. The pool keeps those untouched and adds dynamic work on top of declared slots. `scripts/test-workers-eval.py`
-pins it: `sam.workers.executionPool` (#650, `docs/nspawn-workers.md`, Execution pool) unset or off moves no
+pins it: `homelab.execPool` (#650, `docs/nspawn-workers.md`, Execution pool) unset or off moves no
 worker unit, container or toplevel on msi, and a named instance beside the slots keeps its units and its Herdr unit (msi itself declares none since its
 named workers were retired).
 
@@ -265,26 +355,20 @@ due at that time (HH:MM the next one, local time); it changes no state, and `Sto
 each loop, queues a waiting session once a row is due (one in `needs_review` stays there). In a slot,
 `pool-wait --until HH:MM|RFC3339 [--note TEXT]` (no queue credential) writes one line
 `{"due_at": "<RFC 3339 with offset>", "note": "<1 to 4096 bytes>" | null}` to `/session/cur/home/.pool-wait`, the
-last call in a turn winning; the helper takes it from the detached tree (a regular file only, removed whatever it
+last call in a turn winning; the helper takes it from the dock once the turn's steps are gone (a regular file only, removed whatever it
 held, one that does not parse dropped and noted), and the park puts it in through `wake_at` (the runner writes no
 message), its note the turn's input and a `turn_end` parked as `waiting_until`. A message before the timer wakes the
 session at once, and the timer row stays unread until it is due. `wait` returns on `waiting` too, `status` and `list` show `session` and, while waiting, the park reason, and
 `exec_pool_waiting{reason}` counts waiting sessions by it.
 
 Each park also writes a `turns` row (migration 0010): the tokens and cost Claude's result JSON reported, and
-`handed_back`, whether the branch holds everything its tree had (`TaskResult::handed_back`): after a turn its agent
+`handed_back`, whether the branch holds everything the checkout had (`TaskResult::handed_back`): after a turn its agent
 reached, the helper lists `pool/<task id>` and runs `git status --porcelain=v2` in the checkout, true only when the
-branch's commit is HEAD and nothing is uncommitted or untracked (`runner::holds_tree`), false otherwise, a failed
-listing or status included. The textfile's `exec_pool_session*` series count sessions by state and waiting reason, turns by
-park reason, turn and wake latency, closed sessions' turns and age, parked sessions by idle age, host changes between
-turns and the reported tokens and cost, each by host; the Agent harnesses dashboard's Sessions row draws them. `session_gc` decides
-which session trees may be removed, never a file's age: only one whose last turn is `handed_back` (its branch held the
-whole tree, migration 0012), and then final for 7 days or waiting 14 days untouched with no unread row; one waiting
-that long without that is stale and kept, a final one without it that ran a turn kept and counted
-(`exec_pool_sessions_gc_kept`, no alert), and `needs_review` is never eligible.
-`exec-pool sessions` prints every session, one JSON object per line (task_id, state, last_change, hosts, handed_back,
-eligible, stale, kept, and dir, the hex of the task id its trees are named by under `.sessions` and `.sessions-store`,
-`Sessions::hex`), and the remover moves only a line both eligible and handed_back, by its dir; ExecPoolSessionStuck fires on a session in review or stale for a day.
+branch's commit is HEAD and nothing is uncommitted or untracked (`runner::holds_tree`). The textfile's
+`exec_pool_session*` series count sessions by state and waiting reason, turns by park reason, turn and wake latency,
+closed sessions' turns and age, parked sessions by idle age, host changes between turns and the reported tokens and
+cost, each by host; the Agent harnesses dashboard's Sessions row draws them. There is nothing on a host to remove once a
+session ends; its snapshot ref stays on the remote until a later park of it deletes it.
 A park's own time (the agent's exit to the settle) is not
 measured: no exit time reaches the queue. Wake latency starts when a row is due: when it was sent, or a timer's
 `due_at`.
@@ -298,7 +382,7 @@ wrapper above (`start`, `send`, `submit`, `wait`, `status`, `result`).
 - An issue gets one session: `pool:start` under the key `coord:OWNER/REPO#N`, the issue text and rules as the first
   prompt. Its branch is `pool/<task id>`.
 - Follow-up work on it (review findings, a merge conflict, "merge main and push") is `pool:send` to that same session,
-  never a new one: the turn resumes the same transcript and tree.
+  never a new one: the turn resumes the same transcript, branch and snapshot.
 - `waiting` means the turn ended and the slot is free for other work; it needs nothing until there is a message to
   send. No session has to stay up for it.
 - `needs_review` is the one state that wants a look: read `pool:result`, then `pool:send` the next step (that resumes

@@ -1,6 +1,6 @@
-# The pool runner (#652, pkgs/exec-pool/src/runner_main.rs): one exec-pool-runner-<slot> per sam.workers.executionPool
-# slot, claiming tasks for no agent or one of the slot's sam.workers.executionPool agents. It runs as the queue's peer
-# role, or with `queue` as exec_pool_runner on another host's, and holds no host privilege; on a host with a power
+# The pool runner (#652, pkgs/exec-pool/src/runner_main.rs), homelab.execPool's `runner` role: one
+# exec-pool-runner-<slot> per slot, claiming tasks for no agent or one of the slots' agents. It runs as the queue's peer
+# role, or with `queueListener` as exec_pool_runner on another host's, and holds no host privilege; on a host with a power
 # window it claims only ahead of its drain, which stops the running attempt before the poweroff. The polkit rule
 # below lets it start only its slot's exec-pool-exec@ (root, which runs the task in the guest as its user and holds no
 # queue access) and dev-env-reset@, which releases the slot with every one of its refusals intact, and clear a refused
@@ -12,12 +12,11 @@
   ...
 }:
 let
-  cfg = config.homelab.execPool.runner;
-  pool = config.sam.workers.executionPool;
+  cfg = config.homelab.execPool;
   dev = config.services.devEnvironments;
   guestHome = config.users.users.${dev.user}.home or "/home/${dev.user}";
   # every slot is declared alike, so the first one's guest stands for all
-  guest = lib.optionalAttrs (pool.slots > 0) config.containers.pool1.config;
+  guest = lib.optionalAttrs (cfg.slots > 0) config.containers.pool1.config;
   # what a login shell in the slot would hold: the egress routes' variables, and a PATH with the user's profile, where
   # the agent is; a step does not run under one
   routeVars = lib.concatMap (e: lib.attrNames e.guest.env) (lib.attrValues dev.egress);
@@ -26,18 +25,18 @@ let
   };
   pkg = pkgs.callPackage ../../pkgs/exec-pool/package.nix { };
   exe = "${pkg}/bin/exec-pool-runner";
-  slotNames = map (n: "pool${toString n}") (lib.range 1 pool.slots);
+  slotNames = map (n: "pool${toString n}") (lib.range 1 cfg.slots);
   execDir = "/var/lib/exec-pool-exec";
-  # none: the helper bounds every step itself, and a session turn has no bound of its own, as the owner may work in its
-  # pane for hours (each stretch of the agent's work at most timeoutSecs, each pause at most idleGraceSecs); a stop
-  # here would kill the helper with the session's tree in the dock and quarantine the slot
+  # none: the helper bounds every step itself (the park's push included), and a session turn has no bound of its own,
+  # as the owner may work in its pane for hours (each stretch of the agent's work at most timeoutSecs, each pause at
+  # most idleGraceSecs); a stop here would kill the helper with the turn's work in the dock and quarantine the slot
   execTimeout = "infinity";
   # the runner renews it every 10 s while the helper runs, so a run may outlast it; a runner that dies sends its
   # running attempt to review this long after its last renewal
   leaseSecs = 300;
-  # this long before a poweroff the runner stops the running attempt (a session's turn parks and is pushed to the
-  # store, a one-shot run goes back to the queue): the step's 60 s stop, the detach, the push, the park and the reset
-  drainSecs = 600;
+  # this long before a poweroff the runner stops the running attempt (a session's turn parks and pushes its work, a
+  # one-shot run goes back to the queue): the step's 60 s stop, the park's push and the reset
+  inherit (cfg) drainSecs;
   # a claim no longer has to finish before the poweroff, only to start its run ahead of the drain
   claimSecs = drainSecs + 300;
   slot =
@@ -48,36 +47,11 @@ let
       id = n;
       state = "idle";
       inherit (cfg) capabilities;
-      agents = [ "none" ] ++ pool.agents;
-      store = cfg.store != null;
+      agents = [ "none" ] ++ cfg.agents;
     };
-  # the session store (exec-pool-store.nix): this host's own directory, or another's through its sync login
-  localStore = cfg.store == config.networking.hostName;
-  storeEnv =
-    if cfg.store == null then
-      { }
-    else
-      {
-        EXEC_POOL_RSYNC = lib.getExe pkgs.rsync;
-        EXEC_POOL_CHOWN = "${pkgs.coreutils}/bin/chown";
-      }
-      // (
-        if localStore then
-          {
-            EXEC_POOL_STORE_DIR = "${dev.stateDir}/.sessions-store";
-            EXEC_POOL_STORE_OWNER = "exec-pool-sync:exec-pool-sync";
-          }
-        else
-          {
-            EXEC_POOL_STORE_SSH = "exec-pool-sync@${config.sam.fleet.hosts.${cfg.store}.address}";
-            # the host key is the login: the store admits it from this address alone, to rrsync alone; only the pinned fleet
-            # keys (ssh-known-hosts.nix) vouch for the store, never root's own ssh config
-            EXEC_POOL_SSH = "${lib.getExe config.programs.ssh.package} -i /etc/ssh/ssh_host_ed25519_key -F /dev/null -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/dev/null -o GlobalKnownHostsFile=/etc/ssh/ssh_known_hosts -o ConnectTimeout=10 -o ServerAliveInterval=15";
-          }
-      );
   # a queue on another host, by scram over its sam.fleet listener; null: this host's own, by peer
-  remote = cfg.queue != null;
-  listener = config.sam.fleet.listeners.${cfg.queue};
+  remote = cfg.queueListener != null;
+  listener = config.sam.fleet.listeners.${cfg.queueListener};
   db =
     if remote then
       "host=${
@@ -135,61 +109,10 @@ let
   };
 in
 {
-  # the removal of this runner's session trees, by its queue's list
-  imports = [ ./exec-pool-sessions-gc.nix ];
 
-  options.homelab.execPool.runner = {
-    enable = lib.mkEnableOption "the execution pool's runner, one per sam.workers.executionPool slot";
-    timeoutSecs = lib.mkOption {
-      type = lib.types.ints.positive;
-      default = 1800;
-      description = "How long a task's command, or a session's agent since it was last idle, may run in its slot before it is stopped: a one-shot attempt then goes to needs_review, a session's turn parks as turn_timeout and continues in a new turn, up to three in a row with no message between.";
-    };
-    sessionSurface = lib.mkOption {
-      type = lib.types.enum [
-        "pane"
-        "headless"
-      ];
-      default = "pane";
-      description = "Where a session turn's agent runs: interactive Claude in the slot's pane in the host user's Herdr, or headless, Claude's print mode with no pane and no idle pause, its turn ending when the call does.";
-    };
-    idleGraceSecs = lib.mkOption {
-      type = lib.types.ints.unsigned;
-      default = 600;
-      description = "How long a session's agent, idle and waiting for input, stays in its slot's Herdr pane, where the owner's typing or a message sent to the session answers it in the same turn, before the session parks and frees the slot.";
-    };
-    idleGraceBusySecs = lib.mkOption {
-      type = lib.types.ints.unsigned;
-      default = 60;
-      description = "idleGraceSecs while a task is queued and no slot is idle on any host.";
-    };
-    queue = lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
-      default = null;
-      example = "exec-pool-db";
-      description = "The sam.fleet listener of the queue's PostgreSQL on another host, reached as exec_pool_runner with the sops password; null: this host's own queue (exec-pool.nix), by peer.";
-    };
-    store = lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
-      default = null;
-      example = "acer-swift";
-      description = "The fleet host whose session store (modules/homelab/exec-pool-store.nix) a parked session's tree is pushed to and pulled from, so any such host can wake it; this host's own name for a local one; null: trees stay where they parked.";
-    };
-    conninfo = lib.mkOption {
-      type = lib.types.str;
-      readOnly = true;
-      internal = true;
-      default = db;
-      description = "The queue the runner claims from, as its EXEC_POOL_DB; exec-pool-sessions-gc.nix lists by it.";
-    };
-    capabilities = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      default = [ ];
-      description = "The capabilities each slot offers; a task claims a slot only when it offers every one the task names.";
-    };
-  };
+  imports = [ ./exec-pool-options.nix ];
 
-  config = lib.mkIf cfg.enable {
+  config = lib.mkIf (cfg.enable && lib.elem "runner" cfg.roles) {
     environment.systemPackages = [ drain ];
 
     systemd.services = {
@@ -210,6 +133,8 @@ in
           EXEC_POOL_MKDIR = "${pkgs.coreutils}/bin/mkdir";
           EXEC_POOL_CP = "${pkgs.coreutils}/bin/cp";
           EXEC_POOL_FIND = "${pkgs.findutils}/bin/find";
+          EXEC_POOL_INSTALL = "${pkgs.coreutils}/bin/install";
+          EXEC_POOL_CAT = "${pkgs.coreutils}/bin/cat";
           # a session turn's agent runs in this terminal in the guest, and its pane is in the host user's Herdr,
           # attached to it by the slot's entry point (modules/workers/core.nix, `turn`)
           EXEC_POOL_DTACH = "${pkgs.dtach}/bin/dtach";
@@ -229,7 +154,7 @@ in
             ]
           );
           EXEC_POOL_ATTACH = "/run/current-system/sw/bin/${dev.unitPrefix}-%i turn";
-          # a session task's trees and each slot's dock, which the guest sees at /session (pkgs/exec-pool/src/workspace.rs)
+          # each slot's dock, which the guest sees at /session (pkgs/exec-pool/src/workspace.rs)
           EXEC_POOL_SESSIONS = "${dev.stateDir}/.sessions";
           EXEC_POOL_GUEST_HOME = guestHome;
           # the host side of the guest home, whose identity admits an attempt only after a reset
@@ -238,10 +163,9 @@ in
           # the attempt's commits, in its checkout's own config: the agent runs with the workspace's HOME
           EXEC_POOL_GIT_NAME = config.sam.userConfig.git.userName;
           EXEC_POOL_GIT_EMAIL = config.sam.userConfig.git.email;
-          # node-exporter's (monitoring/node-exporter.nix): the store transfers' counts, one file per slot
+          # node-exporter's (monitoring/node-exporter.nix): the failed prepares' and park pushes' counts, one file per slot
           EXEC_POOL_TEXTFILE = "/run/node-exporter-textfile";
-        }
-        // storeEnv;
+        };
         serviceConfig = {
           Type = "oneshot";
           ExecStart = "${exe} exec %i";
@@ -273,7 +197,7 @@ in
           );
           path = [ config.systemd.package ];
           environment = {
-            EXEC_POOL_DB = cfg.conninfo;
+            EXEC_POOL_DB = db;
             EXEC_POOL_SLOT = slot n;
             EXEC_POOL_LEASE_SECS = toString leaseSecs;
             EXEC_POOL_IDLE_GRACE_SECS = toString cfg.idleGraceSecs;
@@ -297,7 +221,8 @@ in
             # the manifest and the cancel marker of a run its helper still runs: a restarted runner takes it over
             RuntimeDirectoryPreserve = "yes";
             StateDirectory = "exec-pool-runner";
-            MemoryMax = "64M";
+            # a session's transcript (up to 32 MiB, pkgs/exec-pool/src/queue.rs) passes through it at a claim and a park
+            MemoryMax = "256M";
             ProtectSystem = "strict";
             ProtectHome = true;
             PrivateTmp = true;
@@ -340,26 +265,14 @@ in
 
     assertions = [
       {
-        assertion = pool.enable && pool.slots > 0;
-        message = "homelab.execPool.runner: a runner needs sam.workers.executionPool enabled with a slot.";
-      }
-      {
         assertion =
           !remote
           || (
-            config.sam.fleet.listeners ? ${cfg.queue}
+            config.sam.fleet.listeners ? ${cfg.queueListener}
             && listener.host != config.networking.hostName
             && lib.elem config.networking.hostName listener.from
           );
-        message = "homelab.execPool.runner.queue: ${toString cfg.queue} must be a sam.fleet listener on another host whose `from` names ${config.networking.hostName}.";
-      }
-      {
-        assertion =
-          cfg.store == null
-          || (
-            if localStore then config.users.users ? exec-pool-sync else config.sam.fleet.hosts ? ${cfg.store}
-          );
-        message = "homelab.execPool.runner.store: ${toString cfg.store} must be this host with modules/homelab/exec-pool-store.nix imported, or a sam.fleet host.";
+        message = "homelab.execPool.queueListener: ${toString cfg.queueListener} must be a sam.fleet listener on another host whose `from` names ${config.networking.hostName}.";
       }
     ];
   };
