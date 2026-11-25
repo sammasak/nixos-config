@@ -112,7 +112,16 @@ Prepared and proven passable on 25 Nov: `nixos-config-bench-qwen` (docs), `herma
 5. The v0.1 acceptance script in a VM (PASS, FAIL or UNTESTED per criterion) is not written.
 6. Slot memory kills (PR #805, merged, deployed and confirmed on acer, msi and black-pi): the slots share one
    `environments.slice` limit, so four heavy evaluations at once still kill one, and a kill that leaves the agent
-   running is told to it only through its command's exit.
+   running is told to it only through its command's exit. ExecPoolSlotMemoryKills (issue #827), read from a slot in
+   Loki's kernel task dumps: at 16:41:43Z and 18:14:24Z on 25 Nov pool1's push hook `nix flake show` (light lock, 3.2
+   and 3.0 GiB) ran beside another slot's `pool-merge-check` host evaluation (heavy lock, 2.5 and 2.2 GiB), plus a
+   0.7 GiB devenv evaluation at 18:14: two heavy evaluations in one slice, each under a different lock. Fixed on
+   pool/cli-f562005cb177dad6: pool-merge-check evaluates under the heavy lock and then the light one, and builds under
+   the heavy one alone (live on merge, no deploy). acer-swift's deploy adds `homelab_guest_memory_bytes{worker}`,
+   `_peak_bytes` and the slice's current and limit, every minute; the runbook has the slot's Loki query. Signal:
+   `exec_pool_memory_kills_total` flat on acer over a day of merges. Follow-ups: evaluations outside both locks still
+   share the slice (a devenv shell's evaluation, an agent's own `nix eval` or `nix build` of a host or check; the
+   prompt or a wrapper could send them through the light lock); acer's 7G stays (15 GiB, ollama 4G).
 7. msi's `ownRefsOnly` push filter (PR #805) is live only after the msi deploy; read acer's push filter journal (one
    `passed`, one `refused`) before it.
 
@@ -174,6 +183,8 @@ then cite it.
 | #785: scheduled-gate's ruff E501 failed acer's deploy build, reverted in #786 | deploy | build `pkgsDir.scheduled-gate` | yes: pool-merge-check builds each changed `pkgs/<dir>` (#788) |
 | #793 and #796 each added the VM's gh stub, so main's evaluation and every push failed | push hook on main | `nix flake show` on the merge with main right before the merge | no: pool-merge-check does not run it |
 | 703d2e8a added the `legacyPackages` output kind (`pkgsDir`), which nixos-flake-check's list lacked, so it failed after every output evaluated (19:20 run, 550 s); the step's second red cause today, after the one #815 fixed. Its aarch64 `pkgsDir` also failed to evaluate (`llm-bench` is x86 only), unseen | scheduled gate (19:20, head 05c028bb) | the flake's output kinds against the step's list (`scripts/flake-output-kinds.json`), no host evaluated: `scripts/test-flake-output-kinds.py`, about 7 s | yes: pool-merge-check runs it for `flake.nix`, `flake-modules/` and the list; the step now evaluates every `pkgsDir` drvPath (about 12 s) |
+| Two slots' heavy evaluations shared acer's 7G slice: the push hook's `nix flake show` took the light lock, pool-merge-check's host evaluation the heavy one, so neither waited, and the kernel killed one twice on 25 Nov (#827) | slot memory kill (ExecPoolSlotMemoryKills) | pool-merge-check's evaluations take the light lock after the heavy one; `scripts/test-pool-merge-check.py` asserts both locks in that order (about 1 s); this branch's `just pool-merge-check` ran 12 checks in 6.0 min on acer (grafana-dashboards 3.4, six host evaluations 2.0) | yes (this branch) |
+| `scripts/test-guest-records.py` fails on main: `local-lane` is in metrics/records.json's guest kinds but not in default.nix's `records.kinds`, so a slot's local-lane records are not shipped | this branch's run | the test itself, about 3 s, for `scripts/` and `modules/workers/`; pool-merge-check maps no script test to those paths | no |
 | #777: every pane turn on acer failed with a herdr parse error, reverted in #778 | live slot | one session turn through a pane on a slot before the merge | no |
 
 ### First cuts (this branch)

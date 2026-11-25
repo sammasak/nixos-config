@@ -18,7 +18,9 @@ last run got through (Loki took the push, or nothing was waiting), labelled work
 --usage (nixos-config#494) pushes instead one host-made kind=usage line per instance: its container's cgroup counters
 (cpu.stat usage_usec and user_usec, memory.current, memory.stat anon, memory.peak, the container's lifetime
 high-water mark, never reset) and the system it runs (SYSTEM_PATH in its nixos-containers conf). No guest file is read,
-and kind usage is not on the guests' allow-list, so a guest cannot write one."""
+and kind usage is not on the guests' allow-list, so a guest cannot write one. With --metrics it also writes, before the
+push, each running instance's memory.current and memory.peak (labelled worker alone) and the slice's current and limit:
+the slots share the slice's MemoryMax, and the kernel's kill names only the largest process."""
 import argparse
 import errno
 import fcntl
@@ -61,6 +63,12 @@ TOO_NEW = 300
 METRICS = {
     "homelab_guest_records_waiting_lines": "Spool lines of a worker's guest past the shipper's progress after its last run",
     "homelab_guest_records_shipped_timestamp_seconds": "When the shipper last got through a worker's waiting lines, 0 never",
+}
+USAGE_METRICS = {
+    "homelab_guest_memory_bytes": "A running worker's container cgroup memory.current",
+    "homelab_guest_memory_peak_bytes": "A running worker's container cgroup memory.peak, its high-water mark since the container started",
+    "homelab_guest_slice_memory_bytes": "The environments' slice memory.current, what its shared MemoryMax caps",
+    "homelab_guest_slice_memory_max_bytes": "The environments' slice memory.max, the ceiling every worker shares",
 }
 
 
@@ -286,14 +294,33 @@ def usage_body(name, args):
     fields = {"cpu_usec": int(cpu["usage_usec"]), "user_usec": int(cpu["user_usec"]),
               "mem_current": int(read("memory.current")), "mem_anon": int(mem["anon"]),
               "mem_peak": int(read("memory.peak")), "toplevel": toplevel}
-    return " ".join(f"{k}={v}" for k, v in fields.items())
+    return fields
+
+
+def write_usage_metrics(path, fields, cgroup):
+    """The instances read this run; the slice's two series only where its file holds a number (memory.max may be max)."""
+    body = []
+    for name, help_ in USAGE_METRICS.items():
+        body += [f"# HELP {name} {help_}", f"# TYPE {name} gauge"]
+    per = {"homelab_guest_memory_bytes": "mem_current", "homelab_guest_memory_peak_bytes": "mem_peak"}
+    for metric, key in per.items():
+        body += [f'{metric}{{worker="{w}"}} {f[key]}' for w, f in sorted(fields.items())]
+    for metric, f in (("homelab_guest_slice_memory_bytes", "memory.current"), ("homelab_guest_slice_memory_max_bytes", "memory.max")):
+        try:
+            with open(os.path.join(cgroup, f)) as fh:
+                v = fh.read(64).strip()
+        except OSError:
+            continue
+        if v.isdigit():
+            body.append(f"{metric} {v}")
+    replace_text(path, "\n".join(body) + "\n")
 
 
 def ship_usage(names, args):
     """One push of every running instance's usage line, each in its own host=<prefix>-<name> stream. An instance with no
     cgroup is stopped (paused, or between deploys): skipped and logged, not a failure. A cgroup that is there but
     cannot be read is one."""
-    now, streams, ok, stopped = time.time(), [], True, []
+    now, streams, ok, stopped, read = time.time(), [], True, [], {}
     # no slice at all is a wrong path or a host without the environments' slice: every instance would read as stopped
     if not os.path.isdir(args.cgroup):
         print(f"usage: {args.cgroup} is not a directory; nothing read", file=sys.stderr)
@@ -303,13 +330,17 @@ def ship_usage(names, args):
             stopped.append(name)
             continue
         try:
-            body = usage_body(name, args)
+            read[name] = usage_body(name, args)
         except (OSError, KeyError, ValueError) as e:
             print(f"{name}: no usage ({type(e).__name__}: {e})", file=sys.stderr)
             ok = False
             continue
+        body = " ".join(f"{k}={v}" for k, v in read[name].items())
         streams.append({"stream": {"job": "platform", "kind": "usage", "host": f"{args.prefix}-{name}"},
                         "values": [[str(int(now)) + "000000000", body]]})
+    # before the push: Loki out of reach still leaves the slots' memory readable in Prometheus
+    if args.metrics:
+        write_usage_metrics(args.metrics, read, args.cgroup)
     if streams and not push(args.url, streams):
         return False
     print(f"usage: {len(streams)} instance(s) to Loki" + (f"; not running, skipped: {', '.join(stopped)}" if stopped else ""))
@@ -330,7 +361,7 @@ def main():
     p.add_argument("--metrics", help="the node-exporter textfile to write")
     p.add_argument("names", nargs="*")
     if sys.argv[1:] == ["--list"]:
-        print("\n".join(METRICS))
+        print("\n".join([*METRICS, *USAGE_METRICS]))
         return 0
     args = p.parse_args()
     if not args.progress:

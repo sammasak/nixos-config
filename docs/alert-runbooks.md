@@ -356,8 +356,14 @@ and the kernel kills the largest process in the slice, often a nix eval or build
 The task unit runs with `OOMPolicy=continue`, so only that process dies and the agent sees its command killed; a turn
 that still ends in an error parks as `turn_memory_kill`, and its continue names what was killed.
 First: on `node`, `journalctl -k -g oom-kill --since -2h`: `task=` is the process, `task_memcg` its slot. `exec-pool
-list` shows the sessions parked `turn_memory_kill`. Too many heavy jobs at once (four sessions each evaluating a host)
-is the usual cause: tell those sessions to run it one at a time, or wait for the others.
+list` shows the sessions parked `turn_memory_kill`. From a slot with `homelab.execPool.monitoring` (an alert
+investigation), read only, the same kernel lines with the task dump that names every process in the slice:
+`curl -sG "$LOKI_ADDR/loki/api/v1/query_range" --data-urlencode 'query={host="<node>"} |~ "oom-kill|invoked oom|^\\[ *[0-9]+\\] +1000 "' --data-urlencode start=<kill time - 30 s> --data-urlencode end=<kill time + 30 s> | jq -r '.data.result[].values[][1]'`;
+each slot's memory before it is `homelab_guest_memory_bytes{worker}` (and `_peak_bytes`, since the slot started), the
+slice's `homelab_guest_slice_memory_bytes` against `homelab_guest_slice_memory_max_bytes`, every minute.
+Too many heavy jobs at once (four sessions each evaluating a host) is the usual cause: tell those sessions to run it
+one at a time, or wait for the others. On 25 Nov both kills were a push hook's `nix flake show` (light lock) beside
+another slot's `pool-merge-check` host evaluation (heavy lock); the merge check now takes the light lock as well.
 Do not: give a slot its own MemoryMax or MemoryHigh: below the slice it kills or stalls a build the pool had room for
 (modules/workers/core.nix, the slice's settings).
 Rollback: none; the increase ages out of the 2 hours once the kills stop.

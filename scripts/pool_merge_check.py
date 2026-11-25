@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """`just pool-merge-check BRANCH`: BRANCH merged with current origin/main (git merge-tree, a conflict exits 1) into a
 throwaway worktree, then the checks its changed paths map to, each nix process under the heavy-work lock, one at a
-time. Nothing is pushed.
+time, and each evaluation under the light-work lock too. Nothing is pushed.
 
 A path maps to checks only where the gate's history shows what it can break (goals.md, "Check tuning"):
   docs/ and top-level *.md     nothing: the push hook's lints already ran on them
@@ -16,7 +16,10 @@ A path maps to checks only where the gate's history shows what it can break (goa
   any other path               every host's evaluation, as before: a NixOS assertion (sam.memory's budget among them)
                                runs only when a host's toplevel is evaluated
 and each pkgs/<dir> with a changed file builds as `pkgsDir.<dir>` (flake-modules/pkgs-dir.nix). One nix process per
-host: all six in one OOMs a pool slot's environments.slice, one alone peaks at about 4.2 GB (msi).
+host: all six in one OOMs a pool slot's environments.slice, one alone peaks at about 4.2 GB (msi). The light lane is
+the push hook's `nix flake show` (devenv.nix pushEval, about 3.9 GiB): the slots share one slice, and on 25 Nov a host
+evaluation here beside another slot's push evaluation filled acer's 7G twice. A build's derivation is evaluated under
+both locks and built under the heavy one alone, so a push never waits on a compile.
 
 It prints each check run with its seconds, and each one skipped, and records both per check as gate-step records
 (gate=pool-merge-check, step=pool-merge-<kind>, result=pass|fail|skipped; pkgs/platform-record), so the tally in
@@ -40,6 +43,7 @@ from dataclasses import dataclass
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 RECORD = ROOT / "pkgs/platform-record/platform_record.py"
 LOCK = pathlib.Path("/run/work-locks/heavy-work.lock")
+LIGHT = LOCK.with_name("light-work.lock")
 SYSTEM = "x86_64-linux"
 
 RULES = re.compile(r"modules/homelab/monitoring/rules/[^/]+\.ya?ml")
@@ -135,14 +139,20 @@ def record(check: Check, seconds: int, result: str, sha: str, head: str) -> None
     )
 
 
+HEAVY = ["flock", "-o", str(LOCK)]
+# heavy, then light: the push hook takes light alone, so the order never deadlocks
+EVAL = [*HEAVY, "flock", "-o", str(LIGHT), "nix", "eval", "--raw"]
+# one heavy hold over both steps: released between them, a long wait could let a GC delete the evaluated .drv
+BUILD = 'drv=$(flock -o "$1" nix eval --raw "$2") && nix build --no-link -L "$drv^*"'
+
+
 def command(check: Check, tree: pathlib.Path) -> list[str] | None:
-    locked = ["flock", "-o", str(LOCK)]
+    """An eval's evaluation; a build's or check's drvPath evaluated under both locks, then built under the heavy one."""
     if check.kind == "eval":
-        return [*locked, "nix", "eval", "--raw", f"{tree}#nixosConfigurations.{check.target}.config.system.build.toplevel.drvPath"]
-    if check.kind == "build":
-        return [*locked, "nix", "build", "--no-link", "-L", f"{tree}#pkgsDir.{check.target}"]
-    if check.kind == "check":
-        return [*locked, "nix", "build", "--no-link", "-L", f"{tree}#checks.{SYSTEM}.{check.target}"]
+        return [*EVAL, f"{tree}#nixosConfigurations.{check.target}.config.system.build.toplevel.drvPath"]
+    if check.kind in ("build", "check"):
+        attr = f"pkgsDir.{check.target}" if check.kind == "build" else f"checks.{SYSTEM}.{check.target}"
+        return [*HEAVY, "bash", "-c", BUILD, "build", str(LIGHT), f"{tree}#{attr}.drvPath"]
     if check.kind == "script":
         return [sys.executable, check.target]
     return None
@@ -199,7 +209,7 @@ def main() -> int:
 
 def check_tree(tree: pathlib.Path, branch: str, head: str, main_: str, commit: str) -> int:
     paths = git("diff", "--no-ext-diff", "--name-only", main_, commit).splitlines()
-    nix = ["nix", "eval", "--raw", "--apply", "c: toString (builtins.attrNames c)"]
+    nix = [*EVAL, "--apply", "c: toString (builtins.attrNames c)"]
     hosts = subprocess.run([*nix, f"{tree}#nixosConfigurations"], check=True, capture_output=True, text=True).stdout.split()
     pkgdirs = subprocess.run([*nix, f"{tree}#pkgsDir"], check=True, capture_output=True, text=True).stdout.split()
     checks = plan(paths, hosts, pkgdirs)
