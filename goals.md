@@ -99,12 +99,19 @@ The proxy fetches any other repository unsigned and read-only (truespar/scriptor
 `.sessions-store` are removed daily when cancelled or handed back on their branch, the rest counted
 (`homelab_exec_pool_legacy_sessions_kept{reason}`).
 
+**Found live on 24/25 Nov, fixed in branch `pool/cli-3298c29ab4554a39`** (deploy acer and msi): an interactive
+turn waiting on its own background command (a build started in the background) looked idle and parked after the grace,
+which killed the command; a live Bash tool command of the agent in its slot's turn unit now keeps it busy, the 30 minute
+limit still the outer bound. `just pool-merge-check` built exec-pool alone; it now builds each `pkgs/<dir>` the branch
+changes (`pkgsDir.<dir>`) and names them, nothing when none changed, so a lint failing inside a package build (ruff
+E501 last night) is caught before merge. A background subagent (no process of its own) still looks idle.
+
 **Open, in pick-up order**
 
 1. Session turns are headless; the owner wants the same interactive Herdr panes the named workers had, with an idle
    grace period, park, resume into a pane and `attach`: live on acer (#780), msi after 08:30.
 2. Two PRs that each built alone broke main together (#765 with #768). Build the merge result of a pool crate PR
-   before merging it: `just pool-merge-check BRANCH` on acer, before each pool crate merge.
+   before merging it: `just pool-merge-check BRANCH` on acer, before each merge that touches `pkgs/`.
 3. Three sessions lost a turn to the 30 minute limit today. Re-check the limit once turns are interactive and park on
    idle.
 4. Not yet seen live: a drain started by `just deploy`, claim order by priority, the prepare failure counter,
