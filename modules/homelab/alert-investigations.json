@@ -1,0 +1,6 @@
+[
+  "NodeSystemdUnitFailed",
+  "ScheduledGateRed",
+  "RetroDueStepFailsRepeat",
+  "ExecPoolSlotMemoryKills"
+]
