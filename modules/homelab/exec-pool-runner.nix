@@ -25,6 +25,25 @@ let
   };
   pkg = pkgs.callPackage ../../pkgs/exec-pool/package.nix { };
   exe = "${pkg}/bin/exec-pool-runner";
+  # an agent of agentMarkers drops out of the slot's offer while its file is absent, so submit refuses it
+  marked = lib.filterAttrs (a: _: lib.elem a cfg.agents) cfg.agentMarkers;
+  run = pkgs.writeShellApplication {
+    name = "exec-pool-runner-run";
+    runtimeInputs = [ pkgs.jq ];
+    text =
+      lib.concatStrings (
+        lib.mapAttrsToList (a: f: ''
+          if [[ ! -e ${f} ]]; then
+            EXEC_POOL_SLOT=$(jq -c '.agents -= ["${a}"]' <<<"$EXEC_POOL_SLOT")
+            echo "${a} is not offered: ${f} is absent" >&2
+          fi
+        '') marked
+      )
+      + ''
+        export EXEC_POOL_SLOT
+        exec ${exe} run
+      '';
+  };
   slotNames = map (n: "pool${toString n}") (lib.range 1 cfg.slots);
   execDir = "/var/lib/exec-pool-exec";
   # none: the helper bounds every step itself (the park's push included), and a session turn has no bound of its own,
@@ -228,7 +247,7 @@ in
             EXEC_POOL_DRAIN_SECS = toString drainSecs;
           };
           serviceConfig = {
-            ExecStart = "${exe} run";
+            ExecStart = if marked == { } then "${exe} run" else lib.getExe run;
             User = "exec_pool";
             Group = "exec_pool";
             Restart = "always";

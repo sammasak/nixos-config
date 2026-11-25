@@ -188,6 +188,40 @@ let
     '';
   };
 
+  codexLogin = cfg.codexLogin;
+  # The ChatGPT backend for the slots' Codex (codex-login.nix): the token and account id read per request, the
+  # client's own values of both replaced, and no header added that the slot did not send.
+  chatgptSite = ''
+    @responses {
+      path /v1/responses
+      method POST
+    }
+    handle @responses {
+      @nologin not file {
+        root /
+        try_files ${codexLogin.tokens}/access-token
+      }
+      respond @nologin "codex: no ChatGPT login on this host (sam.workers.codexLogin)" 503
+      rewrite * /backend-api/codex/responses
+      reverse_proxy https://chatgpt.com {
+        header_up Host {upstream_hostport}
+        header_up Authorization "Bearer {file.${codexLogin.tokens}/access-token}"
+        header_up ChatGPT-Account-ID {file.${codexLogin.tokens}/account-id}
+        header_up -Cookie
+        header_up -X-Forwarded-For
+        header_up -X-Forwarded-Proto
+        header_up -X-Forwarded-Host
+        transport http {
+          compression off
+        }
+        flush_interval -1
+      }
+    }
+    handle {
+      respond 403
+    }
+  '';
+
   # validate-bash refuses force pushes; a hook skip was refused only by the deny rules a guest drops. Quoted spans
   # go first, as there, so a mention in a commit message is not a push.
   noVerifyGuard = pkgs.writeShellApplication {
@@ -434,6 +468,7 @@ in
   imports = [
     ./core.nix
     ./execution-pool.nix
+    ./codex-login.nix
     (lib.mkAliasOptionModule
       [ "sam" "workers" "instances" ]
       [ "services" "devEnvironments" "instances" ]
@@ -643,15 +678,20 @@ in
         };
         openai = {
           for = headless "codex";
-          site = _: ''
-            @other not path /v1/*
-            respond @other 403
-            ${upstream "https://api.openai.com" "Bearer {file.${openaiKey}}"}
-          '';
+          site =
+            _:
+            if codexLogin.enable then
+              chatgptSite
+            else
+              ''
+                @other not path /v1/*
+                respond @other 403
+                ${upstream "https://api.openai.com" "Bearer {file.${openaiKey}}"}
+              '';
           port = 4103;
-          secrets."codex-auth.json" = cfg.codexAuthFile;
-          missing = "sam.workers: a codex instance's calls are signed with the API key in sam.workers.codexAuthFile, which this host does not set.";
-          prepare = [ (lib.getExe openaiKeyFromAuth) ];
+          secrets = lib.optionalAttrs (!codexLogin.enable) { "codex-auth.json" = cfg.codexAuthFile; };
+          missing = "sam.workers: a codex instance's calls are signed with the ChatGPT login of sam.workers.codexLogin or the API key in sam.workers.codexAuthFile, and this host sets neither.";
+          prepare = lib.optional (!codexLogin.enable) (lib.getExe openaiKeyFromAuth);
           guest.env.CODEX_API_KEY = "held-by-the-host";
           # mkBefore: a top-level key, so ahead of the file's first table
           guest.config.home-manager.users.${user}.home.file.".codex/config.toml".text = lib.mkBefore ''

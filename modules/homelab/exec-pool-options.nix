@@ -80,6 +80,12 @@ in
       example = [ "claude" ];
       description = "Agents a task may run in a slot, each through its egress proxy with no credential in the guest (anthropic; openai with sam.workers.codexAuthFile; llm-gateway with the host's Pi key). Sessions run claude only. The CLIs are the workers' guest packages (modules/workers/default.nix).";
     };
+    agentMarkers = mkOption {
+      type = types.attrsOf types.str;
+      default = { };
+      internal = true;
+      description = "Agents of `agents` a runner offers only while this file exists as it starts; another module restarts the runners when the file comes or goes.";
+    };
     capabilities = mkOption {
       type = types.listOf types.str;
       default = [ ];

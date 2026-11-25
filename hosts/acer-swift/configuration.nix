@@ -1,4 +1,9 @@
-{ config, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 {
   imports = [
     ./hardware-configuration.nix
@@ -47,6 +52,8 @@
     labelPrefix = "acer";
     pool.memory = "7G";
     ghHostsFile = "/home/${config.sam.profile.username}/.config/gh/hosts.yml";
+    # codex is offered only once the owner signed in (docs/records/execution-pool-credentials.md, Codex)
+    codexLogin.enable = true;
     retired = [
       "herman"
       "a1"
@@ -59,11 +66,11 @@
       "runner"
     ];
     slots = 3;
-    # no codex: this host sets no sam.workers.codexAuthFile
     agents = [
       "claude"
       "pi"
-    ];
+    ]
+    ++ lib.optional config.sam.workers.codexLogin.enable "codex";
     # msi's runner claims from this queue over the fleet LAN (exec-pool-db listener)
     remoteRunners = true;
     ownRefsOnly = true;
