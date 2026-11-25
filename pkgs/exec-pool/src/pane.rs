@@ -114,9 +114,11 @@ pub fn tool_shell(cgroup: &str, cmdline: &[u8], (slot, unit): (&str, &str)) -> b
     ours && cmdline.windows(TOOL_SHELL.len()).any(|w| w == TOOL_SHELL)
 }
 
-/// Whether a Claude subagent's `meta.json` (`~/.claude/projects/<project>/<session>/subagents/agent-<id>.meta.json`)
-/// is one still running: Claude writes it at the spawn and again with `"finished": true` once the subagent ends. A
-/// background subagent has no process of its own, so Herdr shows its agent idle while it works.
+/// Whether a Claude subagent's `meta.json` is one still running.
+///
+/// Claude writes `~/.claude/projects/<project>/<session>/subagents/agent-<id>.meta.json` at the spawn and again with
+/// `"finished": true` once the subagent ends. A background subagent has no process of its own, so Herdr shows its
+/// agent idle while it works.
 #[must_use]
 pub fn subagent_running(meta: &str) -> bool {
     serde_json::from_str::<Value>(meta)

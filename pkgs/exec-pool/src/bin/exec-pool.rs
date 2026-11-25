@@ -362,7 +362,11 @@ fn sessions(store: &mut Store, args: &Args) -> Result<(), Fail> {
         },
     };
     for summary in store.session_summaries(args.positional.first().map(String::as_str), limit)? {
-        let task = summary["task"].as_str().unwrap_or_default().to_owned();
+        let task = summary
+            .get("task")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
         if report.is_some() && (reported.contains(&task) || !out_of_the_pool(&summary)) {
             continue;
         }
@@ -394,7 +398,7 @@ fn out_of_the_pool(summary: &Value) -> bool {
 }
 
 fn merged(summary: &Value) -> bool {
-    summary["pr"]["state"] == "merged"
+    summary.pointer("/pr/state").and_then(Value::as_str) == Some("merged")
 }
 
 /// `(owner, name)` of a GitHub repository as `submit --repo` names it; `None` for any other host or shape.
@@ -438,15 +442,18 @@ fn pull_of(listing: &Value) -> Result<Value, String> {
         }))
 }
 
-/// `summary` with `pr`, its branch's pull request as `gh api` on this host finds it, and `pr_error` when it could
+/// `summary` with `pr`, its branch `pool/<task>`'s pull request as `gh api` on this host finds it, and `pr_error` when it could
 /// not be told: no GitHub repository, no gh, or a refused call.
 fn with_pull(mut summary: Value) -> Value {
-    let task = summary["task"].as_str().unwrap_or_default();
-    let branch = summary["branch"]
-        .as_str()
-        .map_or_else(|| format!("pool/{task}"), str::to_owned);
-    let found = summary["repo"]
-        .as_str()
+    let task = summary
+        .get("task")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    // never the branch the session reported: one naming another's would take that pull request
+    let branch = format!("pool/{task}");
+    let found = summary
+        .get("repo")
+        .and_then(Value::as_str)
         .and_then(github_repo)
         .ok_or_else(|| "not a GitHub repository".to_owned())
         .and_then(|(owner, name)| {
@@ -464,11 +471,15 @@ fn with_pull(mut summary: Value) -> Value {
                 .map_err(|e| format!("gh api: {e}"))
                 .and_then(|v| pull_of(&v))
         });
-    match found {
-        Ok(pr) => summary["pr"] = pr,
-        Err(e) => {
-            summary["pr"] = Value::Null;
-            summary["pr_error"] = Value::String(e);
+    if let Some(fields) = summary.as_object_mut() {
+        match found {
+            Ok(pr) => {
+                fields.insert("pr".to_owned(), pr);
+            }
+            Err(e) => {
+                fields.insert("pr".to_owned(), Value::Null);
+                fields.insert("pr_error".to_owned(), Value::String(e));
+            }
         }
     }
     summary
