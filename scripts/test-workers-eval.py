@@ -134,7 +134,12 @@ let
   c = (flake.nixosConfigurations.asus-b460m.extendModules { modules = [ ({ lib, ... }: {
     sam.workers = {
       ghHostsFile = "/home/lukas/hosts.yml";
-      instances = lib.mkForce { gh.egress.github.repos = [ "o/r.s" ]; gh2.egress.github.repos = [ "x/y" ]; plain = { }; };
+      # 1G each: with Paddock on, asus's pool.memory is 4G
+      instances = lib.mkForce (lib.mapAttrs (_: i: i // { memory.reserved = "1G"; }) {
+        gh.egress.github.repos = [ "o/r.s" ];
+        gh2.egress.github.repos = [ "x/y" ];
+        plain = { };
+      });
     };
   }) ]; }).config;
   config = flake.inputs.nixpkgs.lib.last (flake.inputs.nixpkgs.lib.splitString " " c.systemd.services.dev-env-egress.serviceConfig.ExecStart);
@@ -435,7 +440,10 @@ in {
   acer = { caddy = caddy acer; repos = acer.homelab.execPool.repos; msiAddress = acer.sam.fleet.hosts.msi-ms7758.address;
            filter = let sc = acer.systemd.services.exec-pool-push-filter.serviceConfig; in {
              inherit (sc) User PrivateNetwork RestrictAddressFamilies;
-             slots = builtins.fromJSON (builtins.readFile (flake.inputs.nixpkgs.lib.last (flake.inputs.nixpkgs.lib.splitString " " sc.ExecStart)));
+             slots = builtins.fromJSON (builtins.readFile (builtins.elemAt (flake.inputs.nixpkgs.lib.splitString " " sc.ExecStart) 3));
+             textfile = flake.inputs.nixpkgs.lib.last (flake.inputs.nixpkgs.lib.splitString " " sc.ExecStart);
+             inherit (sc) ReadWritePaths;
+             exporter = acer.services.prometheus.exporters.node.extraFlags;
            };
            egressUser = acer.systemd.services.dev-env-egress.serviceConfig.User; };
 }
@@ -477,6 +485,10 @@ def check_push_filter(acer, msi):
           and f.get("User") == acer.get("egressUser") and f.get("PrivateNetwork") is True and f.get("RestrictAddressFamilies") == ["AF_UNIX"]
           and msi.get("filtered") is True,
           f"acer's filter reads each slot's runner manifest, as the proxy's user with no network; msi runs one too ({f})")
+    d = "/run/exec-pool-push-filter-metrics"
+    check(f.get("textfile") == f"{d}/push-filter.prom" and f.get("ReadWritePaths") == [f"-{d}"]
+          and f"--collector.textfile.directory={d}" in f.get("exporter", []),
+          f"acer's filter counts its pushes in a textfile of its own directory, which node-exporter reads ({ {k: f.get(k) for k in ('textfile', 'ReadWritePaths')} })")
     sites = {b.split("\n", 2)[1].strip(): b for b in acer.get("caddy", "").split("http:// {")[1:]}
     for n in slots:
         site = sites.get(f"bind unix//run/dev-env-egress/{n}/github.sock", "")
@@ -1205,8 +1217,8 @@ def check_session_dock():
     check(got.get("named") == {"dock": False, "bind": None}, f"a named worker binds no /session ({got.get('named') or got.get('error')})")
 
 
-# What a slot can read of its host: every bind of each committed slot (acer's, msi's under
-# homelab.execPool.slot.privateUsers) and of acer's with it on, beside the stock store, nix db, daemon socket and per-container profile and roots
+# What a slot can read of its host: every bind of each committed slot (acer's and msi's, both under
+# homelab.execPool.slot.privateUsers) and of acer's with it off, beside the stock store, nix db, daemon socket and per-container profile and roots
 # binds of nixpkgs' container module. A new bind fails here until it is listed. Its container unit loads no credential,
 # and its user has no group of the host user's and no sudo.
 SLOT_REACH = r"""
@@ -1253,13 +1265,13 @@ def slot_binds(n, own):
 def check_slot_reach():
     # a whole host each, one at a time
     declarations = []
-    for host, case, count, own in (("acer-swift", "{ }", 3, False),
-                                   ("acer-swift", "{ homelab.execPool.slot.privateUsers = true; }", 3, True),
+    for host, case, count, own in (("acer-swift", "{ homelab.execPool.slot.privateUsers = lib.mkForce false; }", 3, False),
+                                   ("acer-swift", "{ }", 3, True),
                                    ("msi-ms7758", "{ }", 4, True)):
         out = run_eval(SLOT_REACH % {"root": json.dumps(ROOT), "host": host, "case": case})
         got = json.loads(out.stdout) if out.returncode == 0 else {"error": out.stderr.strip()[-600:]}
         slots = [f"pool{i}" for i in range(1, count + 1)]
-        label = f"{host}{' with privateUsers' if case != '{ }' else ''}"
+        label = f"{host}{' without privateUsers' if case != '{ }' else ''}"
         key = "slot's own" if own else "environments'"
         want = {n: slot_binds(n, own) for n in slots}
         check(got.get("failing") == [] and got.get("binds") == want,

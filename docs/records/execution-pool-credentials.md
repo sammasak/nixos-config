@@ -70,6 +70,9 @@ widest: the whole account, every branch.
    Not the bare repository with a `post-receive` relay first planned here: that answers the client before GitHub
    has, so a relay that then failed would be a push the agent believes landed. The filter keeps one hop, returns
    GitHub's own answer and never retries (a cut upstream is a 502; the park checks with `ls-remote` as before).
+   It counts each slot's requests passed and refused in `/run/exec-pool-push-filter-metrics/push-filter.prom`
+   (`exec_pool_push_filter_pushes_total{slot,result}`); ExecPoolPushesRefused fires at three refusals from one slot
+   in an hour, not at one.
    Rulesets on GitHub are later and not part of this plan, as they change the GitHub account.
 4. **Short-lived tokens.** A GitHub App installation token minted on the host per task (one hour, listed repositories,
    contents write) in place of the owner's gh token in the sidecar (credentials-and-tenancy.md, phase 4).
@@ -146,7 +149,8 @@ In an acer slot: `test ! -e /var/lib/host-credentials/id_ed25519`; a pool task p
 records it handed back; `nix flake metadata` in nixos-config fetches factum through the proxy;
 `journalctl -u dev-env-egress` on acer shows the `github-pool1` requests. With `ownRefsOnly`: the task's push and
 the park's snapshot land and `journalctl -u exec-pool-push-filter` shows them `passed`; `git push origin HEAD:refs/heads/x`
-from the slot fails with HTTP 403 and shows `refused`, and `git ls-remote` does not list `x`. On msi, the same from a slot, the requests in
+from the slot fails with HTTP 403 and shows `refused`, and `git ls-remote` does not list `x`; `curl -s <node-exporter>/metrics | grep exec_pool_push_filter` on the host
+counts that slot's `refused` up by one. On msi, the same from a slot, the requests in
 acer's log as `github-fleet`, and `curl -s -o /dev/null -w '%{http_code}' http://<acer>:<listener port>/` from any
 other host times out (firewall). The runner's clone and its pushed check read the guest's system git config, so they
 go through the proxy too: a private repository (skills) clones, and a task on a repository not listed fails in

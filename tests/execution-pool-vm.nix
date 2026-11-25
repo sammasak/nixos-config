@@ -1,6 +1,6 @@
 # homelab.execPool's slots on in QEMU beside a named environment: two idle slots boot, a slot is used, released by
 # dev-env-reset@ and used again without a switch, stops and restarts alone, and sees no host secret or socket.
-# Both slots under slot.privateUsers (msi's); the named instance keeps the host's ids, as acer's slots do.
+# Both slots under slot.privateUsers, as on the hosts; the named instance keeps the host's ids.
 # The runtime-host role's closure plus three guests: `nix build .#execution-pool-vm` on msi only.
 {
   pkgs,

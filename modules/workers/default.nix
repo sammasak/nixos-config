@@ -18,6 +18,8 @@ let
   ownRefs = i: i.egress.github.ownRefs or null != null;
   refsHeld = lib.filter ownRefs (lib.attrValues dev.instances);
   filterSocket = "/run/exec-pool-push-filter/filter.sock";
+  # its own directory: the filter runs as the proxy's user, and node-exporter's shared one is root's
+  filterMetrics = "/run/exec-pool-push-filter-metrics";
   # in the proxy's runtime directory, which no guest binds whole; no instance name starts with a dot
   pushSocket = "/run/dev-env-egress/.push.sock";
   repoRegex = repos: "(?i:${lib.concatMapStringsSep "|" (lib.escapeRegex) repos})";
@@ -921,6 +923,10 @@ in
       };
     };
 
+    services.prometheus.exporters.node.extraFlags = lib.mkIf (refsHeld != [ ]) [
+      "--collector.textfile.directory=${filterMetrics}"
+    ];
+
     systemd = lib.mkMerge [
       (lib.mkIf (cfg.shutdownNotice != null && agentNames != [ ]) {
         timers.worker-shutdown-notice = {
@@ -942,10 +948,13 @@ in
         };
       })
       (lib.mkIf (refsHeld != [ ]) {
+        # before the filter's first write: node-exporter counts a missing directory as a textfile scrape error
+        tmpfiles.rules = [ "d ${filterMetrics} 0755 ${user} users -" ];
         services.exec-pool-push-filter = {
           description = "Holds the instances' git pushes to their own task's refs";
           wantedBy = [ "multi-user.target" ];
           before = [ "dev-env-egress.service" ];
+          after = [ "systemd-tmpfiles-resetup.service" ];
           onFailure = lib.optional (dev.alert != null) "dev-env-alert@%n.service";
           serviceConfig = {
             ExecStart = "${
@@ -956,10 +965,12 @@ in
                   lib.listToAttrs (map (i: lib.nameValuePair i.name i.egress.github.ownRefs) refsHeld)
                 )
               )
-            }";
+            } ${filterMetrics}/push-filter.prom";
             # the proxy's user: each connects to the other's socket, which only its owner may
             User = user;
             RuntimeDirectory = baseNameOf (dirOf filterSocket);
+            # "-": a missing directory loses the count, never the filter and so every slot's push
+            ReadWritePaths = [ "-${filterMetrics}" ];
             Restart = "always";
             RestartSec = 2;
             # unix sockets on the file system only: no network of its own

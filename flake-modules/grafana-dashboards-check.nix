@@ -555,12 +555,16 @@ in
             # acer's Codex login textfile, written by the inline script in modules/workers/codex-auth.nix
             rg --no-filename -o 'f"codex_egress_[a-z_]+ ' ${../modules/workers/codex-auth.nix} | sed 's/^f"//; s/ $//' | sort -u > codex-egress.prom
             grep -qx codex_egress_login_present codex-egress.prom
+            # the slot hosts' push filter textfile (pkgs/exec-pool-push-filter)
+            ${
+              lib.getExe (pkgs.callPackage ../pkgs/exec-pool-push-filter/package.nix { })
+            } --list > push-filter.prom
             # Authentik's names from the Python package and the Go server acer runs
             python3 -I ${../scripts/authentik-metric-names.py} ${acer.systemd.services.authentik-worker.environment.PYTHONPATH} \
               ${lib.head (lib.splitString " " acer.systemd.services.authentik.serviceConfig.ExecStart)} > authentik.prom
             checker=${pkgs.python3.withPackages (ps: [ ps.pyyaml ])}/bin/python3
             static=(node-exporter=node.prom node-exporter=systemd.prom node-exporter=writers.prom
-              node-exporter=${adguardCheck}/dns.prom node-exporter=shipping.prom node-exporter=nav.prom node-exporter=shunt.prom node-exporter=guest-records.prom node-exporter=scheduled-gate.prom node-exporter=exec-pool.prom node-exporter=codex-egress.prom
+              node-exporter=${adguardCheck}/dns.prom node-exporter=shipping.prom node-exporter=nav.prom node-exporter=shunt.prom node-exporter=guest-records.prom node-exporter=scheduled-gate.prom node-exporter=exec-pool.prom node-exporter=codex-egress.prom node-exporter=push-filter.prom
               node-exporter=alert-investigations.prom
               node-exporter=${compactionInfo}
               llm-gateway=llm-gateway.prom authentik-server=authentik.prom authentik-worker=authentik.prom
