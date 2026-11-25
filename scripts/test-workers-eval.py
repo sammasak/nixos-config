@@ -1074,7 +1074,8 @@ def check_session_dock():
     check(got.get("named") == {"dock": False, "bind": None}, f"a named worker binds no /session ({got.get('named') or got.get('error')})")
 
 
-# What a slot can read of its host: every bind of each committed slot (acer's, msi's), beside the stock store, nix db, daemon socket and per-container profile and roots
+# What a slot can read of its host: every bind of each committed slot (acer's, msi's) and of msi's with
+# homelab.execPool.slot.privateUsers, beside the stock store, nix db, daemon socket and per-container profile and roots
 # binds of nixpkgs' container module. A new bind fails here until it is listed. Its container unit loads no credential,
 # and its user has no group of the host user's and no sudo.
 SLOT_REACH = r"""
@@ -1118,7 +1119,8 @@ def slot_binds(n, own):
 
 def check_slot_reach():
     # a whole host each, one at a time
-    for host, case, count, own in (("acer-swift", "{ }", 3, False), ("msi-ms7758", "{ }", 4, False)):
+    for host, case, count, own in (("acer-swift", "{ }", 3, False), ("msi-ms7758", "{ }", 4, False),
+                                   ("msi-ms7758", "{ homelab.execPool.slot.privateUsers = true; }", 4, True)):
         out = run_eval(SLOT_REACH % {"root": json.dumps(ROOT), "host": host, "case": case})
         got = json.loads(out.stdout) if out.returncode == 0 else {"error": out.stderr.strip()[-600:]}
         slots = [f"pool{i}" for i in range(1, count + 1)]
@@ -1133,8 +1135,9 @@ def check_slot_reach():
         check(all(v == ("no" if not own else 1879048192 + 65536 * (1 + int(hashlib.sha256(n.encode()).hexdigest()[:4], 16) % 254)) for n, v in blocks.items())
               and len(blocks) == count and got.get("units") == {n: [] for n in slots},
               f"{label}: {'each slot its own 65536 uids' if own else 'no user namespace'}, and no slot's container unit loads a credential ({blocks}, {got.get('units')})")
-        check(got.get("groups") == [] and got.get("sudo") is False and "sudo" not in got.get("wrappers", ["sudo"]),
-              f"{label}: the slot user has no group but its own and no sudo ({ {k: got.get(k) for k in ('groups', 'sudo', 'wrappers')} })")
+        check(got.get("groups") == [] and got.get("sudo") is False and "sudo" not in got.get("wrappers", ["sudo"])
+              and "dev-env-fresh-on-toggle" in " ".join(got.get("start", [])),
+              f"{label}: the slot user has no group but its own and no sudo, and a home of the other id block is reset at the start ({ {k: got.get(k) for k in ('groups', 'sudo', 'wrappers', 'start')} })")
         if own:
             check(all(f"vu-{n}-1000" in got.get("allowed", []) for n in slots) and "lukas" in got.get("allowed", []),
                   f"{label}: the host daemon allows each slot's mapped user beside lukas ({got.get('allowed')})")

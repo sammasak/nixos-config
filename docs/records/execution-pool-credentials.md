@@ -24,7 +24,7 @@ slice 1. "Home" is the session home, `/session/cur/home`, which a park then copi
 | Nix access token (sops `nix_access_token`) | host `nix.conf` `!include`, root 0400; a guest imports no `core/sops.nix` | none: the guest's nix client fetches with its own config | no | host only |
 | Queue login (`exec_pool_runner` password, peer role) | host runner unit, LoadCredential | none: the runner claims, the guest never talks to the queue | no | host only |
 | Store sync login (host's `ssh_host_ed25519_key` to `exec-pool-sync`) | host helper `exec-pool-exec@` | none: the host moves the tree | no | host only |
-| Environment sshd key (`/var/lib/workers/ssh_host_ed25519_key`) | bound read-only, root 0600 in the guest; slots are not `rootInGuest` | proves the guest to Herdr's ssh; no outward login | no (the slot user cannot read it) | bind, root only |
+| Environment sshd key (`/var/lib/workers/ssh_host_ed25519_key`) | bound read-only, root 0600 in the guest; a slot with `slot.privateUsers` has its own | proves the guest to Herdr's ssh; no outward login | no (the slot user cannot read it) | bind, root only |
 | Home Manager files relinked into the home (`exec-pool-relink`, `cp -rsTH`) | store links | config only: base URLs and `held-by-the-host` placeholders | links only, no secret | file in home, no secret |
 | Agent state the agent writes (`.claude.json`, `.claude/`, `.pi/`, `.codex/`) | home | no login today: every agent is signed in through a placeholder | only if an agent runs a login (`claude login`, `gh auth login`), which writes a real token into the home | file in home, empty of secrets |
 

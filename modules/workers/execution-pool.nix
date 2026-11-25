@@ -64,6 +64,7 @@ in
       headlessAgents = cfg.agents;
       egress.github.repos = cfg.repos;
       sessionDock = true;
+      rootInGuest = cfg.slot.privateUsers;
       # each attempt's workspace (pkgs/exec-pool/src/workspace.rs): throwaway, so its checkout never holds the reset
       scratch = [ "attempts" ];
       memory.reserved = cfg.slot.memory;
