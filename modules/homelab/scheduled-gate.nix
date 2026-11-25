@@ -61,7 +61,7 @@ in
     systemd.timers.scheduled-gate = {
       wantedBy = [ "timers.target" ];
       timerConfig = {
-        # 12 h apart stays under ScheduledGateOverdue's 14 h (modules/homelab/monitoring/shipping-policy.json);
+        # 12 h apart: ScheduledGateOverdue's 26 h (modules/homelab/monitoring/shipping-policy.json) lets one run be missed;
         # why twice: goals.md, Check tuning
         OnCalendar = "*-*-* 03,15:20:00";
         Persistent = true;

@@ -43,7 +43,8 @@ r = got("modules/homelab/monitoring/rules/exec-pool.yaml")
 check(r == {("check", c) for c in pmc.RULE_CHECKS}, f"a rule file: the rule checks, no host ({sorted(r)})")
 check(evals(got("modules/homelab/monitoring/rules/homelab.nix")) == set(HOSTS), "the rules' Nix renderer: every host")
 d = got("modules/homelab/monitoring/dashboards/shipping.json")
-check(d == {("check", c) for c in pmc.DASHBOARD_CHECKS}, f"a dashboard: the dashboard checks ({sorted(d)})")
+check(d == {("check", c) for c in pmc.DASHBOARD_CHECKS} | {("eval", "black-pi")},
+      f"a dashboard: the dashboard checks and black-pi, whose evaluation asserts its datasources ({sorted(d)})")
 e = got("pkgs/exec-pool/src/queue.rs")
 check(e == {("build", "exec-pool"), ("eval", "acer-swift"), ("eval", "msi-ms7758")},
       f"exec-pool: its build and the pool's hosts ({sorted(e)})")

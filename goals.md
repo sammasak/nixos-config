@@ -260,7 +260,7 @@ then cite it.
 ### First cuts (this branch)
 
 - `just pool-merge-check` chooses its checks from the changed paths (`scripts/pool_merge_check.py`). docs/ and
-  top-level `*.md`: nothing. Rule YAML: the five rule checks, no host. Dashboards: the two dashboard checks.
+  top-level `*.md`: nothing. Rule YAML: the five rule checks, no host. Dashboards: the two dashboard checks and black-pi's evaluation, which asserts each panel's datasource.
   `pkgs/exec-pool/`: its build plus acer's and msi's evaluation, and for a migration also its numbering. flake.lock:
   every host plus the private-input test. Any other path: every host, as before, plus each changed package's build.
   It prints each check it ran with its seconds and each host it skipped. It writes one gate-step record per check
@@ -269,11 +269,11 @@ then cite it.
 - The scheduled full gate runs twice a day (03:20, 15:20), down from four times. In the window its 2 reds each had one
   cause and stayed red on every run until a fix merged, so more runs did not find more. Each run holds acer's heavy
   lock for about 38 min. What covers the gap: the push hook's fast set on every push, pool-merge-check on every pull
-  request, and the escape checks above. 12 h apart stays under ScheduledGateOverdue's 14 h. No check was deleted.
+  request, and the escape checks above. ScheduledGateOverdue moves from 14 h to 26 h, so one missed run does not page (at 12 h apart a missed run means a 24 h gap). No check was deleted.
 - Rule for every session: a reply states the minutes of each check it ran and what any failure caught. An escape gets
   a row in the table above and a narrow check, not a longer gate.
 
-Open: confirm on acer after the deploy that a slot's pool-merge-check records reach Loki (`gate="pool-merge-check"`),
+Open: a slot's records go to its home's spool (PLATFORM_RECORD_SHIPPER=host); none was found there after the session moved to another slot, so confirm on acer after the deploy that pool-merge-check records reach Loki (`gate="pool-merge-check"`),
 then fill the unknown minutes from 7 days of records. Evaluate `execution-pool-vm` for `modules/workers/` changes.
 Run `nix flake show` on the merge in pool-merge-check.
 

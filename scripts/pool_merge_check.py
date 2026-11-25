@@ -6,7 +6,7 @@ time. Nothing is pushed.
 A path maps to checks only where the gate's history shows what it can break (goals.md, "Check tuning"):
   docs/ and top-level *.md     nothing: the push hook's lints already ran on them
   monitoring rules (*.yaml)    the rule checks (promtool cases, annotations, routes, sleeping hosts, shipping rules)
-  dashboards (*.json)          the dashboard checks
+  dashboards (*.json)          the dashboard checks and black-pi's evaluation (its datasource assertion)
   pkgs/exec-pool/              its package build (crate tests, clippy, rustfmt) and the evaluation of the pool's hosts;
                                a migration also its numbering, one name per number and no gap
   flake.lock                   every host's evaluation and scripts/test-deploy-recipes.py (private inputs over ssh)
@@ -76,6 +76,8 @@ def plan(paths: list[str], hosts: list[str], pkgdirs: list[str]) -> list[Check]:
             want.update(Check("check", c) for c in RULE_CHECKS)
         elif DASHBOARDS.fullmatch(p):
             want.update(Check("check", c) for c in DASHBOARD_CHECKS)
+            # a panel's datasource uid is asserted only in black-pi's evaluation (modules/homelab/monitoring/grafana.nix)
+            want.update(Check("eval", h) for h in ("black-pi",) if h in hosts)
         elif p.startswith("pkgs/exec-pool/"):
             want.add(Check("build", "exec-pool"))
             want.update(Check("eval", h) for h in POOL_HOSTS if h in hosts)
