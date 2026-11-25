@@ -284,8 +284,9 @@ tier = 3
 cost_class = "free"
 enabled = true
 context_window = 131072
-tool_capable = true
-notes = "tool use unverified: Phase 0 run timed out with msi saturated"
+# false: about 4.5 tok/s on msi's CPU, so a Pi tool loop times out; tools go to asus or are refused, never here
+tool_capable = false
+notes = "Phase 0 tool run timed out with msi saturated; text-only requests"
 
 [[models]]
 provider = "msi"

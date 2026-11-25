@@ -19,13 +19,15 @@ let
     builtins.readFile ./llm-gateway-asus.toml
   );
   # the Ollama backends' addresses from sam.fleet (modules/core/fleet.nix), into llm-gateway.toml's @msi@ and @acer@;
-  # without asus the text is the base file's alone, so the deployed config does not move
+  # without asus the text is the base file's alone; with it asus goes first, since within a tier the gateway keeps file
+  # order, so its GPU model precedes msi's CPU ones
   configText =
-    lib.replaceStrings
-      [ "@msi@" "@acer@" ]
-      [ config.sam.fleet.hosts.msi-ms7758.address config.sam.fleet.hosts.acer-swift.address ]
-      (builtins.readFile ./llm-gateway.toml)
-    + lib.optionalString config.homelab.llmGateway.asus.enable asusText;
+    lib.optionalString config.homelab.llmGateway.asus.enable asusText
+    +
+      lib.replaceStrings
+        [ "@msi@" "@acer@" ]
+        [ config.sam.fleet.hosts.msi-ms7758.address config.sam.fleet.hosts.acer-swift.address ]
+        (builtins.readFile ./llm-gateway.toml);
   configFile = pkgs.writeText "llm-gateway.toml" configText;
   # every key file the config names, so a provider added there needs its key in the sops file to build: the gateway
   # reads each one at startup, enabled or not
