@@ -11,7 +11,7 @@ lead. What shipped before is in git history and in the closed issues, not here.
   longer, so no topic starves. An urgent break (main red, DNS, data at risk) jumps the queue.
 - No dedicated benchmarks. Ship behind a switch scoped to one host, slot or model and compare on the running system.
 - Every queued item names four things: the outcome a user sees, one metric read on the running system, a regression
-  alert or guard, and a narrow quality gate of minutes. The scheduled full gate on main (acer, four times a day)
+  alert or guard, and a narrow quality gate of minutes. The scheduled full gate on main (acer, twice a day, see Check tuning)
   covers the batch; no long gate per change.
 - Work is dispatched as pool sessions (`exec-pool start`, then `exec-pool send`), never to Herdr panes. The one
   exception is the agent `paddock` on asus, which needs the GPU.
@@ -99,6 +99,76 @@ devenv-platform#141 and #129; pi-harness#26.
     `passed`, one `refused`) before it.
 
 Credential items moved to #653 (item 7).
+
+## Check tuning
+
+Owner, 25 Nov: "keep count of how we can fine tune testing so that we can have some small and fast checks applied and
+only run long gates even less often". The tally below covers 11 to 25 Nov. Sources: git history (871 commits, 260
+merged pull requests), pull request bodies, the code's own measured comments, and this file's earlier entries. Per-step
+seconds and run counts sit in Loki's `{job="platform",kind="gate-step"}` records, and a pool slot cannot reach Loki or
+Prometheus (both time out), so most minutes below read **unknown**. Read them on lenovo or acer with
+`{job="platform",kind="gate-step"} | logfmt | gate="nixos-qa"`, or for the merge check `gate="pool-merge-check"`.
+"Caught" means a fix commit or pull request names the check as what failed. A lint finding fixed in the same branch
+counts as a catch, but not as a host defect.
+
+### The full gate (nixos:qa) and the merge check
+
+Runs: nixos:qa ran on every push until 24 Nov 09:19 (63db4216). The count is unknown: there were 381 first-parent
+commits on main from 11 Nov to then. Since that time it runs only as the scheduled gate (acer, 03/09/15/21:20, only
+when main moved) or `just full-gate`. That allows at most 4 scheduled runs, from 24 Nov 15:20 to 25 Nov 09:20, and
+main moved before each one. `just pool-merge-check` exists since 24 Nov: 16 of the 93 pull request bodies merged since
+then cite it.
+
+| Check or step | Typical minutes | Runs in 14 d | Real defects caught (commit or PR) | Depends on |
+|---|---|---|---|---|
+| Whole scheduled gate | 37.6 (first run, 2256 s on acer, 24 Nov); the unit comment says 20 to 40 | at most 4 | 2 reds: `shunt-metrics-test` (a stale guest name after #748, fixed df0f5007 in #759), `execution-pool-vm` failing to evaluate (#795) | everything |
+| lint-comments, lint-shell, deploy-rs-pins | unknown, seconds | every push (pre-push fast set) | lint-comments: 9d7cec2a (#800, a path read as a pointer); shellcheck: d947c2a2 (#795) | `.nix`, `.sh`, `.py` comments; `scripts/*.sh`; devenv.yaml, devenv.lock, flake.lock |
+| fmt-check | unknown | every full gate | 747a1f71 (#684, an unformatted line) | every `.nix` |
+| secrets-verify | unknown, seconds | every push | none traced | `secrets/` |
+| nixos-push-eval (`nix flake show`) | about 1.5 (90 s, 3.9 GiB, acer) | every push | 24cb9892 (#797): #793 and #796 both defined the VM's gh stub, so main's evaluation failed. Seen on main, after both merged | every flake output's attribute set, no check derivation |
+| gate probe (every host evaluated once) | unknown | every full gate | none traced: the tests' failures are named below | every host |
+| nixos-flake-check | unknown, the bulk of the 37 min | every full gate | `execution-pool-vm` evaluation (284ec013, #795); package check phases: scheduled-gate ruff E501 (358dbb87, #787, after #785 failed acer's deploy build), exec-pool clippy and rustfmt (10 commits, e.g. 7576a436, 2a825331, 5a09c714) | every check and every x86 host |
+| coordinator-test, worker-permissions-test, workers-eval-test, alloy-otlp-test (side by side on asus) | unknown | every full gate | workers-eval: 0b90b42d (#781, a slot rename that rewrote an instance case), f4fac5f5 (#736, msi's slot) | gate probe (every host), `modules/workers/`, `modules/programs/cli/claude-code/` |
+| shunt-metrics-test | unknown | every full gate | the first scheduled red (df0f5007, #759) | probe, `scripts/shunt-metrics.py`, its test |
+| typed-interfaces-test | unknown | every full gate | made green again in #731 (a test fix, not a host defect) | `modules/` |
+| deploy-recipes-test | about 0.05 (2.8 s here) | every full gate | since #803 it fails on a `github:` private input, the class behind #798 | Justfile, flake.lock, `scripts/post-deploy-check.sh` |
+| seventh-host-test | about 1.8 (110 s on asus, 18 Nov) | every full gate | none traced | hosts.nix, fleet.nix, every host |
+| The other 38 tests in `tests` (devenv.nix) | unknown | every full gate | none traced in commit messages; the edits were test upkeep beside a feature | most read the gate probe (every host); the Nix-free ones read only their script |
+| pool-merge-check: host evaluation | about 0.5 per host, about 3 for six; msi peaks at 4.2 GB | about 16 cited | lenovo's sam.memory budget (85ebfd25 in #794, 7d883001 in #799) | the host's modules and `hosts/<dir>/` |
+| pool-merge-check: package build | unknown | about 16 cited | c15a3024 (#795, ruff E501 before merge) | `pkgs/<dir>/` |
+
+### Escapes: what reached main or a deploy unseen, and the smallest check
+
+| Escape | Seen at | Smallest check that would have caught it | Exists now |
+|---|---|---|---|
+| #792 broke lenovo's evaluation (sam.memory assertion) | deploy | lenovo's toplevel drvPath evaluated from the merge with main | yes: pool-merge-check evaluates every host for any unmapped path (#799) |
+| Migration numbers clashed: #793 with #791, #797 with #793 | merge conflict | pool-merge-check against current main right before the merge (merge-tree exits 1 on a conflict), and the migration numbering (one name per number, no gap) | merge-tree yes, but only when rerun after the other PR merged; numbering check added in this branch |
+| #798's skills pin bump returned a 404 on a private archive | deploy | every private input is git+ssh (`scripts/test-deploy-recipes.py`, #803) | yes, and pool-merge-check runs it for any flake.lock change (this branch) |
+| `execution-pool-vm` failed to evaluate and wrote no check record, so the gate was red with nothing to act on | scheduled gate, red for about 18 h | an evaluation failure records its check (a359e3cb, #795) | the record yes. Evaluating the VM check's drvPath for `modules/workers/` changes does not exist yet |
+| A host evaluation in a slot was killed for memory three times | pool-merge-check | one nix process per host (056a2741, #799) | yes |
+| #785: scheduled-gate's ruff E501 failed acer's deploy build, reverted in #786 | deploy | build `pkgsDir.scheduled-gate` | yes: pool-merge-check builds each changed `pkgs/<dir>` (#788) |
+| #793 and #796 each added the VM's gh stub, so main's evaluation and every push failed | push hook on main | `nix flake show` on the merge with main right before the merge | no: pool-merge-check does not run it |
+| #777: every pane turn on acer failed with a herdr parse error, reverted in #778 | live slot | one session turn through a pane on a slot before the merge | no |
+
+### First cuts (this branch)
+
+- `just pool-merge-check` chooses its checks from the changed paths (`scripts/pool_merge_check.py`). docs/ and
+  top-level `*.md`: nothing. Rule YAML: the five rule checks, no host. Dashboards: the two dashboard checks and black-pi's evaluation, which asserts each panel's datasource.
+  `pkgs/exec-pool/`: its build plus acer's and msi's evaluation, and for a migration also its numbering. flake.lock:
+  every host plus the private-input test. Any other path: every host, as before, plus each changed package's build.
+  It prints each check it ran with its seconds and each host it skipped. It writes one gate-step record per check
+  (gate=pool-merge-check, step=pool-merge-<kind>, result=pass|fail|skipped), so the minutes and run counts above can
+  be read back from Loki. It writes no gate record: the platform gate pass rate stays the full gate's.
+- The scheduled full gate runs twice a day (03:20, 15:20), down from four times. In the window its 2 reds each had one
+  cause and stayed red on every run until a fix merged, so more runs did not find more. Each run holds acer's heavy
+  lock for about 38 min. What covers the gap: the push hook's fast set on every push, pool-merge-check on every pull
+  request, and the escape checks above. ScheduledGateOverdue moves from 14 h to 26 h, so one missed run does not page (at 12 h apart a missed run means a 24 h gap). No check was deleted.
+- Rule for every session: a reply states the minutes of each check it ran and what any failure caught. An escape gets
+  a row in the table above and a narrow check, not a longer gate.
+
+Open: a slot's records go to its home's spool (PLATFORM_RECORD_SHIPPER=host); none was found there after the session moved to another slot, so confirm on acer after the deploy that pool-merge-check records reach Loki (`gate="pool-merge-check"`),
+then fill the unknown minutes from 7 days of records. Evaluate `execution-pool-vm` for `modules/workers/` changes.
+Run `nix flake show` on the merge in pool-merge-check.
 
 ## Later (not queued; pick up when the queue above is short)
 
