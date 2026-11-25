@@ -400,7 +400,7 @@ acer = p["acer"]
 guests = acer["guests"]
 check("--shunt off " in (acer["service"] or {}).get("ExecStart", "") and acer["failing"] == [],
       f"acer's own collector says off, and acer evaluates clean {acer['failing']}")
-check({n: (g["declared"], g["readHook"]) for n, g in guests.items()} == {"pool1": (True, True), "pool2": (False, False), "pool3": (False, False)},
+check({n: (g["declared"], g["readHook"]) for n, g in guests.items()} == {"pool1": (True, True), "pool2": (False, False), "pool3": (False, False), "pool4": (False, False)},
       f"Shunt is declared on, and its Read hook registered, for pool1 alone {guests}")
 for n, g in guests.items():
     want = f"--out /var/lib/shunt-metrics-guests/shunt-guest-{n}.prom --shunt {'on' if g['declared'] else 'off'} " \

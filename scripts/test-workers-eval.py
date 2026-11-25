@@ -1346,9 +1346,12 @@ in {
   polkit = acer.security.polkit.extraConfig;
   slot2 = builtins.fromJSON acer.systemd.services.exec-pool-runner-pool2.environment.EXEC_POOL_SLOT;
   msiSlots = map (n: (builtins.fromJSON msi.systemd.services."exec-pool-runner-${n}".environment.EXEC_POOL_SLOT).agents) (slots 4);
-  limits = { acer = limits acer 3; msi = limits msi 4; };
+  limits = { acer = limits acer 4; msi = limits msi 4; };
   namedLimit = { inherit (named) StartLimitIntervalSec StartLimitBurst; };
-  push = builtins.listToAttrs (map (n: { name = "acer-${n}"; value = push acer n; }) (slots 3) ++ map (n: { name = "msi-${n}"; value = push msi n; }) (slots 4));
+  # acer's light pool4 beside pool3, and the slice that holds both
+  light = map (n: { inherit (acer.systemd.services."container@${n}".serviceConfig) CPUWeight MemoryMin; quota = acer.systemd.services."container@${n}".serviceConfig.CPUQuota or null; }) [ "pool3" "pool4" ];
+  pool = acer.systemd.slices.environments.sliceConfig.MemoryMax;
+  push = builtins.listToAttrs (map (n: { name = "acer-${n}"; value = push acer n; }) (slots 4) ++ map (n: { name = "msi-${n}"; value = push msi n; }) (slots 4));
 }
 """
 
@@ -1356,7 +1359,7 @@ in {
 def check_runner():
     out = run_eval(RUNNER % {"root": json.dumps(ROOT)})
     got = json.loads(out.stdout) if out.returncode == 0 else {}
-    acer_slots, msi_slots = [f"pool{i}" for i in range(1, 4)], [f"pool{i}" for i in range(1, 5)]
+    acer_slots, msi_slots = [f"pool{i}" for i in range(1, 5)], [f"pool{i}" for i in range(1, 5)]
     rule = json.dumps([u for n in acer_slots for u in (f"exec-pool-exec@{n}.service", f"dev-env-reset@{n}.service")], separators=(",", ":"))
     check(got.get("acer") == ["exec-pool-exec@", "exec-pool-runner-password", *[f"exec-pool-runner-{n}" for n in acer_slots]]
           and got.get("msi") == ["exec-pool-exec@", *[f"exec-pool-runner-{n}" for n in msi_slots]] and got.get("user") == "exec_pool"
@@ -1364,7 +1367,7 @@ def check_runner():
           and got.get("slot2", {}).get("id") == "pool2" and got.get("slot2", {}).get("agents") == ["none", "claude", "pi", "codex"]
           and got.get("msiSlots") == [["none", "claude"]] * 4
           and got.get("exec", "").endswith("/bin/exec-pool-runner exec %i") and rule in got.get("polkit", "") and 'subject.user == "exec_pool"' in got.get("polkit", ""),
-          f"acer runs exec-pool-runner-pool1 to -pool3 as exec_pool with its root helper exec-pool-exec@, and polkit lets exec_pool start only {rule}; acer also sets the role's password, acer's slots offering codex too (dropped at start while no login exists), msi runs the same for its four slots, each claiming for none and claude ({ {k: got.get(k) for k in ('acer', 'msi', 'user', 'slot', 'slot2', 'msiSlots', 'exec')} or out.stderr.strip()[-300:]})")
+          f"acer runs exec-pool-runner-pool1 to -pool4 as exec_pool with its root helper exec-pool-exec@, and polkit lets exec_pool start only {rule}; acer also sets the role's password, acer's slots offering codex too (dropped at start while no login exists), msi runs the same for its four slots, each claiming for none and claude ({ {k: got.get(k) for k in ('acer', 'msi', 'user', 'slot', 'slot2', 'msiSlots', 'exec')} or out.stderr.strip()[-300:]})")
     polkit = got.get("polkit", "")
     resets = json.dumps([f"dev-env-reset@{n}.service" for n in acer_slots], separators=(",", ":"))
     check(f'var resets = {resets};' in polkit
@@ -1388,13 +1391,16 @@ def check_runner():
     # container's start limit, which still ends a guest that never gets ready
     script = got.get("reset", "")
     cleared = script.find('systemctl reset-failed "container@$n.service"')
-    for host, n in (("acer", 3), ("msi", 4)):
+    for host, n in (("acer", 4), ("msi", 4)):
         lim = got.get("limits", {}).get(host, {})
         check(lim.get("slots") == ["600"] * n
               and 0 <= cleared < script.find('systemctl start "container@$n.service"')
               and lim.get("exec") == "0" and lim.get("reset") is None
               and lim.get("resets") == [{"overrideStrategy": "asDropin", "text": "[Unit]\nStartLimitIntervalSec=0\n"}] * n,
               f"{host}: each slot's container@ keeps the core's 600 s / 3 starts, which dev-env-reset@ clears before it starts the container; exec-pool-exec@ and each slot's dev-env-reset@ have no start limit, the shared reset template keeps its own ({lim or out.stderr.strip()[-300:]})")
+    check(got.get("light") == [{"CPUWeight": 200, "MemoryMin": 2 << 30, "quota": None}, {"CPUWeight": 100, "MemoryMin": 1 << 30, "quota": "200%"}]
+          and got.get("pool") == 7 << 30,
+          f"acer's pool4 is light: weight 100 against 200, a 1G reserve and a 200% CPUQuota, inside the same 7G pool ({got.get('light')}, {got.get('pool')})")
     check(got.get("namedLimit") == {"StartLimitIntervalSec": "600", "StartLimitBurst": "3"},
           f"a named worker's container keeps the core's start limit ({got.get('namedLimit') or out.stderr.strip()[-300:]})")
     want = [f"acer-{n}" for n in acer_slots] + [f"msi-{n}" for n in msi_slots]

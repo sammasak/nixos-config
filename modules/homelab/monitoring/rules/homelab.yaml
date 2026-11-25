@@ -130,6 +130,46 @@ groups:
           query: 'nvidia_smi_temperature_gpu{job="nvidia-gpu",node="{{ $labels.node }}"}'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#gputhermalthrottling"
 
+      # The hosts' heat beside their slot count (the Hosts dashboard's heat row): acer has no fan sensor, so its
+      # temperature and throttling are what an extra slot costs.
+      - alert: NodeHwmonTemperatureHigh
+        expr: homelab:node:hwmon_temp_max_celsius > 92
+        for: 10m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "{{ $labels.node }} has run above 92 °C for 10 minutes"
+          description: "{{ $labels.node }}'s hottest hwmon sensor has read {{ $value }} °C for 10 minutes. Run grep . /sys/class/hwmon/hwmon*/temp*_input there (millidegrees) and machinectl list for its running slots; on acer, drop the light slot pool4 if it keeps firing."
+          query: 'max by (node) (node_hwmon_temp_celsius{job="node-exporter",node="{{ $labels.node }}"})'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#nodehwmontemperaturehigh"
+
+      # 2x the host's own 7 day mean plus 10/s, so a host that never throttles does not fire on a blip
+      - alert: NodeCpuThrottlingHigh
+        expr: homelab:node:cpu_core_throttles:rate5m > 2 * avg_over_time(homelab:node:cpu_core_throttles:rate5m[7d]) + 10
+        for: 15m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "{{ $labels.node }} throttles its cores for heat well above its week"
+          description: "{{ $labels.node }}'s cores have throttled {{ $value | humanize }} times a second for 15 minutes, over twice its 7 day mean. Run grep . /sys/devices/system/cpu/cpu*/thermal_throttle/core_throttle_count and machinectl list there; https://grafana.sammasak.dev/d/hosts puts it beside the running slots."
+          query: 'sum by (node) (rate(node_cpu_core_throttles_total{job="node-exporter",node="{{ $labels.node }}"}[5m]))'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#nodecputhrottlinghigh"
+
+      # every fan of the host at 0 rpm while it is hot; 65535 is the thinkpad sensor's read error, not a speed
+      - alert: NodeFanStuck
+        expr: homelab:node:hwmon_fan_rpm_max == 0 and on (node) homelab:node:hwmon_temp_max_celsius > 80
+        for: 5m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "{{ $labels.node }}'s fan stands still while it is hot"
+          description: "Every fan sensor on {{ $labels.node }} has read 0 rpm for 5 minutes while its hottest sensor is above 80 °C. Run grep . /sys/class/hwmon/hwmon*/fan*_input there (on lenovo cat /proc/acpi/ibm/fan), then check the fan before more work lands on it."
+          query: 'node_hwmon_fan_rpm{job="node-exporter",node="{{ $labels.node }}"} < 65535'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#nodefanstuck"
+
       # The fleet's resolver (adguardhome.nix), through adguard-textfile's minutely file on the DNS host.
       - alert: DnsDown
         expr: homelab_dns_up{job="node-exporter"} == 0
@@ -398,6 +438,12 @@ groups:
 
   - name: host-health.recordings
     rules:
+      - record: homelab:node:hwmon_temp_max_celsius
+        expr: max by (node) (node_hwmon_temp_celsius{job="node-exporter"})
+      - record: homelab:node:cpu_core_throttles:rate5m
+        expr: sum by (node) (rate(node_cpu_core_throttles_total{job="node-exporter"}[5m]))
+      - record: homelab:node:hwmon_fan_rpm_max
+        expr: max by (node) (node_hwmon_fan_rpm{job="node-exporter"} < 65535)
       - record: homelab:node:cpu_accounting_rate
         expr: |
           sum by (node) (rate(node_cpu_seconds_total{job="node-exporter",mode!~"guest.*"}[5m]))

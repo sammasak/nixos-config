@@ -286,9 +286,19 @@ Placement order: acer, then msi, asus last (it carries ollama, Paddock and the G
 
 | Host | Slots | Note |
 |------|-------|------|
-| acer-swift | `pool1` to `pool3` | Shunt on for `pool1`, a 300K compaction window for `pool2`; offers claude and pi, and codex while the owner's ChatGPT login exists |
+| acer-swift | `pool1` to `pool4` | Shunt on for `pool1`, a 300K compaction window for `pool2`; `pool4` light (1G reserve, CPUWeight 100 against 200, CPUQuota 200%); offers claude and pi, and codex while the owner's ChatGPT login exists |
 | msi-ms7758 | `pool1` to `pool4` | offers claude; off 21:00 to 08:30 |
 | asus-b460m | none | ollama (one resident model, 130 W cap), agent `paddock`; off 21:00 to 08:30 |
+
+Heat, the extra slot's price (owner, 25 Nov 23:50). Before, 25 Nov 23:50 with three acer slots busy: acer 8 cores, load
+5.0, 11.3 GiB available of 15.6, environments.slice 2.5 of 7 GiB, package 66 C now and 94 C peak in 6 h,
+node_cpu_core_throttles_total up about 888,000 in 6 h, no fan sensor; lenovo 16 cores, load 0.3, 10.9 GiB available
+of 15.7, user.slice 4.3 of 8.4 GiB, 49 C now and 100 C peak in 6 h, fans 0 rpm idle (its 65535 peak is the sensor's
+error value). After, 24 h past the pool4 deploy: acer's throttle increase over 24 h and peak temperature with four
+slots against the 24 h before that deploy with three (the Hosts dashboard's heat row;
+`sum(increase(node_cpu_core_throttles_total{node="acer-swift"}[24h]))` and `max_over_time(homelab:node:hwmon_temp_max_celsius{node="acer-swift"}[24h])`).
+If acer's throttling rises by more than half, drop pool4 again (`slots = 3`, `light.slots = 0`). lenovo's first slot is
+not in this layout yet.
 
 No slot holds a GitHub key: slots push through acer's GitHub sidecar and private clones go through the proxy.
 Gaming entries on asus and msi are merged and booted on neither host yet; the owner accepted them untested (#645).

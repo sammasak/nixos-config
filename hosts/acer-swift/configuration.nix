@@ -48,7 +48,7 @@
     pi = true;
     nativeOtel = true;
   };
-  # A 7G pool reserves 2G each for at most 3: pool1 to pool3 (docs/nspawn-workers.md, Sizing).
+  # A 7G pool: pool1 to pool3 reserve 2G each, light pool4 the last 1G (docs/nspawn-workers.md, Sizing).
   sam.workers = {
     labelPrefix = "acer";
     pool.memory = "7G";
@@ -66,7 +66,14 @@
       "queue"
       "runner"
     ];
-    slots = 3;
+    slots = 4;
+    # acer already throttles with three busy: pool4's CPUQuota caps its heat at two of the 8 cores, and weight 100
+    # against the others' 200 yields to them
+    light = {
+      slots = 1;
+      cpu = 1;
+      cpuQuota = "200%";
+    };
     agents = [
       "claude"
       "pi"

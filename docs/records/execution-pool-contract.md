@@ -132,7 +132,7 @@ JSON `is_error` decides for Claude, the exit code for the rest; a signal, or a C
 
 ## Runner (#652)
 
-`exec-pool-runner-<slot>` (`modules/homelab/exec-pool-runner.nix`, `homelab.execPool`'s `runner` role; on acer for `pool1` to `pool3`, and
+`exec-pool-runner-<slot>` (`modules/homelab/exec-pool-runner.nix`, `homelab.execPool`'s `runner` role; on acer for `pool1` to `pool4`, and
 on msi for its slots against acer's queue as `exec_pool_runner` over TCP) loops: `reconcile`, `claim` for its slot
 (its agents and capabilities; with a poweroff timer only while the claim's hold ends before it), `start`, then
 `systemctl start exec-pool-exec@<slot>`, then `checkpoint` and the settle or park, the result recorded
@@ -277,6 +277,7 @@ PostgreSQL, so it is imported only where the queue runs; it imports the other tw
 | `roles` | `[ ]` | `queue` and/or `runner`; neither: slots alone |
 | `slots` | 0 | slots `pool1..poolN` |
 | `slot.memory`, `slot.cpu` | `"2G"`, 2 | each slot's reserve |
+| `light.slots`, `light.memory`, `light.cpu`, `light.cpuQuota` | 0, `"1G"`, 1, `"200%"` | the last `light.slots` slots reserve less and get a CPUQuota ceiling |
 | `repos` | the owner's repositories | what the GitHub sidecar signs for a slot: fetch, push (branch and snapshot ref), gh |
 | `agents` | `[ ]` | `claude`, `codex`, `pi`; sessions run claude |
 | `capabilities` | `[ ]` | what each slot offers a task |

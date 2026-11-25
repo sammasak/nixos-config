@@ -1,0 +1,81 @@
+# promtool test rules for homelab.yaml's heat alerts (flake-modules/monitoring-check.nix runs it).
+rule_files: [../homelab.yaml]
+evaluation_interval: 1m
+tests:
+  # acer above 92 °C, lenovo through a short peak, msi warm
+  - interval: 1m
+    input_series:
+      - series: 'node_hwmon_temp_celsius{job="node-exporter",node="acer-swift",chip="platform_coretemp_0",sensor="temp1"}'
+        values: '66x5 94x30'
+      - series: 'node_hwmon_temp_celsius{job="node-exporter",node="acer-swift",chip="nvme_nvme0",sensor="temp1"}'
+        values: '45x35'
+      - series: 'node_hwmon_temp_celsius{job="node-exporter",node="lenovo",chip="platform_coretemp_0",sensor="temp1"}'
+        values: '49x5 100x5 50x25'
+      - series: 'node_hwmon_temp_celsius{job="node-exporter",node="msi-ms7758",chip="platform_coretemp_0",sensor="temp1"}'
+        values: '85x35'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: NodeHwmonTemperatureHigh
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: NodeHwmonTemperatureHigh
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: acer-swift}
+            exp_annotations:
+              summary: "acer-swift has run above 92 °C for 10 minutes"
+              description: "acer-swift's hottest hwmon sensor has read 94 °C for 10 minutes. Run grep . /sys/class/hwmon/hwmon*/temp*_input there (millidegrees) and machinectl list for its running slots; on acer, drop the light slot pool4 if it keeps firing."
+              query: 'max by (node) (node_hwmon_temp_celsius{job="node-exporter",node="acer-swift"})'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#nodehwmontemperaturehigh"
+  # acer throttles 40/s for an hour, then 200/s; lenovo never throttles
+  - interval: 1m
+    input_series:
+      - series: 'node_cpu_core_throttles_total{job="node-exporter",node="acer-swift",core="0",package="0"}'
+        values: '0+2400x60 144000+12000x60'
+      - series: 'node_cpu_core_throttles_total{job="node-exporter",node="lenovo",core="0",package="0"}'
+        values: '0x120'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: NodeCpuThrottlingHigh
+        exp_alerts: []
+      - eval_time: 72m
+        alertname: NodeCpuThrottlingHigh
+        exp_alerts: []
+      - eval_time: 82m
+        alertname: NodeCpuThrottlingHigh
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: acer-swift}
+            exp_annotations:
+              summary: "acer-swift throttles its cores for heat well above its week"
+              description: "acer-swift's cores have throttled 200 times a second for 15 minutes, over twice its 7 day mean. Run grep . /sys/devices/system/cpu/cpu*/thermal_throttle/core_throttle_count and machinectl list there; https://grafana.sammasak.dev/d/hosts puts it beside the running slots."
+              query: 'sum by (node) (rate(node_cpu_core_throttles_total{job="node-exporter",node="acer-swift"}[5m]))'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#nodecputhrottlinghigh"
+  # lenovo's fan stopped while hot; msi with one header unplugged and one spinning; acer stands in for a sensor reading only the error value
+  - interval: 1m
+    input_series:
+      - series: 'node_hwmon_fan_rpm{job="node-exporter",node="lenovo",chip="platform_thinkpad_hwmon",sensor="fan1"}'
+        values: '0x20'
+      - series: 'node_hwmon_temp_celsius{job="node-exporter",node="lenovo",chip="platform_coretemp_0",sensor="temp1"}'
+        values: '50x5 85x15'
+      - series: 'node_hwmon_fan_rpm{job="node-exporter",node="msi-ms7758",chip="platform_nct6775_656",sensor="fan1"}'
+        values: '0x20'
+      - series: 'node_hwmon_fan_rpm{job="node-exporter",node="msi-ms7758",chip="platform_nct6775_656",sensor="fan2"}'
+        values: '1200x20'
+      - series: 'node_hwmon_temp_celsius{job="node-exporter",node="msi-ms7758",chip="platform_coretemp_0",sensor="temp1"}'
+        values: '85x20'
+      - series: 'node_hwmon_fan_rpm{job="node-exporter",node="acer-swift",chip="platform_thinkpad_hwmon",sensor="fan1"}'
+        values: '65535x20'
+      - series: 'node_hwmon_temp_celsius{job="node-exporter",node="acer-swift",chip="platform_coretemp_0",sensor="temp1"}'
+        values: '85x20'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: NodeFanStuck
+        exp_alerts: []
+      - eval_time: 13m
+        alertname: NodeFanStuck
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: lenovo}
+            exp_annotations:
+              summary: "lenovo's fan stands still while it is hot"
+              description: "Every fan sensor on lenovo has read 0 rpm for 5 minutes while its hottest sensor is above 80 °C. Run grep . /sys/class/hwmon/hwmon*/fan*_input there (on lenovo cat /proc/acpi/ibm/fan), then check the fan before more work lands on it."
+              query: 'node_hwmon_fan_rpm{job="node-exporter",node="lenovo"} < 65535'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#nodefanstuck"

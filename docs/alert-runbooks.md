@@ -76,6 +76,27 @@ the cause is fixed.
 Fires: black-pi's `cpu-thermal` zone reads 85 °C or more for 15 minutes.
 First: the Hosts dashboard's temperature panel; check the Pi's fan and airflow.
 
+## NodeHwmonTemperatureHigh
+
+Fires: a host's hottest hwmon sensor (`homelab:node:hwmon_temp_max_celsius`) above 92 °C for 10 minutes. msi through
+a gate reads about 102 °C against its 105 °C mark, so it can fire there during a long gate.
+First: the Hosts dashboard's heat row, temperature beside the running slots; `machinectl list` on the host.
+On acer with pool4 running: goals.md "Hosts and slots" says when to drop pool4.
+
+## NodeCpuThrottlingHigh
+
+Fires: a host's summed core throttle rate (`homelab:node:cpu_core_throttles:rate5m`) above twice its 7 day mean plus
+10/s for 15 minutes.
+First: `grep . /sys/devices/system/cpu/cpu*/thermal_throttle/core_throttle_count` and `machinectl list` on the
+host; the Hosts dashboard's throttle panel against its slot count.
+
+## NodeFanStuck
+
+Fires: every fan sensor of a host reads 0 rpm (65535, the thinkpad sensor's read error, left out) while its hottest
+sensor is above 80 °C, for 5 minutes. Only lenovo and msi expose a fan.
+First: `grep . /sys/class/hwmon/hwmon*/fan*_input` on the host (lenovo: `cat /proc/acpi/ibm/fan`); check the fan
+before work lands on it.
+
 ## GpuThermalThrottling
 
 Fires: the GPU reports hardware thermal slowdown for 10 minutes.
