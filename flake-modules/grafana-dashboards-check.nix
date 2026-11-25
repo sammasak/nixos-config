@@ -546,7 +546,11 @@ in
             # histogram's with its _bucket, _sum and _count
             rg --no-filename -o '# TYPE exec_pool_[a-z_]+ [a-z]+' ${../pkgs/exec-pool/src} \
               | awk '{ print $3 } $4 == "histogram" { print $3 "_bucket"; print $3 "_sum"; print $3 "_count" }' \
-              | sort -u > exec-pool.prom
+              > exec-pool.prom
+            # and the slot counters textfile::bump types from runner.rs's (name, help) pairs, with no TYPE literal
+            rg --no-filename -o '^ +"exec_pool_[a-z_]+_total",$' ${../pkgs/exec-pool/src/runner.rs} | tr -d ' ",' >> exec-pool.prom
+            sort -u -o exec-pool.prom exec-pool.prom
+            grep -qx exec_pool_memory_kills_total exec-pool.prom
             grep -qx exec_pool_queue_up exec-pool.prom
             # Authentik's names from the Python package and the Go server acer runs
             python3 -I ${../scripts/authentik-metric-names.py} ${acer.systemd.services.authentik-worker.environment.PYTHONPATH} \

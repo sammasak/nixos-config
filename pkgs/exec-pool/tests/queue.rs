@@ -3052,7 +3052,10 @@ fn a_one_shot_agent_task_is_summarised_with_its_model_and_a_none_task_is_not() {
     assert_eq!(v["agent"], "claude");
     assert_eq!(v["model"], "default", "no model named: the agent's own");
     assert_eq!(v["state"], "queued");
-    assert!(v["cost_usd"].is_null(), "no turn reported: unpriced, not free");
+    assert!(
+        v["cost_usd"].is_null(),
+        "no turn reported: unpriced, not free"
+    );
     assert!(all.iter().any(|v| v["model"] == "opus"), "{all:?}");
 }
 
@@ -3079,11 +3082,16 @@ fn reported_cost_sums_exactly_so_its_counter_never_drops() {
     // 0.1 + 0.2 in float8 reads 0.30000000000000004, and another order of a longer sum a bit less
     let m = owner.metrics().unwrap();
     assert!(
-        m.lines().any(|l| l.starts_with("exec_pool_session_cost_usd_total{host=\"msi-ms7758\"")
-            && l.ends_with(",agent=\"claude\"} 0.3")),
+        m.lines().any(
+            |l| l.starts_with("exec_pool_session_cost_usd_total{host=\"msi-ms7758\"")
+                && l.ends_with(",agent=\"claude\"} 0.3")
+        ),
         "{m}"
     );
-    assert_eq!(s.session_summaries(Some(&id), 20).unwrap()[0]["cost_usd"], 0.3);
+    assert_eq!(
+        s.session_summaries(Some(&id), 20).unwrap()[0]["cost_usd"],
+        0.3
+    );
 }
 
 #[test]
