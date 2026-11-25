@@ -25,7 +25,7 @@
     nix-index-database.url = "github:nix-community/nix-index-database";
     nix-index-database.inputs.nixpkgs.follows = "nixpkgs";
 
-    skills.url = "github:sammasak/skills";
+    skills.url = "git+ssh://git@github.com/sammasak/skills";
     skills.flake = false;
 
     factum.url = "git+ssh://git@github.com/sammasak/factum?rev=5bb7fa304db7d8ae7d422e8d6356bf06b90d3b41";

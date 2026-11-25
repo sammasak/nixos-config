@@ -498,15 +498,15 @@
       "locked": {
         "lastModified": 1795601039,
         "narHash": "sha256-2R5fQse9G86n5WQmLVt+oaP/3q1pTC7N5a/Xp4D/8HU=",
-        "owner": "sammasak",
-        "repo": "skills",
+        "ref": "refs/heads/main",
         "rev": "7264f06d37c372a9f80b6570e0c1cf69cbd41f03",
-        "type": "github"
+        "revCount": 472,
+        "type": "git",
+        "url": "ssh://git@github.com/sammasak/skills"
       },
       "original": {
-        "owner": "sammasak",
-        "repo": "skills",
-        "type": "github"
+        "type": "git",
+        "url": "ssh://git@github.com/sammasak/skills"
       }
     },
     "sops-nix": {

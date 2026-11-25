@@ -144,14 +144,25 @@ the whole task unit on the kill (DefaultOOMPolicy=stop). The task unit now runs 
 killed process dies and the agent sees its command fail. The exec helper reads the slot's `memory.events` `oom_kill`
 before and after each run and the kernel log's `task=` names for its cgroup: the result carries `oom_kills` and
 `oom_victims`, a failing turn with a kill parks as `turn_memory_kill` (counted in `exec_pool_session_turns_total` by
-host, stalled and backed off as an error), and its continue names what was killed (migration 23 lets a remote
-runner write that body; before it, the generic text). `exec_pool_memory_kills_total{slot}` per slot host, and
+host, stalled and backed off as an error), and its continue names what was killed (migration 23's `continue_after()`,
+so the runner still writes no message; a queue before it gets the generic text). `exec_pool_memory_kills_total{slot}` per slot host, and
 `ExecPoolSlotMemoryKills` fires at two kills on a node in 2 h with the `journalctl -k -g oom-kill` command. No
 per-slot MemoryMax or MemoryHigh: the slice's own comment records why (it killed or stalled builds the pool had room
 for). Also `ownRefsOnly` on for msi; acer's push filter journal (a push `passed`, one `refused`) was not readable
 from a slot: the coordinator glances at it before the msi deploy.
 Open: a kill that leaves the agent running is counted but not told to it beyond its command's exit; the slots still
 share one limit, so four heavy evaluations at once still kill one of them.
+
+**25 Nov, branch `pool/cli-6a8cf03c11ffa376`** (no deploy: the skills store path and every toplevel drvPath are
+unchanged): the skills input is `git+ssh` like the other six private inputs (devenv-platform, factum, herman,
+llm-gateway, nix-audit, rf-proto), so `just deploy` as lukas fetches a new skills pin with lukas's SSH key instead of
+the root-only nix access token (the 404 after #798). Same narHash, so the same store path. Chosen over a prefetch in
+the deploy recipe (more recipe code, still a github: lock) and a token group (wider secret access).
+`scripts/test-deploy-recipes.py` fails on any private input in flake.lock that is not git over ssh. The 4.6 GiB
+lenovo user.slice note above stays as written, not re-measured.
+Open: lenovo's root rebuild trigger (`modules/homelab/nixos-rebuild-trigger`) fetched a new skills pin with the
+token and now needs a GitHub SSH key for root, as it already did for the other private inputs; glance on lenovo:
+`sudo ssh -T git@github.com`.
 
 **Open, in pick-up order**
 
@@ -171,7 +182,8 @@ share one limit, so four heavy evaluations at once still kill one of them.
    root for a slot is listed in `docs/nspawn-workers.md` (Execution pool).
 7. `status` and `list` do not show priority.
 8. `HostBehindMain` needs 24 h; black-pi lacked new alert rules for some hours unseen.
-9. lenovo cannot push nixos-config (stale devenv gate) or fetch a new private skills pin as a user.
+9. lenovo cannot push nixos-config (stale devenv gate); a new private skills pin fetches as a user over git+ssh
+   once `pool/cli-6a8cf03c11ffa376` merges.
 10. Cost: about 45 USD of session cost on 24 Nov; cost per merged PR is in `exec-pool sessions` and the dashboard
     table once `pool/cli-8ce84f45f00fc734` deploys to acer; read it after a day.
 11. Store follow-ups in #754. Credential slice 3 (a slot pushes only `pool/<task id>` and `refs/pool-wip/<task id>`,
@@ -264,8 +276,8 @@ acknowledgement); after 624-l deploys to black-pi, read the live rule list and t
 | 625-a | Read-only check of the hook JSONL on lenovo, schema decision | done: comment on #625 | |
 | 625-1 | Collector, fixture tests, NixOS wiring (nav-metrics pattern) | merged, enabled on no host yet | #638 |
 | 625-2 | Shunt section in the agent-harness dashboard, stale and failing alerts, collector on lenovo | merged, live: collector on lenovo, rules on black-pi | #644 |
-| 625-pilot | On/off on the running system (no benchmark, owner 23 Nov) | merged, live: on for lenovo and acer's `pool1` (moved from `a1` by #759), off for acer's other slots; read a day on 25 Nov | #678, #679 |
-| 625-3 | Hook overhead: `shunt_hook_time_ms{hook}` with validate-bash as the off side's control, ms per Bash call on and off (dashboard panel), `ShuntHookOverhead` (over 250 ms per call, at least 50 calls, a starting bound) | branch `pool/cli-273036d46c7d3230`; needs lenovo and acer, rules on black-pi; set the bound from the first day's reading | |
+| 625-pilot | On/off on the running system (no benchmark, owner 23 Nov) | merged, live: on for lenovo and acer's `pool1` (moved from `a1` by #759), off for acer's other slots; read 25 Nov: hooks about 10 ms per Bash call, context kept out small (lenovo 4.5% of Bash output chars, 12k read tokens; pool1 none), cost per turn not comparable (pool1 had 1 turn). Split kept: re-read 2 Dec, at least 20 Claude turns per arm on `variant="default"`; if fewer again, Shunt on for every slot | #678, #679 |
+| 625-3 | Hook overhead: `shunt_hook_time_ms{hook}` with validate-bash as the off side's control, ms per Bash call on and off (dashboard panel), `ShuntHookOverhead` (over 100 ms per call, at least 50 calls, set from the 25 Nov reading) | live on lenovo and acer; the 100 ms bound needs black-pi | #804 |
 
 ### #646 execution pool (v0.1)
 
