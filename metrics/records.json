@@ -136,6 +136,21 @@
       "panel": false,
       "pending": "no writer yet: the age comes with one"
     },
+    "local-lane": {
+      "writer": "here",
+      "guest": true,
+      "panel": "pi-agents",
+      "fields": [
+        "model",
+        "repo",
+        "result",
+        "failed",
+        "attempts",
+        "lines",
+        "seconds",
+        "task"
+      ]
+    },
     "offload": {
       "writer": "outside",
       "guest": true,

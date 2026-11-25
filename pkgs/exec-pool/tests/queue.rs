@@ -239,12 +239,12 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
         .query_one("SELECT max(version) FROM schema_migrations", &[])
         .unwrap()
         .get(0);
-    assert_eq!(version, 23);
+    assert_eq!(version, 24);
     submit(&mut s, &task("t-1", 1));
     // a newer binary's additive migration keeps the floor: this one still serves the database, as after a rollback
     pg.sql()
         .execute(
-            "INSERT INTO schema_migrations (version, floor) VALUES (24, 23)",
+            "INSERT INTO schema_migrations (version, floor) VALUES (25, 24)",
             &[],
         )
         .unwrap();
@@ -252,17 +252,17 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
     assert!(s.claim(&slot("s0"), 60).unwrap().is_some());
     // one this binary would misread, or one that names no floor, is refused
     pg.sql()
-        .execute("INSERT INTO schema_migrations (version) VALUES (25)", &[])
+        .execute("INSERT INTO schema_migrations (version) VALUES (26)", &[])
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(25))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(26))));
     pg.sql()
         .execute(
-            "UPDATE schema_migrations SET floor = 25 WHERE version = 25",
+            "UPDATE schema_migrations SET floor = 26 WHERE version = 26",
             &[],
         )
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(25))));
-    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(25))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(26))));
+    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(26))));
 }
 
 #[test]
@@ -3008,6 +3008,8 @@ fn a_session_summary_splits_its_time_by_state_and_park_reason_and_sums_its_usage
     assert_eq!(v["cache_read_tokens"], 3003);
     assert_eq!(v["cache_creation_tokens"], 404);
     assert_eq!(v["cost_usd"], 0.75);
+    assert_eq!(v["model"], "opus");
+    assert_eq!(v["session"], true);
     let secs = |k: &str| v[k].as_f64().unwrap_or_else(|| panic!("{k}: {v}"));
     // a lease is leased then running, twice
     assert!((secs("running_seconds") - 4.0).abs() < 1e-9, "{v}");
@@ -3027,6 +3029,69 @@ fn a_session_summary_splits_its_time_by_state_and_park_reason_and_sums_its_usage
     )
     .unwrap();
     assert!(runner.session_summaries(None, 20).is_err());
+}
+
+#[test]
+fn a_one_shot_agent_task_is_summarised_with_its_model_and_a_none_task_is_not() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    submit(&mut owner, &task("t-none", 1));
+    let (mut s, _) = submitter(&pg);
+    let mut bare = agent_task();
+    bare["idempotency_key"] = json!("cli:2");
+    bare["command"]["argv"] = json!([ARGV_MARKER]);
+    let (id, _) = s
+        .submit_task(&serde_json::from_value(bare).unwrap(), 0)
+        .unwrap();
+    let all = s.session_summaries(None, 20).unwrap();
+    assert_eq!(all.len(), 2, "{all:?}");
+    let shown = serde_json::to_string(&all).unwrap();
+    assert!(!shown.contains(ARGV_MARKER), "{shown}");
+    let v = &s.session_summaries(Some(&id), 20).unwrap()[0];
+    assert_eq!(v["session"], false);
+    assert_eq!(v["agent"], "claude");
+    assert_eq!(v["model"], "default", "no model named: the agent's own");
+    assert_eq!(v["state"], "queued");
+    assert!(
+        v["cost_usd"].is_null(),
+        "no turn reported: unpriced, not free"
+    );
+    assert!(all.iter().any(|v| v["model"] == "opus"), "{all:?}");
+}
+
+#[test]
+fn reported_cost_sums_exactly_so_its_counter_never_drops() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let (a, epoch, _) = started(&mut owner);
+    let cost = |c: f64| {
+        let mut p = park(ParkReason::TurnEnd, 0);
+        p.result.usage = Some(Usage {
+            cost_usd: Some(c),
+            ..Usage::default()
+        });
+        p
+    };
+    owner.park(&a, epoch, &cost(0.1)).unwrap();
+    s.send(&id, "next").unwrap();
+    let (_, epoch, turn) = started(&mut owner);
+    let mut second = cost(0.2);
+    second.upto = turn.upto;
+    owner.park(&a, epoch, &second).unwrap();
+    // 0.1 + 0.2 in float8 reads 0.30000000000000004, and another order of a longer sum a bit less
+    let m = owner.metrics().unwrap();
+    assert!(
+        m.lines().any(
+            |l| l.starts_with("exec_pool_session_cost_usd_total{host=\"msi-ms7758\"")
+                && l.ends_with(",agent=\"claude\"} 0.3")
+        ),
+        "{m}"
+    );
+    assert_eq!(
+        s.session_summaries(Some(&id), 20).unwrap()[0]["cost_usd"],
+        0.3
+    );
 }
 
 #[test]

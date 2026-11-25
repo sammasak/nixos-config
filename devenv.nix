@@ -760,6 +760,18 @@ let
         ${pkgs.python3}/bin/python -I scripts/test-llm-bench.py
       '';
 
+  # #807's task gate on fixtures: one good and the bad results; no Nix, no model, no pool
+  localLaneTest =
+    gate "local-lane-test"
+      (with pkgs; [
+        python3
+        git
+        coreutils
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-local-lane.py
+      '';
+
   dualBootTest =
     gate "dual-boot-test"
       (with pkgs; [
@@ -934,6 +946,7 @@ let
     ollamaPullPinnedTest
     ollamaGpuTest
     llmBenchTest
+    localLaneTest
     dualBootTest
     knownHostsTest
     adguardDnsTest
@@ -1565,6 +1578,8 @@ in
       task "A CUDA Ollama build without hardware.graphics is rejected (it would run on the CPU)" ollamaGpuTest;
     "nixos:llm-bench-test" =
       task "llm-bench (#493): #492's G1 bench and the capacity run against the fake Ollama, the G1 import and rule, quantile floors, the MSI import, no prompt in an aggregate" llmBenchTest;
+    "nixos:local-lane-test" =
+      task "The local-model lane's task gate (#807): a good result passes; a weakened check, a file out of scope, a check still failing, a long diff and a reviewer's refusal fail" localLaneTest;
     "nixos:dual-boot-test" =
       task "msi and asus GRUB from windows-dual-boot.nix: the Windows entry chainloads bootmgfw.efi, the ESP is a vfat mount, the seeded ESP breaks fail" dualBootTest;
     "nixos:coordinator-test" =
