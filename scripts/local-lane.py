@@ -15,6 +15,7 @@ prepared commit is the base itself, the gate runs its own copy, and Pi gets the 
 item 2 holds by construction. Either way it must fail on the prepared commit. A `dir/` scope covers what is under it. The reviewer reads a prompt on stdin and must print exactly ok, unsafe or "does not fix the problem" on its
 first line; anything else fails closed. The check runs under `sh -c` in a detached worktree at each commit."""
 import argparse
+import hashlib
 import json
 import os
 import pathlib
@@ -141,7 +142,7 @@ def pool(*args, stdin=None):
 
 
 def record(fields):
-    exe = shutil.which("platform-record") or str(
+    exe = os.environ.get("PLATFORM_RECORD") or shutil.which("platform-record") or str(
         pathlib.Path(__file__).resolve().parents[1] / "pkgs/platform-record/platform_record.py")
     subprocess.run([exe, "local-lane", *(f"{k}={v}" for k, v in fields.items())], check=False)
 
@@ -162,10 +163,11 @@ def cmd_run(a):
                  else OUTSIDE.format(source=pathlib.Path(a.check_script).read_text()))
         prompt = PROMPT.format(task=a.task, scope=", ".join(a.scope), guard=guard, lines=MAX_LINES,
                                check=a.check if a.check_file else "python3 -I /tmp/lane-check.py")
+        key = hashlib.sha256(json.dumps([a.prepared, a.check, a.scope, a.task]).encode()).hexdigest()[:16]
         verdict, task = {}, ""
         for attempt in (1, 2):
             task = pool("submit", "--agent", "pi", "--model", a.model, "--repo", url, "--rev", a.prepared,
-                        "--workdir", ".", "--key", f"{a.key or 'local-lane-' + a.prepared[:12]}-{a.model}-{attempt}",
+                        "--workdir", ".", "--key", f"{a.key or 'local-lane-' + key}-{a.model}-{attempt}",
                         "--prompt-file", "-", stdin=prompt).split()[-1]
             subprocess.run(["exec-pool", "wait", task, "--timeout", str(a.timeout)], capture_output=True)
             fetched = subprocess.run(["git", "-C", a.repo, "fetch", "--quiet", "origin", f"pool/{task}"],
