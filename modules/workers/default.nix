@@ -802,23 +802,27 @@ in
           port = 4103;
           missing = "sam.workers: the codex route loads no proxy credential.";
           guest.env.CODEX_API_KEY = "held-by-the-host";
-          # mkBefore: top-level keys, so ahead of the file's first table. The web search tool (/v1/alpha/search) has
-          # no route on the ChatGPT backend, and analytics would go to chatgpt.com unsigned.
-          guest.config.home-manager.users.${user}.home.file.".codex/config.toml".text = lib.mkMerge [
-            (lib.mkBefore (
-              ''
-                openai_base_url = "http://127.0.0.1:${toString dev.egress.openai.port}/v1"
-              ''
-              + ''
-                web_search = "disabled"
-              ''
-            ))
-            (lib.mkAfter ''
+          # /etc, not ~/.codex: a pool attempt runs Codex in its own, empty HOME. A custom provider, as the built-in
+          # openai one speaks WebSocket to api.openai.com whatever openai_base_url says; no retries, so a 429 is asked
+          # once. The web search tool (/v1/alpha/search) has no route on the ChatGPT backend, and analytics would go
+          # to chatgpt.com unsigned.
+          guest.config.environment.etc."codex/config.toml".text = ''
+            model_provider = "host-proxy"
+            web_search = "disabled"
 
-              [analytics]
-              enabled = false
-            '')
-          ];
+            [model_providers.host-proxy]
+            name = "OpenAI through the host proxy"
+            base_url = "http://127.0.0.1:${toString dev.egress.openai.port}/v1"
+            wire_api = "responses"
+            env_key = "CODEX_API_KEY"
+            http_headers = { version = "${pkgs.codex.version}" }
+            supports_websockets = false
+            request_max_retries = 0
+            stream_max_retries = 0
+
+            [analytics]
+            enabled = false
+          '';
         };
         # Pi's own route: the gateway holds the provider keys, the proxy the host's project key.
         llm-gateway = {
