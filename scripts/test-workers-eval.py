@@ -475,8 +475,8 @@ def check_push_filter(acer, msi):
     slots = f.get("slots", {})
     check(slots and all(v == f"/run/exec-pool-runner/{n}/manifest.json" for n, v in slots.items())
           and f.get("User") == acer.get("egressUser") and f.get("PrivateNetwork") is True and f.get("RestrictAddressFamilies") == ["AF_UNIX"]
-          and msi.get("filtered") is False,
-          f"acer's filter reads each slot's runner manifest, as the proxy's user with no network; msi runs none ({f})")
+          and msi.get("filtered") is True,
+          f"acer's filter reads each slot's runner manifest, as the proxy's user with no network; msi runs one too ({f})")
     sites = {b.split("\n", 2)[1].strip(): b for b in acer.get("caddy", "").split("http:// {")[1:]}
     for n in slots:
         site = sites.get(f"bind unix//run/dev-env-egress/{n}/github.sock", "")

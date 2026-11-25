@@ -216,6 +216,7 @@ benchmark requirements: #776; epic: #491).
 | # | Topic | Pain now | Next small change |
 |---|-------|----------|-------------------|
 | 1 | Pool platform | the open findings above | a pool session for the top open finding |
+| 1b | Local inference ([#620](https://github.com/sammasak/nixos-config/issues/620)) | Pi tasks in acer slots failed in 5 s: the attempt's HOME has no Pi config; 0 Pi tasks succeeded | branch `pool/cli-1a738e569d50a1b3` sets `PI_CODING_AGENT_DIR` for slots: merge, deploy acer-swift, run the #599 canary and read `exec_pool_attempts{agent="pi",state="succeeded"}`. msi gets Pi only after the owner adds it as a recipient of `claude/*.yaml` and to the `gateway-api` listener |
 | 2 | Deploy | asus behind main | asus in its power window |
 | 3 | Alerts | 624-l names a command in every kept alert and cuts 11 rules that guard nothing | merge 624-l, deploy black-pi, read the next 14-day firing list |
 | 4 | Gates | scheduled gate red since 24 Nov on `checks.x86_64-linux.execution-pool-vm`, which failed to evaluate (slots' repos need `sam.workers.ghHostsFile`, the VM set none); fixed in branch `pool/cli-38a64f8b5b1d81f5` | merge, deploy acer (scheduled gate) and black-pi (rules), read the next scheduled gate result |
