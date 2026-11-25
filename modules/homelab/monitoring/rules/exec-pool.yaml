@@ -194,3 +194,22 @@ groups:
           description: "Over the last day, Claude turns on {{ $labels.host }}'s slots with autoCompactWindow {{ $labels.variant }} cost {{ $value | printf \"%.2f\" }} USD each, over 1.5 times the default slots' there (Shunt off on both, at least 10 turns a side), for an hour. Read the comparison table in the Agent harnesses dashboard (Sessions row), then set that slot's autoCompactWindow back to null in the host's guest module and deploy (runbook)."
           query: 'host_variant:exec_pool_session_cost_usd:increase1d{host="{{ $labels.host }}",shunt="off"} / host_variant:exec_pool_session_turns:increase1d{host="{{ $labels.host }}",shunt="off"}'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolcompactionwindowcostlier"
+
+      - alert: CodexLoginRefreshFailed
+        # codex-egress-refresh (modules/workers/codex-auth.nix) never retries a failed refresh: the refresh token may be
+        # spent, and a reused one fails for good. The expiry arm catches a timer that stopped running.
+        expr: |
+          max by (node) (codex_egress_refresh_failed{job="node-exporter"} == 1)
+          or max by (node) (
+            (codex_egress_access_token_expiry_timestamp_seconds{job="node-exporter"} - time() < 3600)
+            and on (node) codex_egress_login_present{job="node-exporter"} == 1
+          )
+        for: 5m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "The pool's Codex login on {{ $labels.node }} failed to refresh"
+          description: 'The owner''s ChatGPT login the egress proxy signs the slots'' Codex calls with on {{ $labels.node }} failed or timed out on its refresh, or its access token expires within the hour, and nothing retries it: Codex tasks there will fail with 401. Sign in again on {{ $labels.node }} as lukas, the login''s one writer: codex login --device-auth, which rewrites /home/lukas/.codex/auth.json (runbook).'
+          query: 'codex_egress_refresh_failed{job="node-exporter",node="{{ $labels.node }}"} or codex_egress_access_token_expiry_timestamp_seconds{job="node-exporter",node="{{ $labels.node }}"} - time()'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#codexloginrefreshfailed"

@@ -22,6 +22,25 @@ groups:
             )
           )
 
+  - name: egress.codex
+    interval: 1m
+    rules:
+      # The slots' Codex calls the egress proxy answered with no success, by host and status: 429 is the ChatGPT
+      # plan's usage limit (or a rate limit), passed to the slot as it is and never retried. The journal collector
+      # drops 2xx/3xx access lines, so successes are exec_pool_attempts'. Each minute is counted once, as above.
+      - record: host_status:codex_egress_refusals:count1m
+        expr: |
+          sum by (host, status) (
+            count_over_time(
+              {job="host-journal", unit="dev-env-egress.service"}
+                |= "http.log.access."
+                | json logger="logger", status="status"
+                | logger=~"http[.]log[.]access[.](openai-.+|codex-fleet)"
+                | status=~"[45].."
+              [1m] offset 1m
+            )
+          )
+
   - name: journal.alerts
     rules:
       # systemd's line when a unit's cgroup sees OOM kills, at its own MemoryMax or for the whole host (several kills

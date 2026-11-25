@@ -442,6 +442,96 @@ let
       };
     };
 
+    # acer's slots' Codex on the owner's own login (modules/workers/codex-auth.nix): the proxy's route, the helpers
+    # the test runs against stubs, and every place a slot's environment could name the login
+    codex-egress =
+      let
+        svc = acer.systemd.services;
+        slots = lib.filter (lib.hasPrefix "pool") (builtins.attrNames acer.containers);
+      in
+      {
+        caddyfile = lib.last (lib.splitString " " svc.dev-env-egress.serviceConfig.ExecStart);
+        egress = { inherit (svc.dev-env-egress.serviceConfig) User LoadCredential; };
+        login = {
+          auth = acer.sam.workers.codexAuthFile;
+          inherit (acer.sam.workers.codexEgress) tokens;
+          owner = acer.services.devEnvironments.user;
+          ownerHome = acer.users.users.${acer.services.devEnvironments.user}.home;
+        };
+        derive = svc.codex-egress-token.serviceConfig.ExecStart;
+        path = acer.systemd.paths.codex-egress-token.pathConfig;
+        refresh = {
+          inherit (svc.codex-egress-refresh) environment onSuccess;
+          inherit (svc.codex-egress-refresh.serviceConfig) ExecStart ReadWritePaths;
+          timer = acer.systemd.timers.codex-egress-refresh.timerConfig;
+        };
+        runner = {
+          inherit (svc.exec-pool-runner-pool1.serviceConfig) ExecStart;
+          inherit (svc.exec-pool-runner-pool1.environment) EXEC_POOL_SLOT;
+        };
+        inherit (acer.homelab.execPool) agents;
+        slots = lib.genAttrs slots (
+          n:
+          let
+            g = acer.containers.${n}.config;
+          in
+          {
+            binds = acer.containers.${n}.bindMounts;
+            unit = svc."container@${n}".environment;
+            inherit (g.environment) variables sessionVariables;
+            services = lib.mapAttrs (_: u: u.environment) g.systemd.services;
+            codexConfig = (hm g).home.file.".codex/config.toml".text;
+          }
+        );
+        exec = svc."exec-pool-exec@".environment;
+        # turned on: acer serves the listener, msi's slots offer codex
+        fleet =
+          let
+            a = extend "acer-swift" [ { sam.workers.codexEgress.serveFleet = true; } ];
+            m = extend "msi-ms7758" [ { homelab.execPool.agents = [ "codex" ]; } ];
+            caddy = c: lib.last (lib.splitString " " c.systemd.services.dev-env-egress.serviceConfig.ExecStart);
+          in
+          {
+            listener = { inherit (m.sam.fleet.listeners.codex-egress) host port url; };
+            acer = caddy a;
+            msi = caddy m;
+            msiAddress = a.sam.fleet.hosts.msi-ms7758.address;
+            msiCreds = m.systemd.services.dev-env-egress.serviceConfig.LoadCredential;
+            failing = {
+              acer = failing a;
+              msi = failing m;
+            };
+          };
+        offCaddy = lib.last (
+          lib.splitString " " msi.systemd.services.dev-env-egress.serviceConfig.ExecStart
+        );
+        failing = {
+          acer = failing acer;
+          noLogin = failing (
+            extend "acer-swift" [
+              (
+                { lib, ... }:
+                {
+                  sam.workers.codexAuthFile = lib.mkForce null;
+                  homelab.execPool.agents = lib.mkForce [ "codex" ];
+                }
+              )
+            ]
+          );
+          serveWithout = failing (
+            extend "acer-swift" [
+              (
+                { lib, ... }:
+                {
+                  sam.workers.codexAuthFile = lib.mkForce null;
+                  sam.workers.codexEgress.serveFleet = true;
+                }
+              )
+            ]
+          );
+        };
+      };
+
     # acer's Caddyfile as deployed (realised, so caddy fmt has run) and the Caddy that runs it
     caddy-edge = {
       caddy = lib.getExe acer.services.caddy.package;
