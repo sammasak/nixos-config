@@ -26,7 +26,7 @@ devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks,
 #               under the same gate and system generation, or it plus such docs. Other changed paths map to no
 #               single check cheaply (the tests read the hosts through the probe, a full evaluation), so none run.
 #               nixos:qa runs scripts/test-qa-push.py on the hook's own text, without Nix.
-#   The full gate: `scheduled-gate.timer` on acer (modules/homelab/scheduled-gate.nix, 4 times a day) runs
+#   The full gate: `scheduled-gate.timer` on acer (modules/homelab/scheduled-gate.nix, twice a day) runs
 #               nixos:qa on origin/main in a fresh worktree when main has moved, mode=scheduled, under the heavy
 #               lock; ScheduledGateRed and ScheduledGateOverdue report it (docs/shipping.md#the-scheduled-full-gate).
 #               For a risky change before merging: `just full-gate [REF]` (a clean worktree at REF, nixos:qa).
@@ -325,6 +325,8 @@ either side is only reported.
 - **Unfree is opt-in**: `nixpkgs.config.allowUnfree` is `false`. Adding an unfree package means adding its name to `allowUnfreePredicate` in `core/system.nix` (antigravity-cli, claude-code, open-webui, unrar, and on asus the NVIDIA driver and the CUDA runtime ollama-cuda needs); otherwise eval fails and names it. Redistributable firmware is unaffected (separate nixpkgs knob).
 - **Workers are not trusted-users**: `modules/roles/homelab-agent.nix` and `rf-lab.nix` force `nix.settings.trusted-users = [ "root" ]`. Deploys are push-from-lenovo; lenovo itself keeps `root` + `lukas` from `core/users.nix`.
 - **stateVersion**: Set to `25.11` in `core/system.nix`.
+- **Check reporting**: every session reply states the minutes of each check it ran and what any failure caught; an
+  escape gets a row in goals.md's Check tuning section and a narrow check, not a longer gate.
 
 ## Adding a New Host
 
