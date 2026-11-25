@@ -162,7 +162,7 @@ pub fn detached(procs: &[Proc]) -> bool {
     };
     let agent: Vec<u32> = procs
         .iter()
-        .filter(|p| p.pid == main.pid || p.parent == main.pid)
+        .filter(|p| [p.pid, p.parent].contains(&main.pid))
         .map(|p| p.session)
         .collect();
     procs
