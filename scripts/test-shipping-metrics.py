@@ -193,11 +193,11 @@ def step_rec(step, head, gate="nixos-qa"):
 def check_rec(check, head):
     return rec(f"gate=nixos-qa step=nixos-flake-check check={check} owner=msi-ms7758 seconds=9 result=fail head={head} drv=/nix/store/x.drv")
 DASH = "checks.x86_64-linux.grafana-dashboards"
-check(sm.step_failures([step_rec("alloy-otlp-test", H1), step_rec("alloy-otlp-test", H1)]) == {("alloy-otlp-test", ""): 1},
+check(sm.step_failures([step_rec("alloy-otlp-test", H1), step_rec("alloy-otlp-test", H1)]) == {("alloy-otlp-test", "step"): 1},
       "seeded: a re-run on one head counts once")
 check(sm.step_failures([check_rec(DASH, H1), step_rec("nixos-flake-check", H1)]) == {("nixos-flake-check", DASH): 1},
       "seeded: the flake check's own record and its failing check's on one head count once, under the check")
-check(sm.step_failures([step_rec("nixos-flake-check", H2)]) == {("nixos-flake-check", ""): 1},
+check(sm.step_failures([step_rec("nixos-flake-check", H2)]) == {("nixos-flake-check", "step"): 1},
       "a flake check that failed with no inner check record (an evaluation error) counts at the step")
 check(sm.step_failures([step_rec("seventh-host-test", H1, gate="on-demand"), step_rec("seventh-host-test", H2, gate="on-demand")]) == {},
       "seeded: an on-demand check's failures are not the push gate's")
@@ -208,12 +208,12 @@ check(sm.step_failures([check_rec(DASH, H1), check_rec("checks.x86_64-linux.depl
                         check_rec("checks.x86_64-linux.vm-test", H3)]) == {("nixos-flake-check", DASH): 1,
       ("nixos-flake-check", "checks.x86_64-linux.deploy-activate-asus-b460m"): 1, ("nixos-flake-check", "checks.x86_64-linux.vm-test"): 1},
       "three different checks on three heads are three units at 1, not the umbrella at 3")
-check(sm.step_failures([rec("gate=nixos-qa step=lint result=fail"), rec("gate=nixos-qa step=lint result=fail")]) == {("lint", ""): 2},
+check(sm.step_failures([rec("gate=nixos-qa step=lint result=fail"), rec("gate=nixos-qa step=lint result=fail")]) == {("lint", "step"): 2},
       "a record with no head counts on its own")
 check(sm.step_failures([rec("gate=nixos-qa step=lint result=fail sha=none"), rec("gate=nixos-qa step=lint result=fail sha=none"),
-                        rec("gate=nixos-qa step=lint result=fail head=none")]) == {("lint", ""): 3},
+                        rec("gate=nixos-qa step=lint result=fail head=none")]) == {("lint", "step"): 3},
       "seeded: head none (NIXOS_QA_HEAD's fallback outside git) is no head: three such records count 3, not 1")
-check(sm.step_failures([check_rec(DASH, "none"), step_rec("nixos-flake-check", "none")]) == {("nixos-flake-check", DASH): 1, ("nixos-flake-check", ""): 1},
+check(sm.step_failures([check_rec(DASH, "none"), step_rec("nixos-flake-check", "none")]) == {("nixos-flake-check", DASH): 1, ("nixos-flake-check", "step"): 1},
       "seeded: an umbrella record with head none is not matched to a check record with head none")
 check(sm.step_last_failures([(30, check_rec(DASH, H1)[1]), (20, step_rec("nixos-flake-check", H2)[1]), (10, check_rec(DASH, H2)[1])])
       == {("nixos-flake-check", DASH): 30},
@@ -267,10 +267,10 @@ with tempfile.TemporaryDirectory() as tmp:
     check(m.get('shipping_gate_seconds{host="lenovo",quantile="0.5"}') == 109
           and m.get(f'shipping_gate_seconds{{host="{GUEST}",quantile="0.5"}}') == 109,
           "each host's median is its own gates' alone")
-    check(m.get('shipping_gate_step_failures{check="",step="lint",window="7d"}') == 1
+    check(m.get('shipping_gate_step_failures{check="step",step="lint",window="7d"}') == 1
           and not any(k.startswith("shipping_gate_step_failures") and 'step="lint"' not in k for k in m),
-          "a failed push-gate step from Loki is written with an empty check label")
-    check(abs(m.get('shipping_gate_step_last_failure_timestamp_seconds{check="",step="lint"}', 0) - NOW) < 1
+          "a failed push-gate step from Loki is written with check=\"step\", never an empty check")
+    check(abs(m.get('shipping_gate_step_last_failure_timestamp_seconds{check="step",step="lint"}', 0) - NOW) < 1
           and sum(k.startswith("shipping_gate_step_last_failure") for k in m) == 1,
           "the step's newest failure is written beside its count, with the same labels")
     check(m.get('shipping_gate_runs_counted{host="unknown"}') == 1
