@@ -2745,7 +2745,10 @@ impl MemoryWatch {
             return;
         }
         result.oom_kills = Some(n);
-        let since = since.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        let since = since
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
         let kmsg = Command::new("journalctl")
             .args([
                 "-k",
