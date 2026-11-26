@@ -319,9 +319,10 @@ groups:
       # hides StoreUploadStuck. 1800 s is three missed 10-minute retries; with the 30m for, a transfer may run an hour.
       # Absent: /run is tmpfs, so after a boot no try has written it; past 30 minutes of uptime, the same grace as a
       # stale file, so a long first send is not this. A sender is a node with store-upload.path loaded: the systemd
-      # collector serves it from boot, with no /var and no try, however long the host was off (black-pi keeps its
-      # failed series). That also drops acer, whose retain job writes the same file hourly from store-upload-retain;
-      # a stalled retain is acer's failed unit, not an upload stopping.
+      # collector serves it from boot, with no /var and no try, however long the host was off (the scrape keeps its
+      # state="failed" series: modules/homelab/monitoring/prometheus.nix). A switch that removes store-upload unloads
+      # it, so the file left in /run does not fire. That also drops acer, whose retain job writes the same file hourly
+      # from store-upload-retain; a stalled retain is acer's failed unit, not an upload stopping.
       - alert: StoreUploadStale
         expr: |
           (
