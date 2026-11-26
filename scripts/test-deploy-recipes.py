@@ -32,7 +32,11 @@ case "$*" in
   *hostname*) printf target ;;
   *diff-closures*) exit "${DIFF_RC:-0}" ;;
 esac""",
-    "bin/ssh": 'echo "ssh $*" >> "$LOG"; shift 3; exec bash -c "$*"',
+    # the target has exec-pool-drain only as the pool fixture, whatever this host's PATH holds
+    "bin/ssh": """echo "ssh $*" >> "$LOG"; shift 3
+[ "$*" != "command -v exec-pool-drain" ] || [ -x "$FIX/bin/exec-pool-drain" ] || exit 1
+exec bash -c "$*"
+""",
     "bin/sudo": 'echo "sudo $*" >> "$LOG"; exec "$@"',
     # a clean tree on origin/main
     "bin/git": 'case $1 in rev-parse) echo abc123 ;; esac',
