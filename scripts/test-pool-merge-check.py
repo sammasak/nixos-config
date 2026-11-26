@@ -9,7 +9,8 @@ push hook's evaluation takes, and a build compiles under the heavy one alone; a 
 apart from its run (seeded: a held light lock). A slot's nix wrapper, from the module's text with nix and the record
 stubbed: build --expr, --file and flake attributes evaluate under light and build outside it, nix-build instantiates
 under light and builds outside it, and flake check runs under light; the command never inherits the lock, and each hold
-is one lock record of its wait apart from its hold (seeded: a held light lock). A slot's cargo has no lane and
+is one lock record of its wait apart from its hold, in the spool the host ships whatever the caller's HOME (seeded: a
+held light lock). A slot's cargo has no lane and
 CARGO_BUILD_JOBS from its reserve."""
 
 import importlib.util
@@ -167,7 +168,7 @@ def lane(name: str, real: str, d: pathlib.Path) -> pathlib.Path:
     check(head in src, f"the module has a {name} lane")
     body = src.split(head, 1)[1].split("\n            '')\n", 1)[0] if head in src else ""
     text = template.replace("${text}", body).replace("${real}", "${nix}")
-    for k, v in {"${pkgs.util-linux}/bin/flock": "flock", "${lib.getExe record}": f"{d}/stub/record", "/run/work-locks/light-work.lock": f"{d}/light", "/run/work-locks/scheduled-gate.lock": f"{d}/gate",
+    for k, v in {"${pkgs.util-linux}/bin/flock": "flock", "${lib.getExe record}": f"{d}/stub/record", "${spool}": f"{d}/spool", "/run/work-locks/light-work.lock": f"{d}/light", "/run/work-locks/scheduled-gate.lock": f"{d}/gate",
                  "${config.nix.package}/bin/nix-instantiate": f"{d}/stub/nix-instantiate",
                  "${config.nix.package}/bin/nix-build": f"{d}/stub/nix-build", "${pkgs.coreutils}/bin/": "", "${pkgs.bash}/bin/bash": "bash",
                  "${nix}": f"{d}/stub/nix", "${name}": name, "''$": "$"}.items():
@@ -206,13 +207,16 @@ with tempfile.TemporaryDirectory() as tmp:
         '[ "$1" = --add-root ] || exit 0\nln -s /nix/store/x.drv "$2"; ln -s /nix/store/y.drv "$2-2"; echo "$2"; echo "$2-2!bin"\n')
     (d / "stub/nix-build").write_text(f'#!/usr/bin/env bash\necho "nix-build $* $({d}/stub/state)" >>{d}/log\n'
                                       'echo /nix/store/x-out\nexit "${NB_RC:-0}"\n')
-    (d / "stub/record").write_text(f'#!/usr/bin/env bash\necho "$PLATFORM_RECORD_SHIPPER $*" >>{d}/records\n')
+    # the spool the host ships, whatever HOME the caller has
+    (d / "stub/record").write_text(f'#!/usr/bin/env bash\n[ "$PLATFORM_RECORD_SPOOL" = {d}/spool ] || exit 0\n'
+                                   f'echo "$PLATFORM_RECORD_SHIPPER $*" >>{d}/records\n')
     for f in ("state", "nix", "nix-instantiate", "nix-build", "record"):
         (d / "stub" / f).chmod(0o755)
     wrappers = {"nix": lane("nix", "nix", d), "nix-instantiate": lane("nix-instantiate", '"${config.nix.package}/bin/nix-instantiate"', d),
                 "nix-build": lane("nix-build", '"${config.nix.package}/bin/nix-build"', d)}
     (d / "tmp").mkdir()
-    env = {k: v for k, v in os.environ.items() if k != "WORK_LOCKS_HELD"} | {"TMPDIR": str(d / "tmp")}
+    # a runner step's HOME is its attempt's, not the guest user's
+    env = {k: v for k, v in os.environ.items() if k != "WORK_LOCKS_HELD"} | {"TMPDIR": str(d / "tmp"), "HOME": str(d / "tmp")}
 
     def runs(*argv: str, exe: str = "nix", **extra: str) -> list[str]:
         (d / "log").write_text("")
