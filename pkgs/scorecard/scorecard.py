@@ -130,6 +130,19 @@ def input_repo(lock: Any, name: str) -> str:
     return str(m.group(1))
 
 
+# what precedes a quoted name that makes it a string-keyed attribute access: `pkgs."x"`, `pkgs.${"x"}`, `pkgs ? "x"`,
+# `getAttr "x"`, `hasAttr "x"`, or a path list handed to an attr function (`attrByPath [ "x" ]`)
+KEYED_ACCESS = re.compile(
+    "(?:" + r"\.\s*(?:\$\{\s*)?|\$\{\s*|\?\s*|\b\w*[Aa]ttr\w*\s+|\b\w*(?:Attr|Path)\w*\s*\[[^\]]*" + ")$")
+
+
+def bare_string(text: str, m: re.Match[str]) -> bool:
+    """The mention is a whole string literal that is not a string-keyed attribute access: a repository name in a list
+    is a non-use, `pkgs."x"` and `getAttr "x" pkgs` are a use the rule cannot count, so they stay unknown."""
+    return (text[m.start() - 1:m.start()] == '"' and text[m.end():m.end() + 1] == '"'
+            and not KEYED_ACCESS.search(text[:m.start() - 1]))
+
+
 def registry_coverage(root: pathlib.Path) -> tuple[float, str]:
     """`registry-apps`: of the apps modules/homelab runs, how many apps/registry.json delivers. An app is a package
     flake-modules/overlays.nix builds from a pinned source repository (a flake input or a registry pin) and a module
@@ -158,7 +171,9 @@ def registry_coverage(root: pathlib.Path) -> tuple[float, str]:
             run = re.compile(rf'(?<![\w-])pkgs(?:\.{a}|\s+"{a}")(?![\w-])')
             known = re.compile(rf'(?<![\w-])(?:pkgs(?:\.{a}|\s+"{a}")|homelab\.{a})(?![\w-])')
             for path, text in modules.items():
-                if len(re.findall(rf"(?<![\w-]){a}(?![\w-])", text)) != len(known.findall(text)):
+                spans = [m.span() for m in known.finditer(text)]
+                if any(not (any(s <= m.start() < e for s, e in spans) or bare_string(text, m))
+                       for m in re.finditer(rf"(?<![\w-]){a}(?![\w-])", text)):
                     raise QueryFailed(f"{path}: {attr} is mentioned in a form other than pkgs.{attr}, "
                                       f'mkPackageOption pkgs "{attr}" or homelab.{attr}')
             if not any(run.search(text) for text in modules.values()):

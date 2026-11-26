@@ -264,6 +264,25 @@ odd = registry_apps(new_app("src = fetchFromGitHub { owner = \"x\"; repo = \"y\"
 check(odd[1].startswith("unknown: flake-modules/overlays.nix: newApp runs under modules/homelab, its src neither"),
       f"an app source the rule cannot read is unknown, not skipped ({odd})")
 
+# a bare quoted name is a non-use (exec-pool-options.nix's repos default holds "factum"); a string-keyed access is not
+KEYED = "unknown: modules/homelab/new-app.nix: newApp is mentioned in a form other than pkgs.newApp"
+for form in ['pkgs."newApp"', 'pkgs.${"newApp"}', 'lib.getAttr "newApp" pkgs', 'builtins.getAttr "newApp" pkgs',
+             'lib.attrByPath [ "newApp" ] null pkgs', 'lib.attrByPath [ "x" "newApp" ] null pkgs',
+             'lib.hasAttr "newApp" pkgs', 'pkgs ? "newApp"']:
+    got = registry_apps(lambda t, form=form: (new_app("src = inputs.new-app;", form)(t), lock_input(t)))
+    check(got[1].startswith(KEYED), f"{form} stays unknown, not read as a non-use ({got})")
+got = registry_apps(lambda t, f=lambda t: (new_app("src = inputs.new-app;", 'mkPackageOption pkgs "newApp" { }')(t),
+                                           lock_input(t)): f(t))
+check(got == ("0/3; not in the registry: herman, llm-gateway, new-app", "fail"),
+      f'mkPackageOption pkgs "newApp" is still a use ({got})')
+got = registry_apps(lambda t: (new_app("src = inputs.new-app;", "pkgs.newApp")(t), lock_input(t),
+                               (t / "modules/homelab/names.nix").write_text('{ x = [ "a" "newApp" ]; }\n')))
+check(got == ("0/3; not in the registry: herman, llm-gateway, new-app", "fail"),
+      f"a bare quoted name in a list is a non-use, the app is still counted from its pkgs.newApp ({got})")
+check("exec-pool-options.nix" not in registry_apps()[1] and '"factum"' in (
+      ROOT / "modules/homelab/exec-pool-options.nix").read_text(),
+      "the repos default's \"factum\" does not make registry-apps unknown")
+
 
 def homelab_module(body: str) -> Any:
     return lambda t: (t / "modules/homelab/outside.nix").write_text(f"{{ inputs, pkgs, ... }}: {{ {body} }}\n")
