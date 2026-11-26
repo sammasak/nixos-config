@@ -74,7 +74,7 @@ show = ("show", "nixos-push-eval")
 for path in ("flake-modules/runtime-host-vm-test.nix", "flake.nix", "flake.lock", "tests/execution-pool-vm.nix",
              "pkgs/exec-pool/src/queue.rs", "modules/workers/execution-pool.nix", "templates/rust/flake.nix"):
     check(show in got(path), f"{path}: the push hook's nix flake show on the merge, where two clean branches can clash")
-for paths in (("docs/x.md", "goals.md"), ("scripts/test-x.py",), ("hosts/lenovo-21CB001PMX/configuration.nix",),
+for paths in (("docs/x.md", "x.md"), ("scripts/test-x.py",), ("hosts/lenovo-21CB001PMX/configuration.nix",),
               ("modules/homelab/monitoring/rules/exec-pool.yaml",)):
     check(show not in got(*paths), f"{', '.join(paths)}: no flake show (docs, a test script, a host's evaluation covers it)")
 reads = [f"{f}: {l.strip()}" for f in sorted(HERE.parent.glob("[!.]*/**/*.nix")) if f.parts[len(HERE.parent.parts)] != "flake-modules"
