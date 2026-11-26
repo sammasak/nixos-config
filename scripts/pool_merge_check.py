@@ -19,6 +19,11 @@ A path maps to checks only where the gate's history shows what it can break (goa
                                the gate's nixos-flake-check step only after every output evaluated
   any other path               every host's evaluation, as before: a NixOS assertion (sam.memory's budget among them)
                                runs only when a host's toplevel is evaluated
+  flake.nix, flake.lock, flake-modules/, tests/, pkgs/, modules/workers/, templates/, apps/, lib/app-manifest/
+                               also the push hook's `nix flake show` (nixos-push-eval) on the merge: what defines or
+                               feeds a flake output (the VM tests read modules/workers/), where two branches that each
+                               evaluate can merge into one that does not (a duplicate definition); skipped when the
+                               merge is the branch's own tree and this checkout's push hook passed it for that head
 and each pkgs/<dir> with a changed file builds as `pkgsDir.<dir>` (flake-modules/pkgs-dir.nix). One nix process per
 host: all six in one OOMs a pool slot's environments.slice, one alone peaks at about 4.2 GB (msi). The light lane is
 the push hook's `nix flake show` (devenv.nix pushEval, about 3.9 GiB): the slots share one slice, and on 25 Nov a host
@@ -66,11 +71,15 @@ POOL_HOSTS = ("acer-swift", "msi-ms7758")
 MIGRATIONS = "pkgs/exec-pool/migrations/"
 GUEST_RECORDS = "scripts/test-guest-records.py"
 MIGRATION = re.compile(r"(\d{4})_([a-z0-9_]+)\.(up|down)\.sql")
+# the paths flake-modules/ builds outputs from beyond a host's own modules, which a host evaluation already covers
+FLAKE_FILES = ("flake.nix", "flake.lock")
+FLAKE_DIRS = ("flake-modules/", "tests/", "pkgs/", "modules/workers/", "templates/", "apps/", "lib/app-manifest/")
+SHOW = "nixos-push-eval"
 
 
 @dataclass(frozen=True, order=True)
 class Check:
-    kind: str  # eval, evalcheck, build, check, script, migrations
+    kind: str  # eval, evalcheck, show, build, check, script, migrations
     target: str
 
 
@@ -85,6 +94,8 @@ def plan(paths: list[str], hosts: list[str], pkgdirs: list[str]) -> list[Check]:
     for p in paths:
         if is_doc(p) or p.startswith("scripts/test-"):
             continue
+        if p in FLAKE_FILES or p.startswith(FLAKE_DIRS):
+            want.add(Check("show", SHOW))
         if p.startswith(("scripts/", "modules/workers/")) or p == "metrics/records.json":
             want.add(Check("script", GUEST_RECORDS))
         if p.startswith("modules/workers/"):
@@ -152,6 +163,10 @@ HEAVY = ["flock", "-o", str(LOCK)]
 # heavy, then light: the push hook takes light alone, so the order never deadlocks. WORK_LOCKS_HELD: a pool slot's nix
 # (modules/workers/execution-pool.nix) would otherwise wait on this light hold, and take light for the build.
 EVAL = [*HEAVY, "flock", "-o", str(LIGHT), "env", "WORK_LOCKS_HELD=1", "nix", "eval", "--raw"]
+# devenv.nix pushEval's command, import-from-derivation off as there (flake show's default); without the divisor it
+# peaks above the 3.9 GiB the light lane is sized for
+FLAKE_SHOW = [*HEAVY, "flock", "-o", str(LIGHT), "env", "WORK_LOCKS_HELD=1", "GC_FREE_SPACE_DIVISOR=16", "nix", "flake",
+              "show", "--json", "--all-systems", "--no-write-lock-file"]
 # one heavy hold over both steps: released between them, a long wait could let a GC delete the evaluated .drv
 BUILD = 'export WORK_LOCKS_HELD=1; drv=$(flock -o "$1" nix eval --raw "$2") && nix build --no-link -L "$drv^*"'
 
@@ -163,6 +178,8 @@ def command(check: Check, tree: pathlib.Path) -> list[str] | None:
         return [*EVAL, f"{tree}#nixosConfigurations.{check.target}.config.system.build.toplevel.drvPath"]
     if check.kind == "evalcheck":
         return [*EVAL, f"{tree}#checks.{SYSTEM}.{check.target}.drvPath"]
+    if check.kind == "show":
+        return [*FLAKE_SHOW, str(tree)]
     if check.kind in ("build", "check"):
         attr = f"pkgsDir.{check.target}" if check.kind == "build" else f"checks.{SYSTEM}.{check.target}"
         return [*HEAVY, "bash", "-c", BUILD, "build", str(LIGHT), f"{tree}#{attr}.drvPath"]
@@ -181,7 +198,8 @@ def run(check: Check, tree: pathlib.Path) -> bool:
         if problem:
             say(f"{check.target}: {problem}", err=True)
         return problem is None
-    out = subprocess.run(argv, cwd=tree, stdout=subprocess.PIPE if check.kind in EVALS else None, text=True)
+    stdout = subprocess.PIPE if check.kind in EVALS else subprocess.DEVNULL if check.kind == "show" else None
+    out = subprocess.run(argv, cwd=tree, stdout=stdout, text=True)
     if out.returncode == 0 and check.kind in EVALS:
         say(f"{check.target} evaluates to {out.stdout.strip()}")
     return out.returncode == 0
@@ -223,6 +241,18 @@ def main() -> int:
         shutil.rmtree(tree, ignore_errors=True)
 
 
+def push_eval_passed(head: str, commit: str) -> bool:
+    """The merge is the branch head's own tree and this checkout's push hook passed nixos-push-eval on that head: it
+    writes `full QA not run for <head>` to nixos-qa-times only after that evaluation passed (devenv.nix)."""
+    if git("rev-parse", f"{head}^{{tree}}") != git("rev-parse", f"{commit}^{{tree}}"):
+        return False
+    times = pathlib.Path(git("rev-parse", "--path-format=absolute", "--git-common-dir")) / "nixos-qa-times"
+    try:
+        return f"full QA not run for {head}," in times.read_text(errors="replace")
+    except OSError:
+        return False
+
+
 def check_tree(tree: pathlib.Path, branch: str, head: str, main_: str, commit: str) -> int:
     paths = git("diff", "--no-ext-diff", "--name-only", main_, commit).splitlines()
     nix = [*EVAL, "--apply", "c: toString (builtins.attrNames c)"]
@@ -231,9 +261,16 @@ def check_tree(tree: pathlib.Path, branch: str, head: str, main_: str, commit: s
     checks = plan(paths, hosts, pkgdirs)
     sha = commit[:12]
     skipped = [Check("eval", h) for h in hosts if Check("eval", h) not in checks]
-    say(f"{len(paths)} changed path(s); {len(checks)} check(s) to run, {len(skipped)} host evaluation(s) skipped")
+    show = Check("show", SHOW)
+    if show in checks and push_eval_passed(head, commit):
+        checks.remove(show)
+        why = {show: f"the push hook passed it on {head}, whose tree this merge is"}
+    else:
+        why = {}
+    skipped += [show] if show not in checks else []
+    say(f"{len(paths)} changed path(s); {len(checks)} check(s) to run, {len(skipped)} skipped")
     for c in skipped:
-        say(f"skipped: {c.kind} {c.target} (no changed path maps to it)")
+        say(f"skipped: {c.kind} {c.target} ({why.get(c, 'no changed path maps to it')})")
         record(c, 0, "skipped", sha, head)
     times: list[tuple[Check, int, bool]] = []
     for c in checks:
