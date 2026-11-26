@@ -16,7 +16,7 @@ devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks,
 # Hooks: the shims in .githooks/ (core.hooksPath) run prek on the checkout's .pre-commit-config.yaml,
 # which entering the devenv generates (.envrc does it on cd); without one, the main checkout's:
 #   pre-commit: lint-comments + lint-shell; commit-msg: subject <= 72 chars, a body needs a `Why:` line;
-#   pre-push:   no-force guard, one ref with new commits per push, + the fast set on the PUSHED commit in a temp
+#   pre-push:   no-force guard, one ref with new commits per push, the commit-msg rules on each origin/main..pushed commit, + the fast set on the PUSHED commit in a temp
 #               worktree, at any hour: the lints, secrets-verify and nixos-push-eval (the flake check's
 #               `nix flake show --all-systems`, import-from-derivation off, ~90 s: no check's derivation, no build;
 #               its own gate-step record). It prints `full QA not run for <sha>, owed to the scheduled gate on main`
