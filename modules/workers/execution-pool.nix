@@ -264,11 +264,47 @@ in
               exit
             '')
             # devenv evaluates in-process and caches it: under the lock its eval, or a warm `shell -- true` for a
-            # command that runs a task or a shell, which then evaluates from that cache
+            # command that runs a task or a shell, whose shell then evaluates from that cache. No warm-up while the stamp
+            # matches what devenv's cache keys on: the files its last evaluation read (.devenv/input-paths.txt, its
+            # direnv watch list: devenv.nix, .yaml, .lock, the local overrides and every file they import), the env
+            # vars it read (eval_env_input in its db, and those this repo's cache holds), the db itself (a deleted or
+            # recreated one is cold) and devenv. A key that moved during the warm-up, a missing list or db or a failed
+            # warm-up writes no stamp, so the next call warms up again.
             (lane "devenv" devenv ''
+              warm_key() {
+                local f v db=$1/nix-eval-cache.db files=()
+                [ -f "$1/input-paths.txt" ] && [ -f "$db" ] || return
+                {
+                  echo ${devenv}
+                  ${pkgs.coreutils}/bin/stat -c 'db %d:%i' "$db"
+                  { printf '%s\n' HOME DEVENV_CONTAINER SECRETSPEC_SECRETS NIXPKGS_ALLOW_UNFREE NIXPKGS_ALLOW_INSECURE \
+                      NIXPKGS_ALLOW_BROKEN NIXPKGS_ALLOW_NONSOURCE NIXPKGS_ALLOW_UNSUPPORTED_SYSTEM
+                    ${pkgs.sqlite}/bin/sqlite3 -readonly "$db" 'SELECT DISTINCT name FROM eval_env_input' 2>/dev/null
+                  } | ${pkgs.coreutils}/bin/sort -u | while IFS= read -r v; do
+                    case $v in "" | [0-9]* | *[!A-Za-z0-9_]*) continue ;; esac
+                    if [ -n "''${!v+set}" ]; then printf 'env %s=%s\n' "$v" "''${!v}"; else echo "env $v unset"; fi
+                  done
+                  while IFS= read -r f; do
+                    if [ -d "$f" ]; then echo "$f dir $(${pkgs.coreutils}/bin/ls -A "$f" | ${pkgs.coreutils}/bin/sha256sum)"
+                    elif [ -e "$f" ]; then files+=("$f")
+                    else echo "$f absent"; fi
+                  done <"$1/input-paths.txt"
+                  [ ''${#files[@]} -eq 0 ] || ${pkgs.coreutils}/bin/sha256sum -- "''${files[@]}" 2>/dev/null
+                } | ${pkgs.coreutils}/bin/sha256sum
+              }
               case ''${1:-} in
                 eval | info | search | direnv-export) light "devenv-$1" ${devenv} "$@"; exit ;;
-                shell | tasks | test | up | processes | build) light devenv-warm-up ${devenv} shell -- true >&2 || : ;;
+                shell | tasks | test | up | processes | build)
+                  # devenv's root: the nearest directory up with a devenv.nix, as devenv finds it
+                  d=$PWD
+                  while [ "$d" != / ] && [ ! -e "$d/devenv.nix" ]; do d=''${d%/*} d=''${d:-/}; done
+                  d=$d/.devenv
+                  k=$(warm_key "$d")
+                  if [ -z "$k" ] || [ "$(${pkgs.coreutils}/bin/cat "$d/light-warm" 2>/dev/null)" != "$k" ]; then
+                    if light devenv-warm-up ${devenv} shell -- true >&2 && [ -n "$k" ] && [ "$(warm_key "$d")" = "$k" ]; then
+                      { echo "$k" >"$d/light-warm.$$" && ${pkgs.coreutils}/bin/mv "$d/light-warm.$$" "$d/light-warm"; } 2>/dev/null || :
+                    fi
+                  fi ;;
               esac
             '')
           ];

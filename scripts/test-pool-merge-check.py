@@ -10,8 +10,10 @@ apart from its run (seeded: a held light lock). A slot's nix wrapper, from the m
 stubbed: build --expr, --file and flake attributes evaluate under light and build outside it, nix-build instantiates
 under light and builds outside it, and flake check runs under light; the command never inherits the lock, and each hold
 is one lock record of its wait apart from its hold, in the spool the host ships whatever the caller's HOME (seeded: a
-held light lock). A slot's cargo has no lane and
-CARGO_BUILD_JOBS from its reserve."""
+held light lock). A slot's devenv warms its shell up under light only while no stamp matches what its cache keys on: the
+files its last evaluation read, the env vars it read and the db itself, the same before and after the warm-up (seeded:
+an unstamped checkout, a changed devenv.nix or imported file, a changed HOME or read env var, a recreated or deleted db,
+a file edited during the warm-up, a failed warm-up). A slot's cargo has no lane and CARGO_BUILD_JOBS from its reserve."""
 
 import importlib.util
 import os
@@ -160,18 +162,18 @@ check(pmc.LIGHT.name == "light-work.lock" and "light-work.lock" in (HERE.parent 
       "the light lock is the one the push hook's nix flake show takes")
 
 
-def lane(name: str, real: str, d: pathlib.Path) -> pathlib.Path:
+def lane(name: str, real: str, d: pathlib.Path, exe: str = "${nix}") -> pathlib.Path:
     """A slot's `name` wrapper (modules/workers/execution-pool.nix) as bash, its nix, record and lock files stubbed."""
     src = (HERE.parent / "modules/workers/execution-pool.nix").read_text()
     template = src.split("pkgs.writeShellScriptBin name ''\n", 1)[1].split("\n              ''\n", 1)[0]
     head = f'(lane "{name}" {real} \'\'\n'
     check(head in src, f"the module has a {name} lane")
     body = src.split(head, 1)[1].split("\n            '')\n", 1)[0] if head in src else ""
-    text = template.replace("${text}", body).replace("${real}", "${nix}")
+    text = template.replace("${text}", body).replace("${real}", exe)
     for k, v in {"${pkgs.util-linux}/bin/flock": "flock", "${lib.getExe record}": f"{d}/stub/record", "${spool}": f"{d}/spool", "/run/work-locks/light-work.lock": f"{d}/light", "/run/work-locks/scheduled-gate.lock": f"{d}/gate",
                  "${config.nix.package}/bin/nix-instantiate": f"{d}/stub/nix-instantiate",
                  "${config.nix.package}/bin/nix-build": f"{d}/stub/nix-build", "${pkgs.coreutils}/bin/": "", "${pkgs.bash}/bin/bash": "bash",
-                 "${nix}": f"{d}/stub/nix", "${name}": name, "''$": "$"}.items():
+                 "${nix}": f"{d}/stub/nix", "${devenv}": f"{d}/stub/devenv", "${name}": name, "''$": "$"}.items():
         text = text.replace(k, v)
     out = d / name
     out.write_text("#!/usr/bin/env bash\n" + text + "\n")
@@ -329,6 +331,100 @@ with tempfile.TemporaryDirectory() as tmp:
     check(w.returncode == 0 and waited >= 1.2 and len(rec) == 1
           and re.fullmatch(r"host lock lane=light class=nix-instantiate wait_seconds=[123] seconds=[01] rc=0", rec[0]) is not None,
           f"seeded: a held light lock is waited for and recorded as the wait, not the hold ({waited:.1f} s, {rec})")
+
+    # devenv's warm-up: the stub writes .devenv/input-paths.txt as devenv does, the files its evaluation read, and its
+    # cache db with the env var names it read (eval_env_input), unless one is there; EDIT changes a listed file during it
+    co = d / "checkout"
+    (co / "sub").mkdir(parents=True)
+    for f in ("devenv.nix", "devenv.lock", "devenv.yaml", "imported.nix"):
+        (co / f).write_text("v1\n")
+    reads = [co / f for f in ("devenv.nix", "devenv.lock", "devenv.yaml", "devenv.local.nix", "imported.nix")]
+    db = co / ".devenv/nix-eval-cache.db"
+    # the db as the stub sqlite3 reads it: the names of the env vars the evaluation read, one a line
+    mkdb = "MY_EVAL_VAR\n"
+    (d / "stub/names").write_text(mkdb)
+    (d / "stub/devenv").write_text(
+        f'#!/usr/bin/env bash\necho "devenv $* $({d}/stub/state)" >>{d}/log\n'
+        f'[ "$*" = "shell -- true" ] || exit 0\nmkdir -p {co}/.devenv\n'
+        f"printf '%s\\n' {' '.join(map(str, reads))} >{co}/.devenv/input-paths.txt\n"
+        f'[ -e {db} ] || cp {d}/stub/names {db}\n'
+        f'[ -z "${{EDIT:-}}" ] || echo edited >>{co}/imported.nix\n'
+        'exit "${WARM_RC:-0}"\n')
+    # sqlite3 -readonly DB QUERY: the names, as the CLI prints a one-column result (the query on a real db: acer, PR body)
+    (d / "stub/sqlite3").write_text('#!/usr/bin/env bash\n[ "$1 $3" = "-readonly SELECT DISTINCT name FROM eval_env_input" ] && cat "$2"\n')
+    for f in ("devenv", "sqlite3"):
+        (d / "stub" / f).chmod(0o755)
+    wrappers["devenv"] = lane("devenv", "devenv", d, f"{d}/stub/devenv")
+    text = wrappers["devenv"].read_text()
+    check("${pkgs.sqlite}/bin/sqlite3" in text, "the devenv lane reads devenv's db with sqlite3")
+    wrappers["devenv"].write_text(text.replace("${pkgs.sqlite}/bin/sqlite3", f"{d}/stub/sqlite3"))
+
+    def entered(cwd: pathlib.Path = co, **extra: str) -> tuple[list[str], bool]:
+        (d / "log").write_text("")
+        subprocess.run([str(wrappers["devenv"]), "shell", "--", "x"], cwd=cwd, env=env | extra, check=False, stdout=subprocess.DEVNULL)
+        return (d / "log").read_text().splitlines(), (co / ".devenv/light-warm").exists()
+
+    WARM, RUN = "devenv shell -- true locked", "devenv shell -- x free"
+    r, stamped = entered()
+    check(r == [WARM, RUN] and not stamped,
+          f"an unstamped checkout with no input list: the warm-up under the light lock, then the shell outside it; no key "
+          f"before it, so no stamp ({r})")
+    r, stamped = entered()
+    check(r == [WARM, RUN] and stamped, f"the next call: the same key before and after its warm-up, so a stamp ({r})")
+    r, _ = entered()
+    check(r == [RUN], f"a stamped checkout: no warm-up, no light hold ({r})")
+    r, _ = entered(co / "sub")
+    check(r == [RUN], f"from a subdirectory: devenv's root found, its stamp read ({r})")
+    for what, act in (("a changed devenv.nix", lambda: (co / "devenv.nix").write_text("v2\n")),
+                      ("a changed file devenv.nix imports (its input list)", lambda: (co / "imported.nix").write_text("v2\n")),
+                      ("a local override created where none was", lambda: (co / "devenv.local.nix").write_text("{ }\n"))):
+        act()
+        r, _ = entered()
+        r2, _ = entered()
+        check(r == [WARM, RUN] and r2 == [RUN], f"seeded: {what} warms up again, and is stamped ({r}, {r2})")
+    for what, extra in (("a HOME other than the last evaluation's", {"HOME": str(d)}),
+                        ("an env var devenv's db says it read (MY_EVAL_VAR)", {"MY_EVAL_VAR": "1"}),
+                        ("NIXPKGS_ALLOW_UNFREE, one this repo's cache holds", {"NIXPKGS_ALLOW_UNFREE": "1"})):
+        r, _ = entered(**extra)
+        r2, _ = entered(**extra)
+        r3, _ = entered()
+        check(r == [WARM, RUN] and r2 == [RUN] and r3 == [WARM, RUN], f"seeded: {what} warms up, and back again ({r}, {r2}, {r3})")
+    entered()
+    r, _ = entered(OTHER_VAR="1")
+    check(r == [RUN], f"an env var devenv did not read keys nothing ({r})")
+    fresh = co / ".devenv/new.db"
+    fresh.write_text(mkdb)
+    fresh.replace(db)
+    r, _ = entered()
+    check(r == [WARM, RUN], f"seeded: a recreated cache db (another inode) warms up again ({r})")
+    entered()
+    db.unlink()
+    r, stamped = entered()
+    check(r == [WARM, RUN], f"seeded: a deleted cache db warms up again ({r})")
+    entered()
+    (co / ".devenv/light-warm").unlink()
+    r, stamped = entered(EDIT="1")
+    check(r == [WARM, RUN] and not stamped, f"seeded: a listed file changed during the warm-up: no stamp ({r})")
+    r, stamped = entered()
+    check(r == [WARM, RUN] and stamped, f"so the next call warms up again, and stamps ({r})")
+    (co / "devenv.lock").write_text("v3\n")
+    (co / ".devenv/light-warm").unlink()
+    r, stamped = entered(WARM_RC="1")
+    check(r == [WARM, RUN] and not stamped, f"seeded: a failed warm-up writes no stamp ({r})")
+    r, stamped = entered()
+    check(r == [WARM, RUN] and stamped, f"so the next call warms up again, and stamps ({r})")
+    (co / ".devenv/input-paths.txt").unlink()
+    r, _ = entered()
+    check(r == [WARM, RUN], f"seeded: no input list (a .devenv devenv never wrote) warms up ({r})")
+    entered()
+    (d / "records").write_text("")
+    r, _ = entered()
+    check(r == [RUN] and (d / "records").read_text() == "", f"a skipped warm-up writes no lock record ({r})")
+    t0 = time.monotonic()
+    for _ in range(20):
+        subprocess.run([str(wrappers["devenv"]), "shell", "--", "x"], cwd=co, env=env, check=False, stdout=subprocess.DEVNULL)
+    per = (time.monotonic() - t0) / 20 * 1000
+    print(f"a stamped devenv call through the lane: {per:.0f} ms (sqlite3 stubbed)", flush=True)
 
 # seeded: two branches that each evaluate merge into a tree whose flake show fails (#793 and #796, a duplicate definition)
 with tempfile.TemporaryDirectory() as tmp:
