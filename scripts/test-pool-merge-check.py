@@ -137,6 +137,15 @@ def lane(name: str, real: str, d: pathlib.Path) -> pathlib.Path:
     return out
 
 
+# A slot's cargo (#827): in a devenv shell cargo is the profile's, which a PATH lane misses, so the cap is an environment
+# variable every cargo reads, and no cargo subcommand (--version, metadata or a compile) waits on a lock.
+src = (HERE.parent / "modules/workers/execution-pool.nix").read_text()
+check('(lane "cargo"' not in src and not re.search(r"\bcargo\b", src.split("(lane ", 1)[1].split("# Not a cargo lane", 1)[0]),
+      "no cargo lane: cargo --version, cargo metadata and a compile wait on no lock")
+cap = re.search(r"environment\.sessionVariables\.CARGO_BUILD_JOBS = toString \(\s*lib\.max 1 \(dev\.instances\.\$\{devEnvironment\.name\}"
+                r"\.memory\.reserved / 1073741824\)\s*\);", src)
+check(cap is not None, "a slot's CARGO_BUILD_JOBS is a session variable, a job per GiB of its reserve, at least one")
+
 # each run of the stub nix as `argv locked|free`: an evaluation prints a drv, as nix eval --raw would
 with tempfile.TemporaryDirectory() as tmp:
     d = pathlib.Path(tmp)
@@ -217,15 +226,6 @@ with tempfile.TemporaryDirectory() as tmp:
     check(r == ["build .# free"], f"the default package (an empty fragment) is passed through whole ({r})")
     r = runs("store", "gc")
     check(r == ["store gc free"], f"another subcommand runs unlocked ({r})")
-
-# A slot's cargo (#827): in a devenv shell cargo is the profile's, which a PATH lane misses, so the cap is an environment
-# variable every cargo reads, and no cargo subcommand (--version, metadata or a compile) waits on a lock.
-src = (HERE.parent / "modules/workers/execution-pool.nix").read_text()
-check('(lane "cargo"' not in src and not re.search(r"\bcargo\b", src.split("(lane ", 1)[1].split("# Not a cargo lane", 1)[0]),
-      "no cargo lane: cargo --version, cargo metadata and a compile wait on no lock")
-cap = re.search(r"environment\.sessionVariables\.CARGO_BUILD_JOBS = toString \(\s*lib\.max 1 \(dev\.instances\.\$\{devEnvironment\.name\}"
-                r"\.memory\.reserved / 1073741824\)\s*\);", src)
-check(cap is not None, "a slot's CARGO_BUILD_JOBS is a session variable, a job per GiB of its reserve, at least one")
 
 repo = HERE.parent / "pkgs/exec-pool/migrations"
 check(pmc.migrations_problem(repo) is None, f"this tree's exec-pool migrations ({pmc.migrations_problem(repo)})")
