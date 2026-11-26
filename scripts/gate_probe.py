@@ -49,7 +49,16 @@ def flipped(skills, tmp, has, hooks, probe, missing_ok=False):
     return json.loads(out.stdout)
 
 
+# GATE_PROBE in a scheduled nixos:qa whose probe was red (devenv.nix): a test reading a section exits SKIPPED, which
+# the gate records as skipped, not as a red of its own for the probe's reason
+PROBE_RED, SKIPPED = "red", 77
+
+
 def section(name):
+    if os.environ.get("GATE_PROBE") == PROBE_RED:
+        print(f"gate_probe: {OWNER} skipped: it reads the gate probe's {name} section, and the probe is red in this run",
+              file=sys.stderr, flush=True)
+        sys.exit(SKIPPED)
     path = os.environ.get("GATE_PROBE") or subprocess.run(
         ["nix", "build", "--impure", "--no-link", "--print-out-paths", "--expr",
          f'(import ./scripts/gate-probe.nix {{ only = [ "{name}" ]; }}).json'],

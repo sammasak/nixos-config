@@ -4,8 +4,9 @@ main has moved since the last finished run, run `devenv tasks run nixos:qa` in a
 A red head is run once more on the next timer: a failure outside the tree (a fetch, the cache, the heavy lock's
 holder) clears itself, and only a red that repeats on that head waits for a fix on main.
 nixos:qa takes the heavy-work lock itself, waiting for it, and writes the gate and step records (mode=scheduled), as
-a push did. This program keeps the last finished run in STATE/state.json and writes the node-exporter textfile the
-ScheduledGateRed and ScheduledGateOverdue alerts read (modules/homelab/monitoring/rules/shipping.nix). A run killed
+a push did; in that mode it runs every step and records each red one, all of which this program lists. It keeps the
+last finished run in STATE/state.json and writes the node-exporter textfile the ScheduledGateRed and
+ScheduledGateOverdue alerts read (modules/homelab/monitoring/rules/shipping.nix). A run killed
 before nixos:qa returns records nothing here, so the next timer run tries that head again.
 
 Usage: scheduled-gate --repo URL --state DIR --metrics FILE
@@ -37,6 +38,8 @@ METRICS: dict[str, str] = {
     "homelab_scheduled_gate_seconds": "How long the last finished scheduled full gate took, its lock wait included.",
     "homelab_scheduled_gate_red": "1 when the last finished scheduled full gate failed: its head, first failed step, "
     "the check inside it (empty for none) and the last green head.",
+    "homelab_scheduled_gate_failed_step": "1 per step the last finished scheduled full gate failed, while it is red: "
+    "every red step of the run, and each failed check inside the flake check.",
 }
 
 
@@ -45,7 +48,7 @@ class State:
     """The last finished run. green is the newest head a run passed on, "" before any did, green_at when that run
     started (a failure recorded while it ran is not one it fixed) and green_deferred the "step\tcheck" units it
     deferred to their owner host; retried is set when this red head was already run again. check is the failed
-    step's inner check (the flake check's), "" for none."""
+    step's inner check (the flake check's), "" for none; failed every red "step\tcheck" of the run, in order."""
 
     head: str = ""
     result: str = ""
@@ -58,6 +61,7 @@ class State:
     green_at: float = 0.0
     green_deferred: list[str] = field(default_factory=list)
     retried: bool = False
+    failed: list[str] = field(default_factory=list)
 
 
 def say(text: str) -> None:
@@ -102,6 +106,7 @@ def write_metrics(path: pathlib.Path, st: State, checked: float, main: str) -> N
         "homelab_scheduled_gate_seconds": [("", st.seconds)],
         "homelab_scheduled_gate_red": [],
         "homelab_scheduled_gate_green_deferred": [],
+        "homelab_scheduled_gate_failed_step": [],
     }
     for unit in sorted(set(st.green_deferred)):
         step, _, check = unit.partition("\t")
@@ -112,6 +117,10 @@ def write_metrics(path: pathlib.Path, st: State, checked: float, main: str) -> N
             f'green="{st.green[:12] or "none"}"'
         )
         values["homelab_scheduled_gate_red"].append((labels, 1.0))
+        for unit in st.failed:
+            step, _, check = unit.partition("\t")
+            values["homelab_scheduled_gate_failed_step"].append(
+                (f'head="{st.head[:12]}",step="{label(step)}",check="{label(check)}"', 1.0))
     lines = []
     for name, help_text in METRICS.items():
         lines += [f"# HELP {name} {help_text}", f"# TYPE {name} gauge"]
@@ -153,14 +162,18 @@ def deferred(spool: pathlib.Path, since: datetime, head: str) -> list[str]:
     ]
 
 
-def first_failed_step(spool: pathlib.Path, since: datetime, head: str) -> tuple[str, str]:
-    """The first gate-step record of this run that failed, as (step, check): a check inside the flake check names its
-    check, "" otherwise; ("unrecorded", "") when nixos:qa failed before its first step (a devenv evaluation error, the
-    devenv-fresh guard): its journal says why."""
-    for f in records(spool, since, head):
-        if f.get("result") == "fail":
-            return f.get("step", "unrecorded"), f.get("check", "")
-    return "unrecorded", ""
+def failed_steps(spool: pathlib.Path, since: datetime, head: str) -> list[tuple[str, str]]:
+    """Every gate-step record of this run that failed, in order, as (step, check): a check inside the flake check names
+    its check, "" otherwise, and the step's own record beside its checks' adds nothing; [("unrecorded", "")] when
+    nixos:qa failed before its first step (a devenv evaluation error, the devenv-fresh guard): its journal says why."""
+    units = [(f.get("step", "unrecorded"), f.get("check", "")) for f in records(spool, since, head)
+             if f.get("result") == "fail"]
+    inner = {step for step, check in units if check}
+    out: list[tuple[str, str]] = []
+    for u in units:
+        if u not in out and (u[1] or u[0] not in inner):
+            out.append(u)
+    return out or [("unrecorded", "")]
 
 
 def run(repo: str, state_dir: pathlib.Path, metrics: pathlib.Path) -> int:
@@ -202,15 +215,17 @@ def run(repo: str, state_dir: pathlib.Path, metrics: pathlib.Path) -> int:
     st.head, st.finished, st.seconds = main, time.time(), round(time.monotonic() - start)
     st.behind_since, st.retried = 0.0, retry
     if rc == 0:
-        st.result, st.step, st.check, st.green = "pass", "", "", main
+        st.result, st.step, st.check, st.green, st.failed = "pass", "", "", main, []
         st.green_at, st.green_deferred = st.finished - st.seconds, deferred(spool, since, main)
     else:
         st.result = "fail"
-        st.step, st.check = first_failed_step(spool, since, main)
+        failed = failed_steps(spool, since, main)
+        (st.step, st.check), st.failed = failed[0], ["\t".join(u) for u in failed]
     save(state_file, st)
     write_metrics(metrics, st, time.time(), main)
-    say(f"{st.result} on {main[:12]} in {st.seconds:g} s" + (f", first failed step {st.step}" if st.step else "")
-        + (f", check {st.check}" if st.check else ""))
+    red = ", ".join(step + (f" (check {check})" if check else "") for step, _, check in
+                    (u.partition("\t") for u in st.failed))
+    say(f"{st.result} on {main[:12]} in {st.seconds:g} s" + (f", {len(st.failed)} failed step(s): {red}" if red else ""))
     # a red gate is ScheduledGateRed's to report; a failed unit means the scheduler itself broke
     return 0
 
