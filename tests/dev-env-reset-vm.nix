@@ -1,6 +1,6 @@
 # dev-env-reset@<name> on one environment in QEMU: it refuses while a clone holds uncommitted work and while an agent
-# process runs, and otherwise leaves a fresh home with the old one in .trash, the eval cache kept and the container
-# running again.
+# process runs, and otherwise leaves a fresh home with the old one in .trash, its nix and eval caches kept and the
+# container running again.
 # The runtime-host role's closure plus a guest: `nix build .#checks.x86_64-linux.dev-env-reset-vm` on msi only.
 {
   pkgs,
@@ -30,7 +30,10 @@ pkgs.testers.runNixOSTest {
       # no 21:00 poweroff and no Wake-on-LAN unit in the VM
       sam.powerSchedule.poweroff.enable = false;
       systemd.services.systemd-time-wait-sync.wantedBy = lib.mkForce [ ];
-      sam.workers.instances.t.agent = "none";
+      sam.workers.instances.t = {
+        agent = "none";
+        ownNixCache = true;
+      };
       sam.workers.pool.memory = "3G";
       virtualisation.memorySize = 4096;
       # a VM has no client key for the guest to bind (the hosts have lukas's own)
@@ -80,10 +83,10 @@ pkgs.testers.runNixOSTest {
     machine.succeed(f"test -e {home}/marker")
     machine.succeed("systemctl -M t stop fake-agent.service")
 
-    machine.succeed(guest + "touch /home/lukas/.cache/nix/eval-cache-v6/kept")
+    machine.succeed(guest + "touch /home/lukas/.cache/nix/kept /home/lukas/.cache/nix/eval-cache-v6/kept")
     machine.succeed("systemctl start dev-env-reset@t.service")
     machine.succeed(f"test ! -e {home}/marker && test -d {home}")
-    machine.succeed(guest + "test -O /home/lukas/.cache/nix/eval-cache-v6/kept")
+    machine.succeed(guest + "test -O /home/lukas/.cache/nix/kept -a -O /home/lukas/.cache/nix/eval-cache-v6/kept")
     machine.succeed("ls /var/lib/workers/.trash | grep -q '^t-'")
     machine.succeed("test -e $(ls -d /var/lib/workers/.trash/t-* | head -n 1)/home/marker")
     machine.succeed("systemctl is-active container@t.service")
