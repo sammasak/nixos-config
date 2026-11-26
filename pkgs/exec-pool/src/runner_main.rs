@@ -31,6 +31,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use exec_pool::queue::{Arm, Change, Claim, Park, QueueError, Store, TRANSCRIPT_BYTES, Transcript};
 use exec_pool::runner::{
     CAPTURE_BYTES, DRAIN_REQUEST, ExecResult, Listed, MEMORY_KILLS, Manifest, PARK_PUSH_FAILURES,
+    PROMPTS_UNSUBMITTED,
     PREPARE_FAILURES, ParkedAt, QUICK_SECS, Session, Stage, Step, TurnHint, TurnSettle, claim_fits,
     decide, decide_turn, drain_holds, guest_exit, handed_back, holds_tree, oom_victims,
     parks_undelivered, read_bytes, read_regular, read_regular_up_to, receipt, relink, remote_head,
@@ -1327,6 +1328,13 @@ const AGENT_SEEN: Duration = Duration::from_secs(180);
 const AGENT_CLOSE: Duration = Duration::from_secs(30);
 /// How long Herdr may see no agent in the pane (closed, or Herdr restarted) before the pane is opened again.
 const PANE_LOST: Duration = Duration::from_secs(30);
+/// The Enters sent to a prompt Herdr saw no work start on, and how long Herdr has to see it start after each.
+const ENTER_TRIES: u32 = 3;
+const ENTER_WAIT: Duration = if cfg!(test) {
+    Duration::from_millis(100)
+} else {
+    Duration::from_secs(4)
+};
 
 /// The host user's Herdr, where a slot's pane is (`EXEC_POOL_HERDR`: the argv up to and with `herdr`, run as that
 /// user), and the command the pane runs to attach to the turn's agent in the guest (`EXEC_POOL_ATTACH`).
@@ -1334,6 +1342,8 @@ struct Herdr {
     argv: Vec<String>,
     attach: String,
     slot: String,
+    /// The node-exporter textfile directory a prompt no Enter submitted is counted in.
+    counts: Option<PathBuf>,
 }
 
 impl Herdr {
@@ -1350,6 +1360,7 @@ impl Herdr {
             argv,
             attach: var("EXEC_POOL_ATTACH")?,
             slot: slot.to_owned(),
+            counts: std::env::var_os("EXEC_POOL_TEXTFILE").map(PathBuf::from),
         }))
     }
 
@@ -1464,8 +1475,10 @@ impl Herdr {
         let _ = self.call(&["workspace", "close", workspace], Duration::ZERO);
     }
 
-    /// Prompts `text` into the agent in `pane`; an Enter it dropped is sent again. A prompt Herdr refused (a blocked
-    /// agent, none in the pane) is an error: no Enter answers a dialog.
+    /// Prompts `text` into the agent in `pane`; an Enter it dropped is sent again, up to [`ENTER_TRIES`] times until
+    /// Herdr sees the agent's state change. A prompt Herdr refused (a blocked agent, none in the pane) is an error: no
+    /// Enter answers a dialog. So is one no Enter submitted, counted in [`PROMPTS_UNSUBMITTED`]: its turn ends with
+    /// its input unread rather than wait out its time limit.
     fn prompt(&self, pane: &str, text: &str) -> Result<(), String> {
         let sent = self.call(
             &[
@@ -1486,11 +1499,36 @@ impl Herdr {
         match sent {
             // submitted, but Herdr saw no work start in time
             Err(e) if e.contains(r#""code":"timeout""#) || e.contains("agent_prompt_stalled") => {
-                let _ = self.call(&["agent", "send-keys", pane, "Enter"], Duration::ZERO);
-                Ok(())
+                let before = self.seen(pane).ok().flatten().map_or(0, |s| s.seq);
+                for _ in 0..ENTER_TRIES {
+                    let _ = self.call(&["agent", "send-keys", pane, "Enter"], Duration::ZERO);
+                    let t = Instant::now();
+                    while t.elapsed() < ENTER_WAIT {
+                        thread::sleep(ENTER_WAIT / 4);
+                        let seen = self.seen(pane).ok().flatten();
+                        if seen.is_some_and(|s| !s.settled || s.seq != before) {
+                            return Ok(());
+                        }
+                    }
+                }
+                self.count_unsubmitted();
+                Err(format!(
+                    "the prompt was not submitted: Herdr saw no work start after {ENTER_TRIES} Enters"
+                ))
             }
             Err(e) => Err(e),
             Ok(_) => Ok(()),
+        }
+    }
+
+    fn count_unsubmitted(&self) {
+        let Some(d) = &self.counts else {
+            return;
+        };
+        let file = d.join(format!("exec-pool-prompt-{}.prom", self.slot));
+        let labels = format!("slot=\"{}\"", self.slot);
+        if let Err(e) = textfile::bump(&file, PROMPTS_UNSUBMITTED, &labels, 1) {
+            eprintln!("exec-pool-exec: {}: {e}", file.display());
         }
     }
 
@@ -3018,6 +3056,18 @@ mod tests {
 
     /// [`fake`], `agent prompt` answering with the shell snippet `prompt`.
     fn fake_with(name: &str, pane_run_fails: bool, prompt: &str) -> (Herdr, PathBuf) {
+        fake_listing(name, pane_run_fails, prompt, NO_AGENTS)
+    }
+
+    const NO_AGENTS: &str = r#"printf '%s' '{"id":"cli:agent:list","result":{"agents":[],"type":"agent_list"}}'"#;
+
+    /// [`fake_with`], `agent list` answering with the shell snippet `list`.
+    fn fake_listing(
+        name: &str,
+        pane_run_fails: bool,
+        prompt: &str,
+        list: &str,
+    ) -> (Herdr, PathBuf) {
         let log =
             std::env::temp_dir().join(format!("exec-pool-herdr-{name}-{}", std::process::id()));
         let _ = fs::remove_file(&log);
@@ -3032,7 +3082,7 @@ case "$1 $2" in
 "workspace create") printf '%s' '{{"id":"cli:workspace:create","result":{{"root_pane":{{"pane_id":"w1:p1","workspace_id":"w1"}},"type":"workspace_created","workspace":{{"label":"pool9 k","workspace_id":"w1"}}}}}}' ;;
 "workspace list") printf '%s' '{{"id":"cli:workspace:list","result":{{"type":"workspace_list","workspaces":[{{"label":"pool9 k","workspace_id":"w7"}},{{"label":"pool10 k","workspace_id":"w8"}}]}}}}' ;;
 "workspace close") printf '%s' '{{"id":"cli:workspace:close","result":{{"type":"ok"}}}}' ;;
-"agent list") printf '%s' '{{"id":"cli:agent:list","result":{{"agents":[],"type":"agent_list"}}}}' ;;
+"agent list") {list} ;;
 "pane run") {fail} ;;
 "agent prompt") {prompt} ;;
 "agent send-keys") printf '%s' '{{"id":"cli:agent:send-keys","result":{{"type":"ok"}}}}' ;;
@@ -3043,6 +3093,7 @@ esac"#,
             argv: vec!["/bin/sh".into(), "-c".into(), script, "herdr".into()],
             attach: "/run/current-system/sw/bin/pool-pool9 turn".to_owned(),
             slot: "pool9".to_owned(),
+            counts: None,
         };
         (herdr, log)
     }
@@ -3101,10 +3152,16 @@ esac"#,
             !calls(&log).iter().any(|c| c.starts_with("agent send-keys")),
             "no Enter into a dialog"
         );
+        // the Enter landed: Herdr sees the agent working
+        let working = r#"printf '%s' '{"result":{"agents":[{"pane_id":"w1:p1","agent_status":"working","state_change_seq":4}]}}'"#;
         for code in ["timeout", "agent_prompt_stalled"] {
-            let (herdr, log) = fake_with(code, false, &err(code));
+            let (herdr, log) = fake_listing(code, false, &err(code), working);
             assert_eq!(herdr.prompt("w1:p1", "go"), Ok(()));
-            assert_eq!(calls(&log).last().unwrap(), "agent send-keys w1:p1 Enter");
+            let enters = calls(&log)
+                .iter()
+                .filter(|c| *c == "agent send-keys w1:p1 Enter")
+                .count();
+            assert_eq!(enters, 1);
         }
         let (herdr, _) = fake_with(
             "prompted",
@@ -3112,5 +3169,35 @@ esac"#,
             r#"printf '%s' '{"id":"cli:agent:prompt","result":{"type":"ok"}}'"#,
         );
         assert_eq!(herdr.prompt("w1:p1", "go"), Ok(()));
+    }
+
+    #[test]
+    fn a_prompt_no_enter_submits_ends_the_turn_and_is_counted() {
+        let stalled = r#"printf '%s' '{"error":{"code":"timeout","message":"m"},"id":"cli:agent:prompt"}' >&2; exit 1"#;
+        let idle = r#"printf '%s' '{"result":{"agents":[{"pane_id":"w1:p1","agent_status":"idle","state_change_seq":3}]}}'"#;
+        let (mut herdr, log) = fake_listing("unsubmitted", false, stalled, idle);
+        let dir = std::env::temp_dir().join(format!("exec-pool-unsubmitted-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        herdr.counts = Some(dir.clone());
+        let e = herdr.prompt("w1:p1", "go").unwrap_err();
+        assert!(e.contains("not submitted"), "{e}");
+        let enters = calls(&log)
+            .iter()
+            .filter(|c| *c == "agent send-keys w1:p1 Enter")
+            .count();
+        assert_eq!(enters, 3);
+        let counted = fs::read_to_string(dir.join("exec-pool-prompt-pool9.prom")).unwrap();
+        assert!(
+            counted.contains("exec_pool_prompts_unsubmitted_total{slot=\"pool9\"} 1\n"),
+            "{counted}"
+        );
+        // a state change since the first Enter is work started, even settled again
+        let moved = format!(
+            r#"if [ -e '{0}' ]; then printf '%s' '{{"result":{{"agents":[{{"pane_id":"w1:p1","agent_status":"done","state_change_seq":5}}]}}}}'; else : > '{0}'; {idle}; fi"#,
+            dir.join("listed").display()
+        );
+        let (herdr, _) = fake_listing("moved", false, stalled, &moved);
+        assert_eq!(herdr.prompt("w1:p1", "go"), Ok(()));
+        fs::remove_dir_all(&dir).unwrap();
     }
 }

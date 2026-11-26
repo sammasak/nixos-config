@@ -38,6 +38,11 @@ pub const PARK_PUSH_FAILURES: (&str, &str) = (
     "exec_pool_park_push_failures_total",
     "Tries to push a parked session turn's work to its remote that failed.",
 );
+/// The prompts typed into a slot's agent that no Enter submitted, each one the turn ended on.
+pub const PROMPTS_UNSUBMITTED: (&str, &str) = (
+    "exec_pool_prompts_unsubmitted_total",
+    "Prompts typed into a slot's agent that Herdr saw no work start on after every Enter, by slot.",
+);
 /// The slot's processes the kernel's OOM killer killed while a run was in it, from its `memory.events`.
 pub const MEMORY_KILLS: (&str, &str) = (
     "exec_pool_memory_kills_total",
