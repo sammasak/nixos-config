@@ -413,7 +413,7 @@ if fc:
     with tempfile.TemporaryDirectory() as t:
         t = pathlib.Path(t)
         calls = t / "calls"
-        # the kinds the step expects, so a kind added to the flake does not fail this test
+        # the kinds the step expects (flake-output-kinds.json), so adding one there does not break this test
         kinds = json.loads((ROOT / "scripts/flake-output-kinds.json").read_text())
         names = {"nixosConfigurations": ["h1"], "formatter": [], "packages": [], "checks": ["x86_64-linux"],
                  "checks.x86_64-linux": ["rebind", "plain"]}
