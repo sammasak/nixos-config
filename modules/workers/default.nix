@@ -42,9 +42,6 @@ let
           path_regexp (?i)^/repos/[^/]+/[^/]+/pulls/?$
           method POST
         }
-        handle @otherPulls {
-          respond 403
-        }
         handle @receive {
           reverse_proxy unix/${filterSocket} {
             header_up X-Pool-Slot ${i.name}
@@ -55,6 +52,9 @@ let
           reverse_proxy unix/${filterSocket} {
             header_up X-Pool-Slot ${i.name}
           }
+        }
+        handle @otherPulls {
+          respond 403
         }
       ''
     );
