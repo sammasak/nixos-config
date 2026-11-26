@@ -28,13 +28,16 @@ STUBS = {
     "bin/nix": """echo "nix $*" >> "$LOG"
 case "$*" in
   run*--dry-activate*) echo "Completed dry-activate!" ;;
-  run*) echo "Success activating, done!"; exit "${DEPLOY_RC:-0}" ;;
+  run*) flock -n "$XDG_RUNTIME_DIR/deploy.lock" true && echo "deploy-rs shared=free" >> "$LOG" || echo "deploy-rs shared=held" >> "$LOG"
+        echo "Success activating, done!"; exit "${DEPLOY_RC:-0}" ;;
   *toplevel*) printf '%s' "$FIX/top" ;;
   *hostname*) printf target ;;
   *diff-closures*) exit "${DIFF_RC:-0}" ;;
 esac""",
     # the target has exec-pool-drain only as the pool fixture, whatever this host's PATH holds
     "bin/ssh": """echo "ssh $*" >> "$LOG"; shift 3
+case "$*" in "bash -s"*) flock -n "$XDG_RUNTIME_DIR/deploy.lock" true && echo "post-deploy shared=free" >> "$LOG" \
+  || echo "post-deploy shared=held" >> "$LOG" ;; esac
 [ "$*" != "command -v exec-pool-drain" ] || [ -x "$FIX/bin/exec-pool-drain" ] || exit 1
 exec bash -c "$*"
 """,
@@ -91,6 +94,8 @@ def run(recipe, shadow="", check_script=None, host="acer-swift", runtime=None, j
 
 
 rc, out, log = run("deploy")
+check("deploy-rs shared=held" in log and "post-deploy shared=free" in log,
+      "deploy: the shared lock is held while deploy-rs runs and released before the post-deploy check")
 check(rc == 0 and "result=ok" in log and "post-deploy: unit in a restart loop" not in out,
       f"deploy: a healthy target passes the post-deploy check and records ok (rc {rc}: {out.strip()[-300:]})")
 rc, out, log = run("deploy", LOOP="1")
@@ -181,14 +186,21 @@ with tempfile.TemporaryDirectory() as runtime:
         seen = {}
 
         def release(log):
-            time.sleep(2)
+            # a blocked flock waiter shows in /proc/locks as "-> ... <inode>"
+            inode = f":{os.stat(shared).st_ino} "
+            for _ in range(300):
+                if any(l.split()[1] == "->" and inode in l for l in pathlib.Path("/proc/locks").read_text().splitlines()):
+                    break
+                time.sleep(0.1)
+            time.sleep(1.1)
             seen["before"] = log.read_text()
             fcntl.flock(held, fcntl.LOCK_UN)
 
         rc, out, log = run("deploy", runtime=runtime, during=release, DEPLOY_LOCK_WAIT="60")
         check(rc == 0 and "system-checks" not in seen["before"] and "nix run" not in seen["before"]
               and "waiting up to 60s for the deploy of msi-ms7758, pid 4242, def456, since 10:30:00" in out
-              and "result=waited seconds=" in log and "result=ok" in log
+              and int(log.split("result=waited seconds=")[-1].split()[0] if "result=waited" in log else 0) >= 1
+              and "result=ok" in log
               and log.index("result=waited") < log.index("system-checks") < log.index("result=ok")
               and shared.read_text().startswith("acer-swift, pid "),
               f"deploy: with another host's deploy holding the shared lock, it waits, naming the holder, then runs once "
@@ -198,6 +210,17 @@ with tempfile.TemporaryDirectory() as runtime:
         held.truncate()
         held.write("msi-ms7758, pid 4242, def456, since 10:30:00\n")
         held.flush()
+        with open(pathlib.Path(runtime) / "deploy-acer-swift.lock", "w") as own:
+            fcntl.flock(own, fcntl.LOCK_EX)
+            t0 = time.monotonic()
+            rc, out, log = run("deploy", runtime=runtime, DEPLOY_LOCK_WAIT="60")
+            took = time.monotonic() - t0
+            check(rc != 0 and took < 10 and "result=locked" in log and "waiting up to 60s for the deploy of" not in out,
+                  f"deploy: a host being deployed is refused at once even while the shared lock is held ({took:.1f}s, "
+                  f"rc {rc})")
+        rc, out, log = run("deploy", runtime=runtime, DEPLOY_LOCK_WAIT="soon")
+        check(rc == 2 and "DEPLOY_LOCK_WAIT" in out and "result=" not in log,
+              f"deploy: a DEPLOY_LOCK_WAIT that is not whole seconds is refused, not taken for a timeout (rc {rc})")
         t0 = time.monotonic()
         rc, out, log = run("deploy", runtime=runtime, DEPLOY_LOCK_WAIT="2")
         took = time.monotonic() - t0

@@ -84,7 +84,7 @@ just deploy HOST              # HOST: a deploy-rs node, any other name is refuse
 #   A failed check rolls nothing back, and a host degraded for an unrelated, pre-existing reason
 #   fails every deploy: read `systemctl --failed` on the target.
 #   A deploy of a HOST already being deployed is refused at once (result=locked, naming the holder); one of another host waits
-#   for the running deploy-rs, up to DEPLOY_LOCK_WAIT s (default 1800; result=waited, or result=lock-timeout).
+#   while one runs its checks, drain and deploy-rs (a Pi's build on a cache miss included), up to DEPLOY_LOCK_WAIT s (default 1800; result=waited, or result=lock-timeout).
 #   lenovo      loopback self-push, proves the deploy-rs path
 #   acer-swift  builds on acer (remoteBuild)
 #   msi-ms7758  builds on msi; only in its Mon-Fri ~08:30-21:00 power window

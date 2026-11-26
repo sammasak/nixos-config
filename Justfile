@@ -49,7 +49,8 @@ audit-candidate HOST=host TARGET=(if HOST == host { "local" } else { HOST }):
 # this user), held by the deploy's processes, so it ends when they die.
 # Deploys of other hosts run one at a time: two deploy-rs clients and evaluations, each under its own 7G cap,
 # do not fit in lenovo's memory (both were killed, exit 137). A second one waits on $XDG_RUNTIME_DIR/deploy.lock
-# from its system checks until the first's deploy-rs returns, up to DEPLOY_LOCK_WAIT seconds (default 1800),
+# from its system checks until the first's deploy-rs returns (the build where the host builds and a pool drain
+# included, so behind a Pi's cache miss it gives up), up to DEPLOY_LOCK_WAIT seconds (default 1800),
 # recorded result=waited with the wait as seconds, or result=lock-timeout when it gives up. The post-deploy
 # check, light ssh, runs outside it.
 # Break-glass: DEPLOY_UNGATED=1 just deploy HOST deploys it anyway, with a
@@ -91,6 +92,7 @@ deploy HOST:
       echo "pid $$, $sha, since $(date +%T)" >"$lock"; \
       shared=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/deploy.lock; exec {all}<>"$shared"; \
       if ! flock -n "$all"; then holder=$(cat "$shared"); bound=${DEPLOY_LOCK_WAIT:-1800}; \
+        [[ $bound =~ ^[0-9]+$ ]] || { echo "deploy: DEPLOY_LOCK_WAIT must be whole seconds, not '$bound'" >&2; recorded=1; exit 2; }; \
         echo "deploy: waiting up to ${bound}s for the deploy of ${holder:-holder unknown}: two deploys' caps do not fit in this host's memory" >&2; \
         flock -w "$bound" "$all" || { holder=$(cat "$shared"); echo "deploy: gave up on {{HOST}} after ${bound}s, ${holder:-holder unknown} still deploys; rerun when it ends" >&2; rec lock-timeout; exit 1; }; \
         rec waited; recorded=0; start=$SECONDS; fi; \
