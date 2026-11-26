@@ -12,12 +12,19 @@ under light and builds outside it, and flake check runs under light; the command
 is one lock record of its wait apart from its hold (seeded: a held light lock); it waits out a running scheduled gate
 for as long as the gate's unit may run, then gives up with rc 75 (seeded, the wait shortened). A slot's devenv warms its shell up under
 light only while no stamp matches the files its last evaluation read (seeded: an unstamped checkout, a changed devenv.nix
-or imported file, a failed warm-up). A slot's cargo has no lane and CARGO_BUILD_JOBS from its reserve."""
+or imported file, a failed warm-up). A slot's cargo has no lane and CARGO_BUILD_JOBS from its reserve. The eval record
+(scripts/eval_record.py): a host evaluation and the flake show recorded for the merge's tree under this nix are skipped,
+said and recorded as cached, and each that passes is recorded (seeded: NIXOS_EVAL_RECORD=0, another nix, another tree,
+a corrupt record, a dirty checkout, a failed evaluation)."""
 
+import contextlib
 import importlib.util
+import io
+import json
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -142,7 +149,7 @@ with tempfile.TemporaryDirectory() as tmp:
         for kind, target in (("eval", "msi-ms7758"), ("evalcheck", "execution-pool-vm"), ("show", "nixos-push-eval"),
                              ("build", "exec-pool"), ("check", "grafana-dashboards")):
             (d / "log").write_text("")
-            ok, waited = pmc.run(pmc.Check(kind, target), d)
+            ok, waited, _ = pmc.run(pmc.Check(kind, target), d)
             r = (d / "log").read_text().splitlines()
             first = "flake" if kind == "show" else "eval"
             want = [f"{first} heavy=held light=held 1 "] + (["build heavy=held light=free 1 "] if kind in ("build", "check") else [])
@@ -152,7 +159,7 @@ with tempfile.TemporaryDirectory() as tmp:
         holder = subprocess.Popen(["flock", str(light), "sleep", "2"])
         while subprocess.run(["flock", "-n", str(light), "true"], check=False).returncode == 0:
             time.sleep(0.05)
-        ok, waited = pmc.run(pmc.Check("eval", "lenovo"), d)
+        ok, waited, _ = pmc.run(pmc.Check("eval", "lenovo"), d)
         holder.wait()
         check(ok and 1.2 <= waited < 5, f"seeded: a held light lock is measured as the step's wait ({waited:.1f} s)")
     finally:
@@ -393,13 +400,90 @@ with tempfile.TemporaryDirectory() as tmp:
     r, _ = entered()
     check(r == [RUN] and (d / "records").read_text() == "", f"a skipped warm-up writes no lock record ({r})")
 
+DRV = "/nix/store/" + "a" * 32 + "-nixos-system-lenovo.drv"
+TOP = "#nixosConfigurations.lenovo.config.system.build.toplevel.drvPath"
+
+
+def eval_record_cases(d: pathlib.Path, repo: pathlib.Path, head: str, base: str, tree: str) -> list[tuple[bool, str]]:
+    """check_tree on the head's own tree with this user's eval record (scripts/eval_record.py) seeded or not: what it
+    runs (nix.log), each step's record, its output, and the record file afterwards."""
+    state = d / "state/nixos-eval-records"
+    rec = state / f"{tree}.json"
+    (repo / ".git/nixos-qa-times").unlink(missing_ok=True)
+    out: list[tuple[bool, str]] = []
+
+    def go(**env: str) -> tuple[int, list[str], str, str]:
+        for f in ("nix.log", "record.log"):
+            (d / f).write_text("")
+        for k in ("SHOW_RC", "EVAL_RC", "NIX_VERSION", "NIXOS_EVAL_RECORD"):
+            os.environ.pop(k, None)
+        os.environ.update(env)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = pmc.check_tree(repo, "b", head, base, head)
+        return rc, (d / "nix.log").read_text().splitlines(), (d / "record.log").read_text(), buf.getvalue()
+
+    def ran(log: list[str]) -> tuple[bool, bool]:
+        return any(l.startswith("flake show") for l in log), any(l.endswith(TOP) for l in log)
+
+    def seed(**fields: object) -> None:
+        state.mkdir(parents=True, exist_ok=True)
+        rec.write_text(json.dumps({"tree": tree, "nix": "nix (Nix) 2.0-test", **fields}))
+
+    full = {"flake_show": "ok", "flake_kinds": '["checks","nixosConfigurations"]', "toplevel": {"lenovo": DRV}}
+    shutil.rmtree(d / "state", ignore_errors=True)
+    rc, log, steps, said = go()
+    written = json.loads(rec.read_text()) if rec.exists() else {}
+    out.append((rc == 0 and ran(log) == (True, True) and written == {"tree": tree, "nix": "nix (Nix) 2.0-test", **full},
+                f"a miss: the flake show and the host evaluation run, and both go into the tree's record ({rc}, {log}, {written})"))
+    rc, log, steps, said = go()
+    cached = [l for l in steps.splitlines() if "result=cached" in l]
+    out.append((rc == 0 and ran(log) == (False, False) and len(cached) == 2
+                and any("step=pool-merge-show" in l for l in cached) and any("check=lenovo" in l for l in cached)
+                and said.count("(eval record; NIXOS_EVAL_RECORD=0 runs it)") == 2 and DRV in said,
+                f"a hit: neither runs again, each says why and records its step as cached ({rc}, {log}, {cached}, {said!r})"))
+    rc, log, steps, said = go(NIXOS_EVAL_RECORD="0")
+    out.append((rc == 0 and ran(log) == (True, True) and "result=cached" not in steps and rec.exists(),
+                f"NIXOS_EVAL_RECORD=0: the record is not read, both run ({log})"))
+    rc, log, steps, said = go(NIX_VERSION="nix (Nix) 9.9")
+    out.append((rc == 0 and ran(log) == (True, True) and json.loads(rec.read_text())["nix"] == "nix (Nix) 9.9",
+                f"a record of another nix is not used, and is replaced by this one's ({log})"))
+    rec.unlink()
+    other = "b" * 40
+    (state / f"{other}.json").write_text(json.dumps({"tree": other, "nix": "nix (Nix) 2.0-test", **full}))
+    seed(**{**full, "tree": other})
+    rc, log, steps, said = go()
+    out.append((rc == 0 and ran(log) == (True, True) and "result=cached" not in steps,
+                f"seeded: records for another tree, one of them under this tree's name, are not used ({log})"))
+    for bad in ("{not json", json.dumps({"tree": tree, "nix": "nix (Nix) 2.0-test", "toplevel": {"lenovo": "/tmp/x.drv"}}),
+                json.dumps({"tree": tree, "nix": "nix (Nix) 2.0-test", "flake_show": "ok"}),
+                json.dumps({"tree": tree, "nix": "nix (Nix) 2.0-test", "flake_show": "ok", "flake_kinds": "{"})):
+        rec.write_text(bad)
+        rc, log, steps, said = go()
+        out.append((rc == 0 and ran(log) == (True, True),
+                    f"seeded: a corrupt record ({bad[:40]}...) reads as a miss ({log})"))
+    seed(flake_show="ok", flake_kinds="[]")
+    (repo / "untracked.txt").write_text("x\n")
+    rc, log, steps, said = go()
+    (repo / "untracked.txt").unlink()
+    out.append((rc == 0 and ran(log) == (True, True) and "toplevel" not in json.loads(rec.read_text()),
+                f"seeded: a dirty checkout (an untracked file) neither reads its tree's record nor writes it ({log})"))
+    shutil.rmtree(d / "state")
+    rc, log, steps, said = go(SHOW_RC="1", EVAL_RC="1")
+    out.append((rc == 1 and ran(log) == (True, True) and not state.exists(),
+                f"seeded: a failed flake show and host evaluation write no record ({rc}, {log})"))
+    return out
+
+
 # seeded: two branches that each evaluate merge into a tree whose flake show fails (#793 and #796, a duplicate definition)
 with tempfile.TemporaryDirectory() as tmp:
     d = pathlib.Path(tmp)
     (d / "bin").mkdir()
     (d / "bin/flock").write_text('#!/usr/bin/env bash\nwhile [ "${1#-}" != "$1" ]; do shift; done\nshift; exec "$@"\n')
-    (d / "bin/nix").write_text(f'#!/usr/bin/env bash\necho "$*" >>{d}/nix.log\n[ "$1" != flake ] || exit "${{SHOW_RC:-0}}"\n'
-                               '[[ $* != *--apply* ]] || { echo lenovo; exit; }\necho /nix/store/x.drv\n')
+    (d / "bin/nix").write_text(f'#!/usr/bin/env bash\n[ "$1" != --version ] || {{ echo "${{NIX_VERSION:-nix (Nix) 2.0-test}}"; exit; }}\n'
+                               f'echo "$*" >>{d}/nix.log\n'
+                               '[ "$1" != flake ] || { echo \'{"checks": {}, "nixosConfigurations": {}}\'; exit "${SHOW_RC:-0}"; }\n'
+                               f'[[ $* != *--apply* ]] || {{ echo lenovo; exit; }}\necho {DRV}\nexit "${{EVAL_RC:-0}}"\n')
     (d / "record.py").write_text(f"import sys\nopen({str(d / 'record.log')!r}, 'a').write(' '.join(sys.argv[1:]) + '\\n')\n")
     for f in ("flock", "nix"):
         (d / "bin" / f).chmod(0o755)
@@ -425,6 +509,8 @@ with tempfile.TemporaryDirectory() as tmp:
     saved = (os.getcwd(), os.environ["PATH"], pmc.RECORD, pmc.LOCK, pmc.LIGHT)
     os.chdir(repo)
     os.environ["PATH"] = f"{d / 'bin'}:{os.environ['PATH']}"
+    os.environ["XDG_STATE_HOME"] = str(d / "state")
+    os.environ.pop("NIXOS_EVAL_RECORD", None)
     pmc.RECORD, pmc.LOCK, pmc.LIGHT = d / "record.py", d / "heavy", d / "light"
     pmc.LOCK.touch(), pmc.LIGHT.touch()
     try:
@@ -435,21 +521,25 @@ with tempfile.TemporaryDirectory() as tmp:
                 (repo / ".git/nixos-qa-times").write_text(f"nixos-qa: full QA not run for {head}, owed to the scheduled gate on main\n")
             for f in ("nix.log", "record.log"):
                 (d / f).write_text("")
+            shutil.rmtree(d / "state", ignore_errors=True)
             results[rc] = (pmc.check_tree(repo, "b", head, base, merge if rc == "moved" else head),
                            (d / "nix.log").read_text(), (d / "record.log").read_text())
         # a step that took 32 s, 30 of them waiting for its locks: its record's seconds are its run alone
         run_, time_ = pmc.run, pmc.time
         clock = iter(range(0, 1000, 32))
-        pmc.run = lambda c, tree: (True, 30.0)
+        pmc.run = lambda c, tree: (True, 30.0, "")
         pmc.time = types.SimpleNamespace(monotonic=lambda: next(clock))
         (d / "record.log").write_text("")
+        shutil.rmtree(d / "state", ignore_errors=True)
         pmc.check_tree(repo, "b", head, base, merge)
         waited = (d / "record.log").read_text()
         pmc.run, pmc.time = run_, time_
+        recs = eval_record_cases(d, repo, head, base, tree_)
     finally:
         os.chdir(saved[0])
         os.environ["PATH"] = saved[1]
-        os.environ.pop("SHOW_RC", None)
+        for v in ("SHOW_RC", "EVAL_RC", "NIX_VERSION", "XDG_STATE_HOME", "NIXOS_EVAL_RECORD"):
+            os.environ.pop(v, None)
         pmc.RECORD, pmc.LOCK, pmc.LIGHT = saved[2:]
     steps = [l for l in waited.splitlines() if "result=pass" in l]
     check(steps != [] and all(re.search(r" seconds=2 wait_seconds=30 ", l) for l in steps)
@@ -470,6 +560,8 @@ with tempfile.TemporaryDirectory() as tmp:
     moved_ = results["moved"]
     check(tree_ != moved and moved_[0] == 1 and "flake show" in moved_[1] and shown(moved_, "fail"),
           f"seeded: the push hook passed the head but main moved on: the merge's flake show still runs ({moved_})")
+    for ok_, what in recs:
+        check(ok_, what)
 
 repo = HERE.parent / "pkgs/exec-pool/migrations"
 check(pmc.migrations_problem(repo) is None, f"this tree's exec-pool migrations ({pmc.migrations_problem(repo)})")

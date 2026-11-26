@@ -2,6 +2,7 @@
 its own, a probe of that section alone. As a command it prints the section, for the shell gates.
 Also the tests' shared check()/finish() and flipped(); a test importing them needs its script dir on sys.path
 (`python scripts/test-X.py`, not `python -I`)."""
+import fcntl
 import json
 import os
 import pathlib
@@ -59,12 +60,29 @@ def section(name):
         print(f"gate_probe: {OWNER} skipped: it reads the gate probe's {name} section, and the probe is red in this run",
               file=sys.stderr, flush=True)
         sys.exit(SKIPPED)
-    path = os.environ.get("GATE_PROBE") or subprocess.run(
-        ["nix", "build", "--impure", "--no-link", "--print-out-paths", "--expr",
-         f'(import ./scripts/gate-probe.nix {{ only = [ "{name}" ]; }}).json'],
-        check=True, stdout=subprocess.PIPE, text=True).stdout.strip()
+    path = os.environ.get("GATE_PROBE") or own_section(name)
     with open(path) as f:
         return json.load(f)[name]
+
+
+LIGHT = "/run/work-locks/light-work.lock"
+
+
+def own_section(name):
+    """The section built alone, under the light-work lane as the whole probe is (devenv.nix probe) unless a caller holds
+    it (WORK_LOCKS_HELD): this process holds the lock, its nix does not inherit it (PEP 446)."""
+    argv = ["nix", "build", "--impure", "--no-link", "--print-out-paths", "--expr",
+            f'(import ./scripts/gate-probe.nix {{ only = [ "{name}" ]; }}).json']
+    fd = None
+    if not os.environ.get("WORK_LOCKS_HELD") and os.path.exists(LIGHT):
+        fd = os.open(LIGHT, os.O_RDONLY)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+    try:
+        return subprocess.run(argv, check=True, stdout=subprocess.PIPE, text=True,
+                              env={**os.environ, **({"WORK_LOCKS_HELD": "1"} if fd is not None else {})}).stdout.strip()
+    finally:
+        if fd is not None:
+            os.close(fd)
 
 
 if __name__ == "__main__":

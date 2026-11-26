@@ -166,7 +166,7 @@ for mode, dryrun in dryruns.items():
         for f in ("nix", "nix-store", "uname", "record"):
             (t / f).chmod(0o755)
         body = textwrap.dedent(fc.group(1)).replace("${pkgs.coreutils}/bin/uname", str(t / "uname"))
-        body = body.replace("${lib.getExe record}", str(t / "record")).replace("${gateHeavy}", gate_heavy.group(1)).replace("${flakeKinds}", KINDS).replace("''$", "$")
+        body = body.replace("${lib.getExe record}", str(t / "record")).replace("${lib.getExe evalRecord}", "false").replace("${gateHeavy}", gate_heavy.group(1)).replace("${flakeKinds}", KINDS).replace("''$", "$")
         r = subprocess.run(["bash", "-euo", "pipefail", "-c", body], capture_output=True, text=True, cwd=t,
                            env={**os.environ, "PATH": f"{t}:{os.environ['PATH']}", "NIXOS_QA_DEFERRED": str(deferred),
                                 "NIXOS_QA_TOPLEVELS": str(t / "toplevels"), "NIXOS_QA_HEAD": "0123abc", **({"NIXOS_FLAKE_CHECK_DRY": "1"} if mode == "ownerdry" else {})})
@@ -300,7 +300,7 @@ for mode, (dryrun, build_rc) in plain_runs.items():
         for f in ("nix", "nix-store", "uname", "record"):
             (t / f).chmod(0o755)
         body = textwrap.dedent(fc.group(1)).replace("${pkgs.coreutils}/bin/uname", str(t / "uname"))
-        body = body.replace("${lib.getExe record}", str(t / "record")).replace("${gateHeavy}", gate_heavy.group(1)).replace("${flakeKinds}", KINDS).replace("''$", "$")
+        body = body.replace("${lib.getExe record}", str(t / "record")).replace("${lib.getExe evalRecord}", "false").replace("${gateHeavy}", gate_heavy.group(1)).replace("${flakeKinds}", KINDS).replace("''$", "$")
         r = subprocess.run(["bash", "-euo", "pipefail", "-c", body], capture_output=True, text=True, cwd=t,
                            env={**os.environ, "PATH": f"{t}:{os.environ['PATH']}", "NIXOS_QA_HEAD": "0123abc"})
         lines = rec.read_text().splitlines() if rec.exists() else []
@@ -333,7 +333,7 @@ for want, fail in {"vm-list": "any('? driver' in x for x in a)", "flake-output-k
         for f in ("nix", "nix-store", "uname", "record"):
             (t / f).chmod(0o755)
         body = textwrap.dedent(fc.group(1)).replace("${pkgs.coreutils}/bin/uname", str(t / "uname"))
-        body = body.replace("${lib.getExe record}", str(t / "record")).replace("${gateHeavy}", gate_heavy.group(1)).replace("${flakeKinds}", KINDS).replace("''$", "$")
+        body = body.replace("${lib.getExe record}", str(t / "record")).replace("${lib.getExe evalRecord}", "false").replace("${gateHeavy}", gate_heavy.group(1)).replace("${flakeKinds}", KINDS).replace("''$", "$")
         r = subprocess.run(["bash", "-euo", "pipefail", "-c", body], capture_output=True, text=True, cwd=t,
                            env={**os.environ, "PATH": f"{t}:{os.environ['PATH']}", "NIXOS_QA_HEAD": "0123abc"})
         lines = rec.read_text().splitlines() if rec.exists() else []
@@ -365,7 +365,7 @@ for kind in ("packages", "packages.x86_64-linux", "checks", "checks.x86_64-linux
         for f in ("nix", "nix-store", "uname", "record"):
             (t / f).chmod(0o755)
         body = textwrap.dedent(fc.group(1)).replace("${pkgs.coreutils}/bin/uname", str(t / "uname"))
-        body = body.replace("${lib.getExe record}", str(t / "record")).replace("${gateHeavy}", gate_heavy.group(1)).replace("${flakeKinds}", KINDS).replace("''$", "$")
+        body = body.replace("${lib.getExe record}", str(t / "record")).replace("${lib.getExe evalRecord}", "false").replace("${gateHeavy}", gate_heavy.group(1)).replace("${flakeKinds}", KINDS).replace("''$", "$")
         r = subprocess.run(["bash", "-euo", "pipefail", "-c", body], capture_output=True, text=True, cwd=t,
                            env={**os.environ, "PATH": f"{t}:{os.environ['PATH']}", "NIXOS_QA_HEAD": "0123abc"})
         lines = [l for l in (rec.read_text().splitlines() if rec.exists() else []) if "result=fail" in l]

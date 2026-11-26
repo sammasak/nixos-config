@@ -144,8 +144,16 @@ let
           cur=""
           took "eval $1" "$t"
         }
-        # each host's toplevel drvPath, "host drv" per line: seventh-host-test takes them as its unseeded baselines
-        toplevels=''${NIXOS_QA_TOPLEVELS:-/dev/null}
+        # each host's toplevel drvPath, "host drv" per line: seventh-host-test takes them as its unseeded baselines, and
+        # this tree's eval record (scripts/eval_record.py) at the end
+        toplevels=''${NIXOS_QA_TOPLEVELS:-}
+        own=""
+        if [ -z "$toplevels" ]; then
+          own=$(mktemp)
+          toplevels=$own
+        fi
+        # this checkout's tree when clean: what passes here is recorded for it, a flake show recorded for it not rerun
+        began=$(${lib.getExe evalRecord} tree 2>/dev/null) || began=""
         # Every output is evaluated, as before; only a build is ever left out. A check whose build would compile against
         # CUDA or the NVIDIA driver is built only on the host it deploys to (deploy-activate-<node>, deploy-schema-<node>,
         # both of which pull the node's closure) and deferred to that host's gate elsewhere: the dry-run that found it
@@ -176,6 +184,7 @@ let
         cur=""
         failed_output() {
           local rc=$?
+          [ -z "$own" ] || rm -f "$own"
           [ "$rc" -eq 0 ] || [ -z "$cur" ] \
             || ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check="$cur" owner="$me" seconds=0 result=fail head="''${NIXOS_QA_HEAD:-}"
         }
@@ -196,7 +205,12 @@ let
         fi
         # scripts/test-flake-output-kinds.py compares the flake with flakeKinds in seconds, without evaluating an output
         cur=flake-output-kinds
-        kinds=$(nix flake show --json --all-systems --no-write-lock-file | jq -c 'keys')
+        if kinds=$(${lib.getExe evalRecord} flake-show); then
+          echo "nixos-flake-check: flake show skipped: tree ''${began:0:12} passed it before under this nix (eval record; NIXOS_EVAL_RECORD=0 runs it)" >&2
+          ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check=flake-output-kinds owner="$me" seconds=0 result=cached head="''${NIXOS_QA_HEAD:-}"
+        else
+          kinds=$(nix flake show --json --all-systems --no-write-lock-file | jq -c 'keys')
+        fi
         [ "$kinds" = '${flakeKinds}' ] \
           || { echo "nixos-flake-check: flake outputs are $kinds: add the new kind to this step" >&2; exit 1; }
         # flake show omits legacyPackages' contents: pkgsDir's entries are evaluated here, built only by pool-merge-check
@@ -365,6 +379,8 @@ let
             echo "$h $got" >>"$toplevels"
           fi
         done
+        # every output evaluated: the flake show and the host toplevels go into the tree's record, if still clean
+        [ -z "$began" ] || ${lib.getExe evalRecord} put "$began" --flake-kinds "$kinds" --toplevels "$toplevels" || true
         if [ ''${#deferred[@]} -gt 0 ]; then
           echo "nixos-flake-check: not built here, deferred to their own host's gate: ''${deferred[*]}" >&2
           printf '%s\n' "''${deferred[@]}" >>"''${NIXOS_QA_DEFERRED:-/dev/null}"
@@ -976,6 +992,7 @@ let
     gate "nixos-push-eval"
       (with pkgs; [
         nix
+        jq
         util-linux
       ])
       ''
@@ -984,7 +1001,21 @@ let
         if [ -z "''${WORK_LOCKS_HELD:-}" ] && [ -e /run/work-locks/light-work.lock ]; then
           lock=(flock -o -w 900 /run/work-locks/light-work.lock)
         fi
-        WORK_LOCKS_HELD=1 GC_FREE_SPACE_DIVISOR=16 "''${lock[@]}" nix flake show --json --all-systems --no-write-lock-file >/dev/null
+        began=$(${lib.getExe evalRecord} tree 2>/dev/null) || began=""
+        kinds=$(WORK_LOCKS_HELD=1 GC_FREE_SPACE_DIVISOR=16 "''${lock[@]}" nix flake show --json --all-systems --no-write-lock-file | jq -c 'keys')
+        # a pass on a clean tree is recorded for it: the next push, pool-merge-check or flake check of it skips this
+        [ -z "$began" ] || ${lib.getExe evalRecord} put "$began" --flake-kinds "$kinds" || true
+      '';
+  # scripts/eval_record.py as built at devenv entry, under the nix the gates evaluate with (its version keys a record)
+  evalRecord =
+    gate "nixos-eval-record"
+      (with pkgs; [
+        git
+        nix
+        python3
+      ])
+      ''
+        exec python3 ${./scripts/eval_record.py} "$@"
       '';
   heavyLock = pkgs.callPackage ./pkgs/heavy-lock/package.nix { };
   qaGreen = gate "qa-green" (with pkgs; [
@@ -1071,7 +1102,8 @@ let
     qaPushTest
   ];
   # A docs-only push still runs the tests whose scripts/test-* reads a changed doc (#502): each found by its file name in
-  # the gates' own text, after the probe they read. A reader no gate runs fails the push rather than pass unchecked.
+  # the gates' own text. A reader no gate runs fails the push rather than pass unchecked. No whole probe: each test
+  # builds only the probe section it reads, under the light lane (scripts/gate_probe.py).
   docTests =
     gate "nixos-doc-tests"
       (with pkgs; [
@@ -1079,8 +1111,7 @@ let
         gnugrep
       ])
       ''
-        GATE_PROBE=$(${lib.getExe probe})
-        export GATE_PROBE
+        unset GATE_PROBE
         for f in "$@"; do
           found=
           for g in ${lib.concatMapStringsSep " " lib.getExe (sideBySide ++ tests)}; do
@@ -1372,10 +1403,16 @@ let
         t=$SECONDS
         ${run pushLints}
         ${lightHeld}
-        if light_held ${lib.getExe pushEval}; then r=pass; else r=fail; fi
-        echo "nixos-qa: ${pushEval.name} took $light_run s, after $light_wait s waiting for light-work.lock" | tee -a "$gitdir/nixos-qa-times"
+        # a tree whose flake show passed before under this nix (scripts/eval_record.py) is not evaluated again
+        if ${lib.getExe evalRecord} flake-show >/dev/null; then
+          r=cached light_run=0 light_wait=0
+          echo "nixos-qa: ${pushEval.name} skipped: tree $(git rev-parse --short 'HEAD^{tree}') passed it before under this nix (eval record; NIXOS_EVAL_RECORD=0 runs it)" | tee -a "$gitdir/nixos-qa-times"
+        else
+          if light_held ${lib.getExe pushEval}; then r=pass; else r=fail; fi
+          echo "nixos-qa: ${pushEval.name} took $light_run s, after $light_wait s waiting for light-work.lock" | tee -a "$gitdir/nixos-qa-times"
+        fi
         ${lib.getExe record} gate-step gate=nixos-qa-push step=${pushEval.name} seconds="$light_run" wait_seconds="$light_wait" result=$r sha="$(git rev-parse --short HEAD)"
-        [ "$r" = pass ] || { echo "nixos-qa: ${pushEval.name} failed for $(git rev-parse HEAD)" >&2; exit 1; }
+        [ "$r" != fail ] || { echo "nixos-qa: ${pushEval.name} failed for $(git rev-parse HEAD)" >&2; exit 1; }
         echo "nixos-qa: full QA not run for $(git rev-parse HEAD), owed to the scheduled gate on main" | tee -a "$gitdir/nixos-qa-times"
         PLATFORM_RECORD_STRICT=1 ${lib.getExe record} gate gate=nixos-qa-push seconds=$((SECONDS - t)) result=owed sha="$(git rev-parse --short HEAD)" mode=fast head="$(git rev-parse HEAD)" checkout=clean
       '';
