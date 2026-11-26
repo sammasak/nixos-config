@@ -119,7 +119,7 @@ in
         ]
       );
       default = [ ];
-      description = "The capabilities each slot offers, set from the host's own facts: `github` with `repos` (fetch, push and gh through the sidecar), `monitoring` with `monitoring`, `always-on` on a host with no power window that never sleeps (sam.fleet.hosts); a host's own definition adds to them. A task claims a slot only when it offers every one the task names (`exec-pool submit --requires NAME`), and submit refuses a task no slot seen in the last day offers them to.";
+      description = "The capabilities each slot offers, set from the host's own facts: `github` with `repos` (fetch, push and gh through the sidecar), `monitoring` with `monitoring`, `always-on` on a host with no power window that never sleeps (sam.fleet.hosts); a host's own definition adds to them. Each slot also always offers `host-<networking.hostName>` (`host-acer-swift`), so `--requires host-acer-swift` places a task on that host. A task claims a slot only when it offers every one the task names (`exec-pool submit --requires NAME`), and submit refuses a task no slot seen in the last day offers them to.";
     };
     timeoutSecs = mkOption {
       type = types.ints.positive;
@@ -193,6 +193,11 @@ in
     {
       assertion = !(has "runner") || (cfg.slots > 0 && cfg.agents != [ ]);
       message = "homelab.execPool: a runner needs slots and agents.";
+    }
+    {
+      assertion =
+        !(has "runner") || builtins.match "[a-z][a-z0-9-]{0,26}" config.networking.hostName != null;
+      message = "homelab.execPool: a runner's networking.hostName must be a lower-case letter then a-z, 0-9 and -, at most 27 in all, for its slots' host-<hostName> capability.";
     }
     {
       assertion = !(has "runner") || has "queue" != (cfg.queueListener != null);
