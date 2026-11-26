@@ -1,5 +1,5 @@
-# promtool test rules for TargetDown (general.yaml) and homelab.yaml's host alerts whose text names their first command
-# (flake-modules/monitoring-check.nix runs it).
+# promtool test rules for TargetDown and InsideNameDown (general.yaml) and homelab.yaml's host alerts whose text
+# names their first command (flake-modules/monitoring-check.nix runs it).
 rule_files: [../general.yaml, ../homelab.yaml]
 evaluation_interval: 1m
 tests:
@@ -80,3 +80,25 @@ tests:
               description: "black-pi's HTTPS probe of https://chat.sammasak.dev has seen a certificate expiring in under 14 days for an hour: no renewed certificate is being served. Run journalctl -u caddy --since -1d | grep -i acme on acer for the renewal's error."
               query: '(probe_ssl_earliest_cert_expiry{job="blackbox",instance="https://chat.sammasak.dev"} - time()) / 86400'
               runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#certificateexpiringsoon"
+  # loki's inside name down from 0m, store-cache-acer-swift's from 10m, prometheus's answering
+  - interval: 1m
+    input_series:
+      - series: 'probe_success{job="inside-names",name="loki",instance="loki.fleet.sammasak.dev:3100"}'
+        values: '0x30'
+      - series: 'probe_success{job="inside-names",name="store-cache-acer-swift",instance="store-cache-acer-swift.fleet.sammasak.dev:5000"}'
+        values: '1x9 0x21'
+      - series: 'probe_success{job="inside-names",name="prometheus",instance="prometheus.fleet.sammasak.dev:9090"}'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: InsideNameDown
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: InsideNameDown
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, name: loki}
+            exp_annotations:
+              summary: "An inside fleet name does not answer."
+              description: "loki.fleet.sammasak.dev, listener loki's inside name, has not resolved or taken a TCP connection on its port from black-pi for 15 minutes. From a fleet host, dig +short loki.fleet.sammasak.dev asks lenovo's AdGuard; http://prometheus.fleet.sammasak.dev:9090/targets?search=inside-names shows the probe's error, and modules/core/fleet.nix names the listener's host and port."
+              query: 'max by (name) (probe_success{job="inside-names"}) == 0'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/monitoring.md#inside-and-outside-names"
