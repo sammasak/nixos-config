@@ -11,6 +11,9 @@ A path maps to checks only where the gate's history shows what it can break (goa
   pkgs/exec-pool/              its package build (crate tests, clippy, rustfmt) and the evaluation of the pool's hosts;
                                a migration also its numbering, one name per number and no gap
   scripts/test-*               nothing: no host reads one, and the push hook and the full gate run it
+  other scripts/, modules/workers/, metrics/records.json
+                               also scripts/test-guest-records.py: a guest's record kinds are records.json's
+  modules/workers/             also the execution-pool-vm check's evaluation, its drvPath only (no build)
   flake.lock                   every host's evaluation and scripts/test-deploy-recipes.py (private inputs over ssh)
   flake.nix, flake-modules/    every host's evaluation and scripts/test-flake-output-kinds.py: a new output kind fails
                                the gate's nixos-flake-check step only after every output evaluated
@@ -61,12 +64,13 @@ DASHBOARD_CHECKS = ("grafana-dashboards", "grafana-dashboard-removal")
 # the hosts whose homelab.execPool runs the package (hosts/acer-swift/configuration.nix, hosts/msi-ms7758/exec-pool.nix)
 POOL_HOSTS = ("acer-swift", "msi-ms7758")
 MIGRATIONS = "pkgs/exec-pool/migrations/"
+GUEST_RECORDS = "scripts/test-guest-records.py"
 MIGRATION = re.compile(r"(\d{4})_([a-z0-9_]+)\.(up|down)\.sql")
 
 
 @dataclass(frozen=True, order=True)
 class Check:
-    kind: str  # eval, build, check, script, migrations
+    kind: str  # eval, evalcheck, build, check, script, migrations
     target: str
 
 
@@ -81,6 +85,10 @@ def plan(paths: list[str], hosts: list[str], pkgdirs: list[str]) -> list[Check]:
     for p in paths:
         if is_doc(p) or p.startswith("scripts/test-"):
             continue
+        if p.startswith(("scripts/", "modules/workers/")) or p == "metrics/records.json":
+            want.add(Check("script", GUEST_RECORDS))
+        if p.startswith("modules/workers/"):
+            want.add(Check("evalcheck", "execution-pool-vm"))
         if RULES.fullmatch(p):
             want.update(Check("check", c) for c in RULE_CHECKS)
         elif DASHBOARDS.fullmatch(p):
@@ -149,15 +157,21 @@ BUILD = 'export WORK_LOCKS_HELD=1; drv=$(flock -o "$1" nix eval --raw "$2") && n
 
 
 def command(check: Check, tree: pathlib.Path) -> list[str] | None:
-    """An eval's evaluation; a build's or check's drvPath evaluated under both locks, then built under the heavy one."""
+    """An eval's or evalcheck's evaluation; a build's or check's drvPath evaluated under both locks, then built under the
+    heavy one."""
     if check.kind == "eval":
         return [*EVAL, f"{tree}#nixosConfigurations.{check.target}.config.system.build.toplevel.drvPath"]
+    if check.kind == "evalcheck":
+        return [*EVAL, f"{tree}#checks.{SYSTEM}.{check.target}.drvPath"]
     if check.kind in ("build", "check"):
         attr = f"pkgsDir.{check.target}" if check.kind == "build" else f"checks.{SYSTEM}.{check.target}"
         return [*HEAVY, "bash", "-c", BUILD, "build", str(LIGHT), f"{tree}#{attr}.drvPath"]
     if check.kind == "script":
         return [sys.executable, check.target]
     return None
+
+
+EVALS = ("eval", "evalcheck")
 
 
 def run(check: Check, tree: pathlib.Path) -> bool:
@@ -167,8 +181,8 @@ def run(check: Check, tree: pathlib.Path) -> bool:
         if problem:
             say(f"{check.target}: {problem}", err=True)
         return problem is None
-    out = subprocess.run(argv, cwd=tree, stdout=subprocess.PIPE if check.kind == "eval" else None, text=True)
-    if out.returncode == 0 and check.kind == "eval":
+    out = subprocess.run(argv, cwd=tree, stdout=subprocess.PIPE if check.kind in EVALS else None, text=True)
+    if out.returncode == 0 and check.kind in EVALS:
         say(f"{check.target} evaluates to {out.stdout.strip()}")
     return out.returncode == 0
 

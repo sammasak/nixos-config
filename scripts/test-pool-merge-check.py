@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """scripts/pool_merge_check.py's choice of checks from changed paths, and its migration numbering, without Nix: a docs
 change runs nothing, a rule or dashboard change its own checks and no host, exec-pool its build and the pool's hosts,
-flake.lock and any unmapped path every host (seeded: a rule change beside an unmapped path still evaluates every
+scripts/, modules/workers/ and metrics/records.json the guest-records test, modules/workers/ also execution-pool-vm's
+evaluation, flake.lock and any unmapped path every host (seeded: a rule change beside an unmapped path still evaluates every
 host; two migrations on one number, and a gap, fail). Every evaluation takes the heavy lock, then the light one the
 push hook's evaluation takes, and a build compiles under the heavy one alone. A slot's nix wrapper, from the module's
 text with flock and nix stubbed: build --expr and flake attributes evaluate under light and build outside it."""
@@ -67,6 +68,14 @@ check(got("scripts/test-x.py", "scripts/test-y.sh") == set(), "a test script: no
 reads = [f"{f}: {l.strip()}" for f in sorted(HERE.parent.glob("[!.]*/**/*.nix")) if f.parts[len(HERE.parent.parts)] != "flake-modules"
          for l in f.read_text().splitlines() if "/scripts/test-" in l and not l.lstrip().startswith("#")]
 check(reads == [], f"no host module reads a scripts/test-* file, so its change needs no host evaluation ({reads})")
+g = ("script", "scripts/test-guest-records.py")
+for path in ("scripts/local-lane.py", "modules/workers/default.nix", "metrics/records.json"):
+    check(g in got(path), f"{path}: the guest-records test, which holds a guest's record kinds to records.json")
+check(g not in got("scripts/test-guest-records.py"), "a test script still maps to nothing")
+w = got("modules/workers/execution-pool.nix")
+check(("evalcheck", "execution-pool-vm") in w and ("check", "execution-pool-vm") not in w,
+      "modules/workers/: execution-pool-vm's evaluation, no build")
+check(not any(k == "evalcheck" for k, _ in got("modules/core/fleet.nix")), "another module: no execution-pool-vm evaluation")
 s = got("pkgs/scheduled-gate/scheduled_gate.py")
 check(("build", "scheduled-gate") in s and evals(s) == set(HOSTS), "another package: its build and every host")
 check(evals(got("pkgs/patches/x.patch")) == set(HOSTS) and not any(k == "build" for k, _ in got("pkgs/patches/x.patch")),
@@ -88,9 +97,9 @@ with tempfile.TemporaryDirectory() as t:
     p = pmc.migrations_problem(d)
     check(p is not None and "0003" in p, f"seeded: a gap at 0003 fails ({p})")
 tree = pathlib.Path("/t")
-for kind, target in (("eval", "msi-ms7758"), ("build", "exec-pool"), ("check", "grafana-dashboards")):
+for kind, target in (("eval", "msi-ms7758"), ("evalcheck", "execution-pool-vm"), ("build", "exec-pool"), ("check", "grafana-dashboards")):
     argv = pmc.command(pmc.Check(kind, target), tree)
-    if kind == "eval":
+    if kind in ("eval", "evalcheck"):
         locks, evals_first = [argv[i + 2] for i, a in enumerate(argv) if a == "flock"], argv[argv.index("nix") + 1] == "eval"
     else:
         # bash -c BUILD $0 LIGHT ATTR: the light lock is the script's $1, taken inside the one heavy hold
