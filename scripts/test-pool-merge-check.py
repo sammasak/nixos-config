@@ -9,8 +9,9 @@ push hook's evaluation takes, and a build compiles under the heavy one alone; a 
 apart from its run (seeded: a held light lock). A slot's nix wrapper, from the module's text with nix and the record
 stubbed: build --expr, --file and flake attributes evaluate under light and build outside it, nix-build instantiates
 under light and builds outside it, and flake check runs under light; the command never inherits the lock, and each hold
-is one lock record of its wait apart from its hold (seeded: a held light lock). A slot's cargo has no lane and
-CARGO_BUILD_JOBS from its reserve."""
+is one lock record of its wait apart from its hold (seeded: a held light lock). A slot's devenv warms its shell up under
+light only while no stamp matches the files its last evaluation read (seeded: an unstamped checkout, a changed devenv.nix
+or imported file, a failed warm-up). A slot's cargo has no lane and CARGO_BUILD_JOBS from its reserve."""
 
 import importlib.util
 import os
@@ -159,18 +160,18 @@ check(pmc.LIGHT.name == "light-work.lock" and "light-work.lock" in (HERE.parent 
       "the light lock is the one the push hook's nix flake show takes")
 
 
-def lane(name: str, real: str, d: pathlib.Path) -> pathlib.Path:
+def lane(name: str, real: str, d: pathlib.Path, exe: str = "${nix}") -> pathlib.Path:
     """A slot's `name` wrapper (modules/workers/execution-pool.nix) as bash, its nix, record and lock files stubbed."""
     src = (HERE.parent / "modules/workers/execution-pool.nix").read_text()
     template = src.split("pkgs.writeShellScriptBin name ''\n", 1)[1].split("\n              ''\n", 1)[0]
     head = f'(lane "{name}" {real} \'\'\n'
     check(head in src, f"the module has a {name} lane")
     body = src.split(head, 1)[1].split("\n            '')\n", 1)[0] if head in src else ""
-    text = template.replace("${text}", body).replace("${real}", "${nix}")
+    text = template.replace("${text}", body).replace("${real}", exe)
     for k, v in {"${pkgs.util-linux}/bin/flock": "flock", "${lib.getExe record}": f"{d}/stub/record", "/run/work-locks/light-work.lock": f"{d}/light", "/run/work-locks/scheduled-gate.lock": f"{d}/gate",
                  "${config.nix.package}/bin/nix-instantiate": f"{d}/stub/nix-instantiate",
                  "${config.nix.package}/bin/nix-build": f"{d}/stub/nix-build", "${pkgs.coreutils}/bin/": "", "${pkgs.bash}/bin/bash": "bash",
-                 "${nix}": f"{d}/stub/nix", "${name}": name, "''$": "$"}.items():
+                 "${nix}": f"{d}/stub/nix", "${devenv}": f"{d}/stub/devenv", "${name}": name, "''$": "$"}.items():
         text = text.replace(k, v)
     out = d / name
     out.write_text("#!/usr/bin/env bash\n" + text + "\n")
@@ -325,6 +326,56 @@ with tempfile.TemporaryDirectory() as tmp:
     check(w.returncode == 0 and waited >= 1.2 and len(rec) == 1
           and re.fullmatch(r"host lock lane=light class=nix-instantiate wait_seconds=[12] seconds=[01] rc=0", rec[0]) is not None,
           f"seeded: a held light lock is waited for and recorded as the wait, not the hold ({waited:.1f} s, {rec})")
+
+    # devenv's warm-up: the stub writes .devenv/input-paths.txt as devenv does, the files its evaluation read
+    co = d / "checkout"
+    (co / "sub").mkdir(parents=True)
+    for f in ("devenv.nix", "devenv.lock", "devenv.yaml", "imported.nix"):
+        (co / f).write_text("v1\n")
+    reads = [co / f for f in ("devenv.nix", "devenv.lock", "devenv.yaml", "devenv.local.nix", "imported.nix")]
+    (d / "stub/devenv").write_text(
+        f'#!/usr/bin/env bash\necho "devenv $* $({d}/stub/state)" >>{d}/log\n'
+        f'[ "$*" = "shell -- true" ] || exit 0\nmkdir -p {co}/.devenv\n'
+        f"printf '%s\\n' {' '.join(map(str, reads))} >{co}/.devenv/input-paths.txt\n"
+        'exit "${WARM_RC:-0}"\n')
+    (d / "stub/devenv").chmod(0o755)
+    wrappers["devenv"] = lane("devenv", "devenv", d, f"{d}/stub/devenv")
+
+    def entered(cwd: pathlib.Path = co, **extra: str) -> tuple[list[str], bool]:
+        (d / "log").write_text("")
+        subprocess.run([str(wrappers["devenv"]), "shell", "--", "x"], cwd=cwd, env=env | extra, check=False, stdout=subprocess.DEVNULL)
+        return (d / "log").read_text().splitlines(), (co / ".devenv/light-warm").exists()
+
+    WARM, RUN = "devenv shell -- true locked", "devenv shell -- x free"
+    r, stamped = entered()
+    check(r == [WARM, RUN] and stamped, f"an unstamped checkout: the warm-up under the light lock, then the shell outside it, and a stamp ({r})")
+    r, _ = entered()
+    check(r == [RUN], f"a stamped checkout: no warm-up, no light hold ({r})")
+    r, _ = entered(co / "sub")
+    check(r == [RUN], f"from a subdirectory: devenv's root found, its stamp read ({r})")
+    (co / "devenv.nix").write_text("v2\n")
+    r, _ = entered()
+    check(r == [WARM, RUN], f"seeded: a changed devenv.nix warms up again ({r})")
+    r, _ = entered()
+    check(r == [RUN], f"and is stamped again ({r})")
+    (co / "imported.nix").write_text("v2\n")
+    r, _ = entered()
+    check(r == [WARM, RUN], f"seeded: a changed file devenv.nix imports (its input list) warms up again ({r})")
+    (co / "devenv.local.nix").write_text("{ }\n")
+    r, _ = entered()
+    check(r == [WARM, RUN], f"seeded: a local override created where none was warms up again ({r})")
+    (co / "devenv.lock").write_text("v2\n")
+    (co / ".devenv/light-warm").unlink()
+    r, stamped = entered(WARM_RC="1")
+    check(r == [WARM, RUN] and not stamped, f"seeded: a failed warm-up writes no stamp ({r})")
+    r, stamped = entered()
+    check(r == [WARM, RUN] and stamped, f"so the next call warms up again, and stamps ({r})")
+    (co / ".devenv/input-paths.txt").unlink()
+    r, _ = entered()
+    check(r == [WARM, RUN], f"seeded: no input list (a .devenv devenv never wrote) warms up ({r})")
+    (d / "records").write_text("")
+    r, _ = entered()
+    check(r == [RUN] and (d / "records").read_text() == "", f"a skipped warm-up writes no lock record ({r})")
 
 # seeded: two branches that each evaluate merge into a tree whose flake show fails (#793 and #796, a duplicate definition)
 with tempfile.TemporaryDirectory() as tmp:

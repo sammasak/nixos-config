@@ -261,11 +261,36 @@ in
               exit
             '')
             # devenv evaluates in-process and caches it: under the lock its eval, or a warm `shell -- true` for a
-            # command that runs a task or a shell, which then evaluates from that cache
+            # command that runs a task or a shell, which then evaluates from that cache. No warm-up while the stamp
+            # matches what devenv's cache keys on: the files its last evaluation read (.devenv/input-paths.txt, its
+            # direnv watch list: devenv.nix, .yaml, .lock, the local overrides and every file they import) and devenv
+            # itself. A changed one, a missing list or a failed warm-up warms up again; env vars it read are not keyed.
             (lane "devenv" devenv ''
+              warm_key() {
+                local f
+                [ -f "$1/input-paths.txt" ] || return
+                {
+                  echo ${devenv}
+                  while IFS= read -r f; do
+                    if [ -d "$f" ]; then echo "$f dir $(${pkgs.coreutils}/bin/ls -A "$f" | ${pkgs.coreutils}/bin/sha256sum)"
+                    elif [ -e "$f" ]; then echo "$f $(${pkgs.coreutils}/bin/sha256sum <"$f")"
+                    else echo "$f absent"; fi
+                  done <"$1/input-paths.txt"
+                } | ${pkgs.coreutils}/bin/sha256sum
+              }
               case ''${1:-} in
                 eval | info | search | direnv-export) light "devenv-$1" ${devenv} "$@"; exit ;;
-                shell | tasks | test | up | processes | build) light devenv-warm-up ${devenv} shell -- true >&2 || : ;;
+                shell | tasks | test | up | processes | build)
+                  # devenv's root: the nearest directory up with a devenv.nix, as devenv finds it
+                  d=$PWD
+                  while [ "$d" != / ] && [ ! -e "$d/devenv.nix" ]; do d=''${d%/*} d=''${d:-/}; done
+                  d=$d/.devenv
+                  k=$(warm_key "$d")
+                  if [ -z "$k" ] || [ "$(${pkgs.coreutils}/bin/cat "$d/light-warm" 2>/dev/null)" != "$k" ]; then
+                    if light devenv-warm-up ${devenv} shell -- true >&2 && k=$(warm_key "$d") && [ -n "$k" ]; then
+                      { echo "$k" >"$d/light-warm.$$" && ${pkgs.coreutils}/bin/mv "$d/light-warm.$$" "$d/light-warm"; } 2>/dev/null || :
+                    fi
+                  fi ;;
               esac
             '')
           ];
