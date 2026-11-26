@@ -1,13 +1,15 @@
 #!/bin/sh
-# no-force-guard v5: refuse non-fast-forward pushes, deletion of
+# no-force-guard v6: refuse non-fast-forward pushes, deletion of
 # refs/heads/main|master, and a push that brings new commits to more than
 # one ref (prek gates only the first such ref), on git's own stdin
 # (<local ref> <local sha> <remote ref> <remote sha> per line).
 # Single source of truth for this block — manual .githooks copies in
-# nixos-config/claude-code-skills/homelab-gitops/knowledge carry the text of
+# nixos-config/claude-code-skills/knowledge carry the text of
 # the platform version they pin and move with their pin bump.
-# Bump the version marker on ANY behavioral change.
+# Bump the version marker on ANY behavioral change (v6: exports PRE_PUSH_STDIN).
 stdin=$(cat)
+# prek passes hooks no stdin; commit-msg-range reads the pushed refs from here
+export PRE_PUSH_STDIN="$stdin"
 zeros=0000000000000000000000000000000000000000
 printf '%s\n' "$stdin" | {
   while read -r _ lsha rref rsha; do
