@@ -152,9 +152,9 @@ With no local model up every command exits 3 with "no local model up" and submit
 11. The v0.1 acceptance script in a VM (PASS, FAIL or UNTESTED per criterion) is not written.
 12. Turn errors per arm (`exec_pool_session_turn_errors_total{host,variant,shunt,agent}`, #851) are counted; the row in
     the Agent harnesses comparison table is PR #860, in flight.
+
 13. A pool session's push from a fresh clone ran no hooks because no hooks path was set (seen on PR #867), so
     pre-push checks may be skipped in slots; needs a brief.
-
 ## Check tuning
 
 Owner, 25 Nov: "keep count of how we can fine tune testing so that we can have some small and fast checks applied and
@@ -165,8 +165,8 @@ commit or pull request names the check as what failed.
 The full gate runs only as the scheduled gate (acer, 03:20, 11:20 and 19:20, when main moved) or `just full-gate`.
 Owner, 26 Nov: a pull request ships on its session's narrow check on its own head and a textually clean merge; nobody
 re-runs a merge check on current main, and the scheduled gate, eight hours apart, is the backstop for two that merge
-cleanly but break each other. `just pool-merge-check` stays for a session that wants it; it picks its checks from
-the changed paths (`scripts/pool_merge_check.py`; docs: nothing) and
+cleanly but break each other. `just pool-merge-check` stays for a session that wants it.
+`just pool-merge-check` picks its checks from the changed paths (`scripts/pool_merge_check.py`; docs: nothing) and
 writes one gate-step record per check. The last full run (26 Nov 07:07 to 08:10 UTC, head `0e525a45`, 3784 s) was red
 on `ollama-gpu-test` alone, fixed by #855; the steps after it did not run. Next full run: the 15:20 scheduled gate.
 
