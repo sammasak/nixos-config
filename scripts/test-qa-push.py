@@ -105,9 +105,10 @@ with tempfile.TemporaryDirectory() as t:
     for f in (lints, docs, fresh, push_lints, ev, record, evrec, t / "qa", t / "qa-other", *gates.values()):
         f.chmod(0o755)
 
+    # nor what nixos:qa exports to its steps (PLATFORM_RECORD_STRICT=1, NIXOS_QA_MODE, ...): the hook sets its own
     env = {k: v for k, v in os.environ.items()
-           if not k.startswith(("GIT_", "PRE_COMMIT_")) and k not in ("NIXOS_QA_TIMES", "GATE_PROBE", "WORK_LOCKS_HELD",
-                                                                   "NIXOS_EVAL_RECORD", "NIX_STUB_VERSION")}
+           if not k.startswith(("GIT_", "PRE_COMMIT_", "NIXOS_QA_", "PLATFORM_RECORD_", "HEAVY_LOCK_"))
+           and k not in ("GATE_PROBE", "WORK_LOCKS_HELD", "NIXOS_EVAL_RECORD", "NIX_STUB_VERSION")}
     env.update(HOME=str(t), XDG_STATE_HOME=str(t / "state"), GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null", GIT_AUTHOR_NAME="t",
                GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
     repo, bare = t / "repo", t / "bare.git"

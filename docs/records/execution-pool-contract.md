@@ -214,7 +214,8 @@ which `exec-pool result ID` shows, so a session's claim that an independent revi
 transcript and slot home are gone. The result's fields are null, not zero, when the runner read no transcript: one it
 could not read, a headless (`claude -p`) turn or a one-shot run, whose result line carries no tool calls; and on a
 turn a runner before 29 parked (one not yet deployed, or rolled back), which moves the result's epoch past the
-`subagent_epoch` the calls were written at. The count alone goes on `turns.subagent_calls` and
+`subagent_epoch` the calls were written at; and on one a runner at 29 parked into a queue host not yet migrated to it.
+The metrics read the 0029 columns unguarded, as they do 0021's: the queue host serves them once it has migrated. The count alone goes on `turns.subagent_calls` and
 `exec_pool_session_subagent_calls_total{host,variant,shunt,agent}`, which adds no unknown turn;
 `exec_pool_session_subagent_turns_read_total` counts the turns read, so an arm whose turns were not read is not one
 that called no subagent.

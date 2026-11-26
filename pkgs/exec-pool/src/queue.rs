@@ -2532,7 +2532,7 @@ fn usage(tx: &mut Transaction<'_>, out: &mut String, hosts: &[String]) -> Result
          # TYPE exec_pool_session_turn_errors_total counter\n",
         "# HELP exec_pool_session_subagent_calls_total Subagent calls session turns made, as their transcripts showed, by host, arm and agent kind.\n\
          # TYPE exec_pool_session_subagent_calls_total counter\n",
-        "# HELP exec_pool_session_subagent_turns_read_total Session turns whose subagent calls were read; the rest are unknown, not none.\n\
+        "# HELP exec_pool_session_subagent_turns_read_total Session turns whose subagent calls were read, by host, arm and agent kind; the rest are unknown, not none.\n\
          # TYPE exec_pool_session_subagent_turns_read_total counter\n",
     ];
     let row_of = |(host, variant, shunt): &(String, String, String), agent: &str| {

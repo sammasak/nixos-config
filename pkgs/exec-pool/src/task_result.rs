@@ -33,7 +33,8 @@ pub struct TaskResult {
     #[serde(default)]
     pub handed_back: Option<bool>,
     /// The subagents the turn's agent called, read from its transcript ([`crate::pane::verdict`]): at most
-    /// [`SUBAGENT_CALLS_MAX`], no prompt or output. `None` when the runner read no transcript (a one-shot run).
+    /// [`SUBAGENT_CALLS_MAX`], no prompt or output. `None` when the runner read no transcript
+    /// (a one-shot or headless run, or one it could not read) or the verdict's fields had another shape.
     #[serde(default)]
     pub subagent_calls: Option<Vec<SubagentCall>>,
     /// How many there were, `subagent_calls` bounded or not.

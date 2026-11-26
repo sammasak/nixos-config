@@ -11,6 +11,10 @@ A path maps to checks only where the gate's history shows what it can break (goa
   pkgs/exec-pool/              its package build (crate tests, clippy, rustfmt) and the evaluation of the pool's hosts;
                                a migration also its numbering, one name per number and no gap
   scripts/test-*               nothing: no host reads one, and the push hook and the full gate run it
+  hosts/asus-b460m/, modules/homelab/ollama-host.nix, modules/homelab/paddock.nix, flake.lock
+                               also scripts/test-ollama-gpu.py on its gate-probe section (asus as deployed and seeded):
+                               an asus or Ollama change can break a seeded case the host's own evaluation never runs;
+                               off asus its CUDA builds are deferred and pass unrecorded, so it proves the evaluation
   other scripts/, modules/workers/, metrics/records.json
                                also scripts/test-guest-records.py: a guest's record kinds are records.json's
   modules/workers/             also the execution-pool-vm check's evaluation, its drvPath only (no build)
@@ -85,11 +89,14 @@ MIGRATION = re.compile(r"(\d{4})_([a-z0-9_]+)\.(up|down)\.sql")
 FLAKE_FILES = ("flake.nix", "flake.lock")
 FLAKE_DIRS = ("flake-modules/", "tests/", "pkgs/", "modules/workers/", "templates/", "apps/", "lib/app-manifest/")
 SHOW = "nixos-push-eval"
+# the paths whose change can move the test's gate-probe section; the section evaluates asus alone
+OLLAMA_GPU = ("hosts/asus-b460m/", "modules/homelab/ollama-host.nix", "modules/homelab/paddock.nix", "flake.lock")
+PROBE_SECTIONS = {"scripts/test-ollama-gpu.py": "ollama-gpu"}
 
 
 @dataclass(frozen=True, order=True)
 class Check:
-    kind: str  # eval, evalcheck, show, build, check, script, migrations
+    kind: str  # eval, evalcheck, show, build, check, script, probe, migrations
     target: str
 
 
@@ -110,6 +117,8 @@ def plan(paths: list[str], hosts: list[str], pkgdirs: list[str]) -> list[Check]:
             want.add(Check("script", GUEST_RECORDS))
         if p.startswith("modules/workers/"):
             want.add(Check("evalcheck", "execution-pool-vm"))
+        if p.startswith(OLLAMA_GPU):
+            want.add(Check("probe", "scripts/test-ollama-gpu.py"))
         if RULES.fullmatch(p):
             want.update(Check("check", c) for c in RULE_CHECKS)
         elif DASHBOARDS.fullmatch(p):
@@ -192,6 +201,15 @@ EVAL = ["env", "WORK_LOCKS_HELD=1", "nix", "eval", "--raw"]
 FLAKE_SHOW = ["env", "WORK_LOCKS_HELD=1", "GC_FREE_SPACE_DIVISOR=16", "nix", "flake", "show", "--json", "--all-systems",
               "--no-write-lock-file"]
 BUILD = ["env", "WORK_LOCKS_HELD=1", "nix", "build", "--no-link", "-L"]
+# a probe test's section: the divisor as devenv.nix's probe, which evaluates asus nine times for this one
+PROBE = ["env", "WORK_LOCKS_HELD=1", "GC_FREE_SPACE_DIVISOR=16", "nix", "eval", "--raw", "--impure", "--expr"]
+
+
+def gate_heavy(tree: pathlib.Path) -> str | None:
+    """devenv.nix's gateHeavy, the pattern scripts/gate_defer.py defers a CUDA build by (it fails without one)."""
+    f = tree / "devenv.nix"
+    m = re.search(r'^  gateHeavy = "([^"]+)";$', f.read_text() if f.exists() else "", re.M)
+    return m.group(1) if m else None
 
 
 def command(check: Check, tree: pathlib.Path) -> list[str] | None:
@@ -208,6 +226,9 @@ def command(check: Check, tree: pathlib.Path) -> list[str] | None:
         return [*EVAL, f"{tree}#{attr}.drvPath"]
     if check.kind == "script":
         return [sys.executable, check.target]
+    if check.kind == "probe":
+        section = PROBE_SECTIONS[check.target]
+        return [*PROBE, f'(import ./scripts/gate-probe.nix {{ only = [ "{section}" ]; }}).json.drvPath']
     return None
 
 
@@ -225,7 +246,12 @@ def run(check: Check, tree: pathlib.Path) -> tuple[bool, float, str]:
     if check.kind == "script":
         return subprocess.run(argv, cwd=tree, check=False).returncode == 0, 0.0, ""
     waits: list[float] = []
-    builds = check.kind in ("build", "check")
+    probe = check.kind == "probe"
+    pattern = gate_heavy(tree) if probe else None
+    if probe and not pattern:
+        say(f"{tree / 'devenv.nix'}: no gateHeavy", err=True)
+        return False, 0.0, ""
+    builds = check.kind in ("build", "check", "probe")
     stdout = subprocess.PIPE if check.kind in (*EVALS, "show") or builds else None
     # heavy, then light: the push hook takes light alone, so the order never deadlocks. One heavy hold over a build's
     # evaluation and build: released between them, a long wait could let a GC delete the evaluated .drv
@@ -233,7 +259,14 @@ def run(check: Check, tree: pathlib.Path) -> tuple[bool, float, str]:
         with held(LIGHT, waits):
             out = subprocess.run(argv, cwd=tree, stdout=stdout, text=True, check=False)
         if out.returncode == 0 and builds:
-            out = subprocess.run([*BUILD, f"{out.stdout.strip()}^*"], cwd=tree, check=False)
+            out = subprocess.run([*BUILD, *(["--print-out-paths"] if probe else []), f"{out.stdout.strip()}^*"], cwd=tree,
+                                 stdout=subprocess.PIPE if probe else None, text=True, check=False)
+        # the test's own nix (a re-evaluation once a GC took the .drv files) is not marked as holding the light lock,
+        # so a pool slot's nix takes it
+        if out.returncode == 0 and probe:
+            env = {k: v for k, v in os.environ.items() if k != "WORK_LOCKS_HELD"}
+            out = subprocess.run([sys.executable, check.target], cwd=tree, check=False,
+                                 env=env | {"GATE_PROBE": out.stdout.strip(), "GATE_HEAVY": pattern})
     if out.returncode == 0 and check.kind in EVALS:
         say(f"{check.target} evaluates to {out.stdout.strip()}")
     return out.returncode == 0, sum(waits), (out.stdout or "") if check.kind in (*EVALS, "show") else ""
