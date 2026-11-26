@@ -68,8 +68,18 @@ let
     }:$PATH ${skillsSrc}/hooks/emit-skill-use.sh";
     timeout = 5;
   };
+  deployer = osConfig.networking.hostName == osConfig.sam.fleet.deployer;
 in
 {
+  # unlike the optional hooks below, the deployer's guard is registered unconditionally: a pin without it would
+  # leave a hook that exits non-zero, blocking every Bash call there
+  assertions = [
+    {
+      assertion = !deployer || builtins.pathExists "${skillsSrc}/hooks/check-heavy-build.py";
+      message = "the skills input has no ${skillsSrc}/hooks/check-heavy-build.py: ${osConfig.sam.fleet.deployer}'s Bash PreToolUse hook runs it, so every Bash call there would be refused; pin a skills rev that carries it";
+    }
+  ];
+
   programs.claude-code = {
     enable = true;
     package = pkgs.claude-code;
@@ -231,7 +241,7 @@ in
             }
             # the deployer (lenovo) must not run the heavy gates (memory); the per-recipe refusals cover only some of
             # them, so the hook refuses nixos:qa, nix flake check and the role VM test there
-            ++ lib.optional (osConfig.networking.hostName == osConfig.sam.fleet.deployer) {
+            ++ lib.optional deployer {
               type = "command";
               command = "${pkgs.python3}/bin/python3 ${skillsSrc}/hooks/check-heavy-build.py ${osConfig.sam.fleet.deployer}";
               timeout = 15;
