@@ -238,7 +238,7 @@ def main():
           and "pool:wait only with timeout_seconds 60 or less" in script
           and "On outcome_unknown run the status_command it returns and nothing else" in script,
           "the prompt dispatches as pool sessions: one per issue, follow-ups as sends to it, waiting is a free slot, needs_review wants a look, a short wait, an uncertain answer is only checked")
-    check("A session has its own diff reviewed in that session: a subagent that did not write it posts a comment whose first line is Grade: N/10 (head <sha>), followed by its findings; a markdown-only diff needs none." in script
+    check("A session has its own diff reviewed in that session: a subagent that did not write it returns its review, first line Grade: N/10 (head <sha>), last line -- pool/<session_id> reviewer, which the session posts unchanged, until a 9 or more on the current head or three rounds below 9." in script and "markdown-only" not in script
           and "An open PR head that is unreviewed, no grade on that head, gets one pool:send to its implementing session asking for that review on that head, never a separate review task." in script
           and "A head already graded below 9 gets no second review: pool:send its findings to the implementing session" in script
           and "a merged or closed PR is never reviewed" in script and "is reported as ready to merge, and the interactive coordinator session merges it." in script,
