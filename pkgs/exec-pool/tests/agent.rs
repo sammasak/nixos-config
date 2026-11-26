@@ -37,7 +37,9 @@ fn every_agent_is_told_to_push_its_own_branch_alone() {
         "on branch pool/t-655",
         "`Why:` line",
         "git push origin pool/t-655",
-        "devenv shell -- git push",
+        "commit and push only through its shell",
+        "devenv shell -- git commit",
+        "devenv shell -- git push origin pool/t-655",
         "Never push main",
         "never force-push",
         "no --no-verify",
@@ -45,6 +47,8 @@ fn every_agent_is_told_to_push_its_own_branch_alone() {
         assert!(prompt.contains(rule), "{rule}: {prompt}");
     }
     assert!(!prompt.contains("{branch}"));
+    // a plain push is no alternative where a devenv.nix exists: it runs no hook in a fresh clone
+    assert!(!prompt.contains(", or `devenv shell"), "{prompt}");
     let long = "x".repeat(101);
     for id in ["-x", "a/b", "a..b", "a b", "ä", &long] {
         let mut bad = t.clone();
