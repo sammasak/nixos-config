@@ -44,7 +44,7 @@ Readings at 25 Nov 22:15 UTC from black-pi's Prometheus and Loki (a slot reads t
 
 | # | Item | Serves (vision.md) | Metric, reading | Narrow check |
 |---|------|--------------------|-----------------|--------------|
-| 1 | Gate speed, and every worker build lands in the cache ([#835](https://github.com/sammasak/nixos-config/issues/835)); carries the red gate (#828 is the fix) | "No dedicated benchmarks, no long test rituals" | 7 d of gate-step records (measured 25 Nov): flake check mean 13.7 min, worst 28.8; gate probe 3.9; seventh-host test 3.2; workers-eval test 2.0; inside the flake check evaluation 8 to 18 min against building 3 to 13 min per run, 100 to 330 compiled and 20 to 100 fetched; merge check host evaluation 47 s mean, 189 min in the week. `homelab_scheduled_gate_red` = 1, head `05c028bbad89`, step `nixos-flake-check` | the step's own record on the 26 Nov 03:20 scheduled run |
+| 1 | Gate speed, and every worker build lands in the cache ([#835](https://github.com/sammasak/nixos-config/issues/835)); carries the red gate (#828 is the fix) | "No dedicated benchmarks, no long test rituals" | 7 d of gate-step records (measured 25 Nov): flake check mean 13.7 min, worst 28.8; gate probe 3.9; seventh-host test 3.2; workers-eval test 2.0; inside the flake check evaluation 8 to 18 min against building 3 to 13 min per run, 100 to 330 compiled and 20 to 100 fetched; merge check host evaluation 47 s mean, 189 min in the week. `homelab_scheduled_gate_red` = 1, head `05c028bbad89`, step `nixos-flake-check`. Where the time goes and the store upload (#839): Check tuning | the step's own record on the 26 Nov 03:20 scheduled run |
 | 2 | Alert investigations end with a cause ([#624](https://github.com/sammasak/nixos-config/issues/624); [#825](https://github.com/sammasak/nixos-config/issues/825), [#826](https://github.com/sammasak/nixos-config/issues/826), [#827](https://github.com/sammasak/nixos-config/issues/827)) | "Alerts are few and each one says what to do" | `AlertInvestigationFailed` firing. 24 h outcomes: ScheduledGateRed 2 failed (both sessions `cancelled`), 1 reported; RetroDueStepFailsRepeat 1 reported, ExecPoolSlotMemoryKills 1 reported, both without a cause ("the cause is unproven"). PR #840 (lenovo deploy) counts a session cancelled after its finished turn as reported, starts no second investigation of a name within 6 h of its report, and points the prompt at the slot's read-only routes; after the deploy failed stays 2 | the rule fixture tests; the next ScheduledGateRed report names its cause or its fix PR |
 | 3 | Internal and outside service names ([#836](https://github.com/sammasak/nixos-config/issues/836), folds in [#14](https://github.com/sammasak/nixos-config/issues/14)): "we need to have internal dns names for services inside the cluster and outside; authentik is needed for real outside traffic but on our cluster it should not" | "DNS stays up"; "Upstream modules before home-made services" | services with an internal name answering without an Authentik redirect: unread (no series yet) | `adguard-dns-test`, one curl per internal name from the LAN |
 | 4 | Check minutes from records ([#837](https://github.com/sammasak/nixos-config/issues/837)) | "Every change ships ... with a comparable metric" | rows in Check tuning still unknown: most. pool-merge-check records do reach Loki: 369 in 24 h, 224 host evaluations at a mean of 52 s (193 min) | the script's fixture test, seconds |
@@ -139,6 +139,44 @@ writes one gate-step record per check.
 | The other tests in `tests` (devenv.nix) | unknown | none traced | most read the gate probe |
 | pool-merge-check: host evaluation | 47 s mean per host, 189 min in 7 d; 52 s over 224 in the last 24 h | lenovo's sam.memory budget (#794, #799) | the host's modules and `hosts/<dir>/` |
 | pool-merge-check: package build | 195 s mean over 22 builds in 24 h | c15a3024 (#795) | `pkgs/<dir>/` |
+
+### Where the time goes, and what a cache can save (Loki, read from a slot on 25 Nov)
+
+The latest scheduled run that reached every step: 24 Nov 15:20, head 191e1d1, 2232 s, red only on
+`shunt-metrics-test`. Its gate-step records:
+
+| Step | Seconds | Of which evaluation | Of which building | Derivations built / substituted / present |
+|---|---|---|---|---|
+| nixos-flake-check | 1373 | 531 (one `nix eval` per output, summed) | 500 over 15 checks; the other 342 s are `nix flake show`, the dry-runs and the per-output processes | 320 compiled, 0 substituted; 15 checks built, 25 already present, 2 deferred to asus |
+| workers-eval-test | 263 | all of it (its own host and guest evaluations) | 0 | none |
+| nixos-gate-probe | 206 | all of it (every host once) | 0 | none |
+| seventh-host-test | 171 | all of it (every host again, seeded) | 0 | none |
+| The other 45 steps | 208 | mostly | mostly none | none |
+
+The answer to "how much would a cache save": at most the 500 s of building, 22 % of the gate. Not one path was
+substituted, because everything not built was already in acer's store. The 320 compiled derivations were the
+deploy checks' systems (msi 132, acer 28, lenovo 15) and the VM tests, built for a head no host had built before.
+What a deploy built on msi or asus is the part the upload below makes present on acer. Evaluation is about 1170 s, more
+than half the gate: the probe, the flake check, workers-eval and seventh-host each evaluate the hosts on their own.
+
+pool-merge-check, 51 runs on 24 and 25 Nov: median 369 s (6.2 min), mean 401 s, max 1452 s; host evaluation is
+57 % of it, package builds 21 %, the named checks 22 %.
+
+Owner, 25 Nov: "anytime a worker builds something it should be put into the cache". What already held: acer's slots
+build through acer's daemon into the store its harmonia serves, and lenovo substitutes from acer. msi's and asus's
+builds were served only while they were up, and no host asks them (a sleeping cache costs every lookup the connect
+timeout). `modules/core/store-upload.nix` (this branch) closes that: a `post-build-hook` on msi and asus queues each
+built output. A path unit and a 10 min retry timer hand the queue over ssh (the host key, a forced command) to acer,
+which pulls the paths from the sender's harmonia, keeps them under gcroots, and roots its own builds the same way.
+Retention is 14 days and 100 GiB of the closures they hold, oldest dropped first. Gauges: `store_upload_queue_paths`,
+`store_upload_sent_paths_total`, `store_upload_last_success_timestamp_seconds` on the senders;
+`store_upload_roots{host}`, `store_upload_roots_bytes{host}`, `store_upload_roots_closure_bytes` and
+`store_upload_received_paths_total{host,result}` on acer.
+
+Follow-ups, in order: (1) the 26 Nov 03:20 run's numbers into the table above; (2) one evaluation of every host shared
+by the probe, the flake check and seventh-host (about 400 s); (3) the flake check's per-output `nix eval` processes
+as one `nix-eval-jobs` run; (4) an alert on `store_upload_queue_paths` growing while acer is up; (5) acer's
+max-jobs and cores (2 and 2) against the memory budget.
 
 ### Escapes still without a narrow check
 
