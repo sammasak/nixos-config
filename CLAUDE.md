@@ -102,7 +102,7 @@ just dry-activate HOST        # Same build and copy, then the units a switch wou
                               # and the closure diff vs the running system; activates nothing, and exits
                               # non-zero when the dry activation fails (it reruns it: deploy-rs ignores the status)
 just role-vm-test [BREAK=1]   # QEMU boot of the runtime-host role (msi only); BREAK=1 must fail. The VM tests are
-                              # also flake checks, so the gate boots them when their inputs change
+                              # flake checks, so the gate boots them when their inputs change
 ```
 
 Current hostnames: `acer-swift`, `lenovo-21CB001PMX` (flake attribute `lenovo`), `msi-ms7758`, `asus-b460m`,
