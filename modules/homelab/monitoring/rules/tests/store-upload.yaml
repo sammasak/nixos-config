@@ -117,10 +117,10 @@ tests:
       - series: 'node_textfile_mtime_seconds{job="node-exporter",instance="asus-b460m",node="asus-b460m",sleeps="true",file="/run/node-exporter-textfile/store-upload.prom"}'
         values: '0x9 600x9 1200x9 1800x9 2400x9 3000x9 3600x9 4200x9 4800x9 5400x9 6000x9 6600x9 7200x9 7800x9'
     alert_rule_test:
-      - eval_time: 89m
+      - eval_time: 90m
         alertname: StoreUploadStale
         exp_alerts: []
-      - eval_time: 95m
+      - eval_time: 91m
         alertname: StoreUploadStale
         exp_alerts:
           - exp_labels: {severity: warning, team: homelab, node: msi-ms7758}
@@ -150,7 +150,8 @@ tests:
         exp_alerts: []
 
   # asus reboots at 30m onto a full /var: no try writes the file in /run again, so neither it nor the queue gauge is
-  # served from 31m and the 5m lookback leaves them at 36m; the gauge from before the boot marks asus a sender
+  # served from 31m and the 5m lookback leaves them at 36m; the gauge from before the boot marks asus a sender.
+  # Past 30 minutes of uptime from 61m, firing 30m later.
   - interval: 1m
     input_series:
       - series: 'up{job="node-exporter",instance="acer-swift",node="acer-swift"}'
@@ -161,11 +162,13 @@ tests:
         values: '0x30 _x100'
       - series: 'node_textfile_mtime_seconds{job="node-exporter",instance="asus-b460m",node="asus-b460m",sleeps="true",file="/run/node-exporter-textfile/store-upload.prom"}'
         values: '0+60x30 _x100'
+      - series: 'node_boot_time_seconds{job="node-exporter",instance="asus-b460m",node="asus-b460m",sleeps="true"}'
+        values: '-86400x30 1800x100'
     alert_rule_test:
-      - eval_time: 64m
+      - eval_time: 90m
         alertname: StoreUploadStale
         exp_alerts: []
-      - eval_time: 70m
+      - eval_time: 91m
         alertname: StoreUploadStale
         exp_alerts:
           - exp_labels: {severity: warning, team: homelab, node: asus-b460m}
@@ -173,4 +176,48 @@ tests:
               summary: "store-upload on asus-b460m has stopped writing its gauges"
               description: "store-upload on asus-b460m has not rewritten /run/node-exporter-textfile/store-upload.prom for over 30 minutes, or has not written it since boot, for 30 minutes while both hosts are up: its tries fail before the write, so the queue gauge is stale and StoreUploadStuck cannot fire while its builds stop reaching acer-swift. Run df -h /var and journalctl -u store-upload -n 20 on asus-b460m. Owning issue: sammasak/nixos-config#835."
               query: 'time() - node_textfile_mtime_seconds{job="node-exporter",node="asus-b460m",file=~".*/store-upload[.]prom"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#storeuploadstuck"
+
+  # acer is down while msi's file is stale: the upload cannot land anyway, and that is acer's alert
+  - interval: 1m
+    input_series:
+      - series: 'up{job="node-exporter",instance="acer-swift",node="acer-swift"}'
+        values: '0x130'
+      - series: 'up{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true"}'
+        values: '1x130'
+      - series: 'store_upload_queue_paths{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true"}'
+        values: '0x130'
+      - series: 'node_textfile_mtime_seconds{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true",file="/run/node-exporter-textfile/store-upload.prom"}'
+        values: '0x9 600x9 1200x9 1800x100'
+    alert_rule_test:
+      - eval_time: 125m
+        alertname: StoreUploadStale
+        exp_alerts: []
+
+  # msi's weekend: last served at 10m, off until 60h (3600m), and it boots onto a full /var. Its queue gauge, 60 h old,
+  # still marks it a sender in the 4d window (1d would not); silent through the boot grace, firing 30m after it.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="node-exporter",instance="acer-swift",node="acer-swift"}'
+        values: '1x3800'
+      - series: 'up{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true"}'
+        values: '1x10 0x3589 1x200'
+      - series: 'store_upload_queue_paths{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true"}'
+        values: '0x10'
+      - series: 'node_textfile_mtime_seconds{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true",file="/run/node-exporter-textfile/store-upload.prom"}'
+        values: '0+60x10'
+      - series: 'node_boot_time_seconds{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true"}'
+        values: '-86400x10 _x3589 216000x200'
+    alert_rule_test:
+      - eval_time: 3660m
+        alertname: StoreUploadStale
+        exp_alerts: []
+      - eval_time: 3661m
+        alertname: StoreUploadStale
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: msi-ms7758}
+            exp_annotations:
+              summary: "store-upload on msi-ms7758 has stopped writing its gauges"
+              description: "store-upload on msi-ms7758 has not rewritten /run/node-exporter-textfile/store-upload.prom for over 30 minutes, or has not written it since boot, for 30 minutes while both hosts are up: its tries fail before the write, so the queue gauge is stale and StoreUploadStuck cannot fire while its builds stop reaching acer-swift. Run df -h /var and journalctl -u store-upload -n 20 on msi-ms7758. Owning issue: sammasak/nixos-config#835."
+              query: 'time() - node_textfile_mtime_seconds{job="node-exporter",node="msi-ms7758",file=~".*/store-upload[.]prom"}'
               runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#storeuploadstuck"

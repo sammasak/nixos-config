@@ -317,8 +317,9 @@ groups:
 
       # A try that fails before its textfile write (a full /var) leaves the last gauges served, so a queue last read 0
       # hides StoreUploadStuck. 1800 s is three missed 10-minute retries; with the 30m for, a transfer may run an hour.
-      # Absent: /run is tmpfs, so after a boot no try has written it. A sender is a node with the queue gauge in the
-      # last 4 days, not 1: msi and asus sleep Fri 21:00 to Mon 08:30. That also drops acer, whose retain job writes
+      # Absent: /run is tmpfs, so after a boot no try has written it; past 30 minutes of uptime, the same grace as a
+      # stale file, so a long first send is not this. A sender is a node with the queue gauge in the last 4 days, not
+      # 1: msi and asus sleep Fri 21:00 to Mon 08:30. That also drops acer, whose retain job writes
       # the same file hourly with no queue gauge; a stalled retain is acer's failed unit, not an upload stopping.
       - alert: StoreUploadStale
         expr: |
@@ -326,6 +327,7 @@ groups:
             max by (node) (time() - node_textfile_mtime_seconds{job="node-exporter",file=~".*/store-upload[.]prom"} > 1800)
             or max by (node) (max_over_time(store_upload_queue_paths{job="node-exporter"}[4d]))
               unless on (node) node_textfile_mtime_seconds{job="node-exporter",file=~".*/store-upload[.]prom"}
+              and on (node) max by (node) (time() - node_boot_time_seconds{job="node-exporter"} > 1800)
           )
           and on (node) max by (node) (max_over_time(store_upload_queue_paths{job="node-exporter"}[4d]))
           and on (node) max by (node) (up{job="node-exporter"} == 1)
