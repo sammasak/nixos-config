@@ -2018,7 +2018,8 @@ fn only_a_reply_parked_past_the_window_with_an_empty_inbox_counts_as_unread() {
     let fresh = parked_ago(&mut s, Some("cli:fresh"), 5);
     let sent = parked_ago(&mut s, Some("cli:sent"), 30);
     let timed = parked_ago(&mut s, Some("cli:timed"), 50);
-    s.send_timer(&timed, "later", "2999-01-01T00:00:00Z").unwrap();
+    s.send_timer(&timed, "later", "2999-01-01T00:00:00Z")
+        .unwrap();
     let closed = parked_ago(&mut s, Some("cli:closed"), 40);
     s.cancel(&closed).unwrap();
     s.send(&sent, "and then this").unwrap();
