@@ -85,6 +85,10 @@ let
   hostName = config.networking.hostName;
   ghForward = ghFleet.host != hostName && lib.elem hostName ghFleet.from;
   ghServes = ghFleet.host == hostName;
+  # the hosts' own pool files, not their configs, which no host reads; scripts/test-workers-eval.py holds the sum to msi's
+  fleetSlots = lib.foldl' (
+    n: h: n + (import ../../hosts/${h}/exec-pool.nix).homelab.execPool.slots
+  ) 0 ghFleet.from;
   # msi's slots' Codex through acer's route (sam.fleet.listeners.codex-egress): this host holds no login
   codexFleet = config.sam.fleet.listeners.codex-egress;
   codexForward = codexFleet.host != hostName && lib.elem hostName codexFleet.from;
@@ -1030,6 +1034,7 @@ in
                     ".fleet" = {
                       manifest = null;
                       inherit (config.homelab.execPool) repos;
+                      slots = fleetSlots;
                     };
                   }
                 )
