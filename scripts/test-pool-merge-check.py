@@ -107,6 +107,8 @@ for kind, target in (("eval", "msi-ms7758"), ("evalcheck", "execution-pool-vm"),
         evals_first = pmc.BUILD.index('flock -o "$1" nix eval') < pmc.BUILD.index("nix build") and argv[-1].endswith(".drvPath")
     check(locks == [str(pmc.LOCK), str(pmc.LIGHT)] and evals_first,
           f"{kind} {target}: evaluated under the heavy lock, then the light one ({argv})")
+a = (pmc.command(pmc.Check("evalcheck", "execution-pool-vm"), tree) or [""])[-1]
+check(a == "/t#checks.x86_64-linux.execution-pool-vm.drvPath", f"evalcheck: the check's drvPath, nothing built ({a})")
 check("WORK_LOCKS_HELD=1" in pmc.EVAL and pmc.BUILD.startswith("export WORK_LOCKS_HELD=1;"),
       "its nix runs marked as holding its locks, or a pool slot's nix waits on the light hold it is under")
 check(pmc.LIGHT.name == "light-work.lock" and "light-work.lock" in (HERE.parent / "devenv.nix").read_text(),
