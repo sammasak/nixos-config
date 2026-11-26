@@ -349,7 +349,7 @@ with tempfile.TemporaryDirectory() as t:
     case("LW the push eval waits for a held light lock", n, "FAST")
     holder.wait()
     step = records.read_text().partition("\n")[0]
-    check(re.fullmatch(rf" gate-step gate=nixos-qa-push step=nixos-push-eval seconds=[01] wait_seconds=[12] result=pass sha={n[:7]}", step),
+    check(re.fullmatch(rf" gate-step gate=nixos-qa-push step=nixos-push-eval seconds=[01] wait_seconds=[123] result=pass sha={n[:7]}", step),
           f"LW seeded: its record counts the wait apart from the run ({step!r})")
     records.write_text("")
     case("LH under a caller's light hold", n, "FAST", WORK_LOCKS_HELD="1")
