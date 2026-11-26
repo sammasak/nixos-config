@@ -61,6 +61,7 @@ ASSERTED = [
     ("prompt without a surface", "{ services.devEnvironments.sessionSurface = lib.mkForce null; }", "prompt needs a sessionSurface"),
     ("docked with an agent", "{ services.devEnvironments.instances.ok.sessionDock = true; }", "ok.sessionDock is set but agent is not"),
     ("reserves above pool", "{ services.devEnvironments.instances = { a = { }; b = { }; c = { }; d = { }; }; }", "adds up to 10240M, more than pool.memory 8192M"),
+    ("MemoryHigh above pool", "{ services.devEnvironments.pool.highFactor = 5; }", "ok's MemoryHigh 10240M is above pool.memory 8192M"),
     ("hash collision", "{ services.devEnvironments.instances = { eal = { }; ea1 = { }; }; }", "two names hash to one address"),
     ("host's own name", "{ networking.hostName = lib.mkForce \"ok\"; programs.ssh.knownHosts.box.hostNames = [ \"ok\" ]; }", "the name is this host's own"),
     ("networking.hosts clash", '{ networking.hosts."192.168.1.5" = [ "ok.box" ]; }', "networking.hosts already maps the name"),
@@ -94,6 +95,7 @@ TYPED = [
     ("model charset", '{ services.devEnvironments.instances.ok.model = "a b"; }', "instances.ok.model' is not of type"),
     ("empty prompt", '{ services.devEnvironments.instances.ok.prompt = ""; }', "instances.ok.prompt' is not of type"),
     ("zero cores", "{ services.devEnvironments.instances.ok.cpu.reserved = 0; }", "cpu.reserved' is not of type"),
+    ("MemoryHigh inside the reserve", "{ services.devEnvironments.pool.highFactor = 0.5; }", "pool.highFactor' is not of type"),
     ("cidr syntax", '{ services.devEnvironments.blockedNetworks = [ "10.0.0.0" ]; }', "blockedNetworks"),
     ("state dir outside /var/lib", '{ services.devEnvironments.stateDir = "/home"; }', "stateDir' is not of type"),
     ("retired name", '{ services.devEnvironments.retired = [ "Bad" ]; }', "retired.\"[definition 1-entry 1]\"' is not of type"),
@@ -1362,7 +1364,7 @@ in {
   limits = { acer = limits acer 4; msi = limits msi 4; };
   namedLimit = { inherit (named) StartLimitIntervalSec StartLimitBurst; };
   # acer's light pool4 beside pool3, and the slice that holds both
-  light = map (n: { inherit (acer.systemd.services."container@${n}".serviceConfig) CPUWeight MemoryMin; quota = acer.systemd.services."container@${n}".serviceConfig.CPUQuota or null; }) [ "pool3" "pool4" ];
+  light = map (n: { inherit (acer.systemd.services."container@${n}".serviceConfig) CPUWeight MemoryMin MemoryHigh; quota = acer.systemd.services."container@${n}".serviceConfig.CPUQuota or null; }) [ "pool3" "pool4" ];
   pool = acer.systemd.slices.environments.sliceConfig.MemoryMax;
   push = builtins.listToAttrs (map (n: { name = "acer-${n}"; value = push acer n; }) (slots 4) ++ map (n: { name = "msi-${n}"; value = push msi n; }) (slots 4));
 }
@@ -1417,9 +1419,10 @@ def check_runner():
               and lim.get("exec") == "0" and lim.get("reset") is None
               and lim.get("resets") == [{"overrideStrategy": "asDropin", "text": "[Unit]\nStartLimitIntervalSec=0\n"}] * n,
               f"{host}: each slot's container@ keeps the core's 600 s / 3 starts, which dev-env-reset@ clears before it starts the container; exec-pool-exec@ and each slot's dev-env-reset@ have no start limit, the shared reset template keeps its own ({lim or out.stderr.strip()[-300:]})")
-    check(got.get("light") == [{"CPUWeight": 200, "MemoryMin": 2 << 30, "quota": None}, {"CPUWeight": 100, "MemoryMin": 1 << 30, "quota": "200%"}]
+    check(got.get("light") == [{"CPUWeight": 200, "MemoryMin": 2 << 30, "MemoryHigh": 4 << 30, "quota": None},
+                               {"CPUWeight": 100, "MemoryMin": 1 << 30, "MemoryHigh": 2 << 30, "quota": "200%"}]
           and got.get("pool") == 9 << 30,
-          f"acer's pool4 is light: weight 100 against 200, a 1G reserve and a 200% CPUQuota, in a pool raised to 9G ({got.get('light')}, {got.get('pool')})")
+          f"acer's pool4 is light: weight 100 against 200, a 1G reserve and a 200% CPUQuota, in a pool raised to 9G; each slot's MemoryHigh is twice its reserve ({got.get('light')}, {got.get('pool')})")
     check(got.get("namedLimit") == {"StartLimitIntervalSec": "600", "StartLimitBurst": "3"},
           f"a named worker's container keeps the core's start limit ({got.get('namedLimit') or out.stderr.strip()[-300:]})")
     want = [f"acer-{n}" for n in acer_slots] + [f"msi-{n}" for n in msi_slots]

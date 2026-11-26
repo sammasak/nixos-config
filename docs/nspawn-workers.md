@@ -32,7 +32,7 @@ sam.workers.instances = {
 | `egress.github.repos` | `[ ]` | `owner/repo` the instance reaches through the host's proxy (git and REST); non-empty, it gets neither credential; a repo whose devenv imports a private input needs that input listed too (factum and herman need `sammasak/devenv-platform`), else no `devenv shell` works; git and nix fetch it through the proxy rewrite without an SSH key. Any other repository: a git fetch alone, sent without the token, so only a public one answers |
 | `egress.github.graphql` | `false` | also pass GraphQL, which no repository list bounds; nearly every `gh pr`/`gh issue` command needs it. Without it a pull request is opened and commented on with `gh api` over REST (`repos/<repo>/pulls`, `repos/<repo>/issues/<n>/comments`), as a pool task is told |
 | `telemetry` | the host's `nativeOtel` | on by default on a `nativeOtel` host, so every environment's work can be reviewed later; `false` opts one out. The guest's Claude exports OTLP metrics and events (no content), and its Codex metrics, as `host.name=<host>,worker.name=<name>` to its `127.0.0.1:4319`, which `otlp.sock` passes (`POST` to exactly `/v1/metrics` or `/v1/logs`, bodies up to 1MiB, stamped `X-Otel-Worker: <name>` over whatever the guest sent; the stamp names the worker on logs and on metric points as `worker`) to the host's `native-otel-relay`; the relay adds the token, which never enters the guest, and limits each environment to 20 requests/s (burst 50) apart from the host's own clients. Setting it `true` on a host without `sam.profile.nativeOtel` fails evaluation; setting `sam.claude.telemetry` in a guest module instead fails too. acer, msi and asus are `nativeOtel` hosts (lenovo too, which runs no environments). Details in [native-otel-canary.md](native-otel-canary.md) |
-| `memory.reserved` | `"2G"` | `MemoryMin`: never reclaimed for a neighbour; above it, whatever the pool has idle |
+| `memory.reserved` | `"2G"` | `MemoryMin`: never reclaimed for a neighbour; above it, whatever the pool has idle up to its `MemoryHigh`, `sam.workers.pool.highFactor` (2) times this |
 | `cpu.reserved` | `2` | cores: `CPUWeight` 100 per core, its share under contention; idle cores are all usable |
 | `rootInGuest` | `false` | its own 65536 uids (`--private-users`): guest root is an unprivileged host uid, and the user gets passwordless sudo. Its home and caches are owned on disk by its mapped ids (not id-mapped), so the option needs a fresh instance: an existing environment toggled either way refuses to start until it is retired or declared under a new name, it has its own sshd key and HostKeyAlias `<name>.environments.<prefix>`, and the state dir and per-container profiles and roots are mounted nosuid. Ran on msi (root1, root2) |
 
@@ -43,14 +43,20 @@ are dropped there, whatever a guest sends). On logs and metric points it sets `w
 from the stamped `X-Otel-Worker`. A `host.name` a guest claims is bounded to the fleet allowlist,
 not otherwise verified.
 
-Host-wide: `sam.workers.pool.memory` (below) and `sam.workers.ntfyUrl` (null, or the ntfy topic that hears of failures, see Alerts).
+Host-wide: `sam.workers.pool.memory` and `pool.highFactor` (below) and `sam.workers.ntfyUrl` (null, or the ntfy topic that hears of failures, see Alerts).
 
 Every environment of a host runs in `environments.slice`, whose `MemoryMax` is
 the host's `sam.workers.pool.memory` (protecting the host and its services) and whose
-`MemoryLow` is the sum of the reserves. An environment has no ceiling of its
-own and the pool no `MemoryHigh`: the only limit is the pool's `MemoryMax`,
-with the pool's swap (zram) capped at a quarter of it, so one gate alone uses what
-its neighbours leave idle, down to their reserves (`MemoryMin`). nix builds
+`MemoryLow` is the sum of the reserves. An environment has no `MemoryMax` of its
+own and the pool no `MemoryHigh`: the only kill is at the pool's `MemoryMax`,
+with the pool's swap (zram) capped at a quarter of it. Each environment's
+`MemoryHigh` is `pool.highFactor` (default 2, at least 1, null for none) times its
+reserve: past it the kernel throttles and reclaims that environment alone and
+kills nothing, so one environment's growth is not taken out of a neighbour at the
+pool's limit; a runaway there slows in its own environment until its turn ends.
+A factor below 1, or a `MemoryHigh` above `pool.memory`, fails evaluation. At 2,
+a slot at its `MemoryHigh` still leaves every other slot its reserve within the
+pool (acer: 4G + 5G = 9G; msi: 4G + 6G = 10G). nix builds
 run in the host's daemon, outside the pool; acer, msi and asus bound that daemon
 (2 jobs of 2 cores, `MemoryHigh` 4G, `MemoryMax` 6G), so a build
 fails before the host's services do. msi powers off at 21:00

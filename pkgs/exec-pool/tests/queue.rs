@@ -2425,6 +2425,19 @@ fn a_memory_kill_continues_as_an_error_does_and_tells_the_agent_what_was_killed(
         moves(&runner.park(&a, epoch, &p).unwrap().1)
     };
     assert_eq!(killed(&mut runner), [(Status::Waiting, "turn_memory_kill")]);
+    let due: i64 = pg
+        .sql()
+        .query_one(
+            "SELECT extract(epoch FROM due_at - now())::int8 FROM inbox \
+             WHERE kind = 'continue' AND consumed_epoch IS NULL",
+            &[],
+        )
+        .unwrap()
+        .get(0);
+    assert!(
+        (60..=120).contains(&due),
+        "a first memory kill continues in 120 s, not an error's 600: due in {due} s"
+    );
     assert_eq!(all_due(&pg, &mut owner), [(Status::Queued, "wake")]);
     let (a, epoch, turn) = started(&mut runner);
     assert!(
@@ -2459,6 +2472,24 @@ fn a_memory_kill_continues_as_an_error_does_and_tells_the_agent_what_was_killed(
             == "exec_pool_session_turns_total{host=\"msi-ms7758\",reason=\"turn_memory_kill\"} 2"),
         "{metrics}"
     );
+}
+
+#[test]
+fn only_a_memory_kill_that_opens_a_run_of_errors_continues_sooner() {
+    use exec_pool::queue::error_backoff;
+    let len = exec_pool::queue::ERROR_BACKOFF_SECS.len();
+    assert_eq!(error_backoff(ParkReason::TurnMemoryKill, 1), Some(120));
+    assert_eq!(error_backoff(ParkReason::TurnError, 1), Some(600));
+    for n in 2..=len {
+        assert_eq!(
+            error_backoff(ParkReason::TurnMemoryKill, n),
+            error_backoff(ParkReason::TurnError, n),
+            "error {n} of a run"
+        );
+    }
+    let past = len + 1;
+    assert_eq!(error_backoff(ParkReason::TurnMemoryKill, past), None);
+    assert_eq!(error_backoff(ParkReason::TurnError, past), None);
 }
 
 /// Makes every unread inbox row due now and runs a reconcile: the changes it made.
