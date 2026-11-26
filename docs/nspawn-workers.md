@@ -204,11 +204,11 @@ it off (`services.devEnvironments.alert` is the program they call).
 ### ExecPoolReplyUnread
 
 A session's last turn parked as `turn_end` (its final reply written, often a pull request open) over 15 minutes ago,
-for 5 minutes, and no message has been sent to it since: `exec_pool_waiting_oldest_seconds{reason="turn_end"}`,
+for 5 minutes, with nothing unread in its inbox (no message, no `send --at` timer): `exec_pool_waiting_oldest_seconds{reason="turn_end"}`,
 which acer's queue renders per host and park reason, from the park's event. A shipped session is cancelled and a
 sent message re-queues it, so neither counts.
 
-1. On acer, `exec-pool list --limit 50`: the `waiting` sessions parked `turn_end`.
+1. On acer, `exec-pool list --limit 200`: the sessions waiting on `turn_end` (the list is newest first).
 2. `exec-pool status ID` for each: its reply and pull request.
 3. Ship it (review, merge) and close it with `exec-pool cancel ID`, or send it on with
    `exec-pool send ID --prompt TEXT`. The alert clears at the next scrape after the last one is closed or sent.

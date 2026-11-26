@@ -1988,7 +1988,7 @@ fn a_message_sent_while_a_turn_runs_is_delivered_after_its_park() {
 }
 
 #[test]
-fn only_a_reply_parked_past_the_window_with_nothing_sent_counts_as_unread() {
+fn only_a_reply_parked_past_the_window_with_an_empty_inbox_counts_as_unread() {
     let pg = Pg::new();
     let mut owner = pg.migrated();
     let (mut s, old) = session(&pg);
@@ -2017,6 +2017,8 @@ fn only_a_reply_parked_past_the_window_with_nothing_sent_counts_as_unread() {
     parked_ago(&mut s, None, 20);
     let fresh = parked_ago(&mut s, Some("cli:fresh"), 5);
     let sent = parked_ago(&mut s, Some("cli:sent"), 30);
+    let timed = parked_ago(&mut s, Some("cli:timed"), 50);
+    s.send_timer(&timed, "later", "2999-01-01T00:00:00Z").unwrap();
     let closed = parked_ago(&mut s, Some("cli:closed"), 40);
     s.cancel(&closed).unwrap();
     s.send(&sent, "and then this").unwrap();
@@ -2033,10 +2035,10 @@ fn only_a_reply_parked_past_the_window_with_nothing_sent_counts_as_unread() {
     let age = oldest(&metrics, "turn_end");
     assert!(
         (1200..1260).contains(&age),
-        "the 20 minute one, not the re-queued or closed ones: {age}"
+        "the 20 minute one, not the re-queued, timed or closed ones: {age}"
     );
     assert_eq!(oldest(&metrics, "preempted"), 0);
-    for id in [&old, &fresh, &sent, &closed] {
+    for id in [&old, &fresh, &sent, &timed, &closed] {
         assert!(!metrics.contains(id.as_str()), "no id in the metrics: {id}");
     }
     s.cancel(&old).unwrap();

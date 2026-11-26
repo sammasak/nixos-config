@@ -569,14 +569,14 @@ tests:
           - labels: 'host_variant:exec_pool_session_turn_errors:increase1d{host="acer-swift",variant="default",shunt="off"}'
             value: 0
 
-  # a turn_end reply on acer ages a minute a minute: over 900 s at 16m, firing 5m later; msi's reached 10 minutes and
-  # was shipped (closed, back to 0); a preempted session past 900 s is not a reply
+  # a turn_end reply on acer ages a minute a minute: over 900 s at 16m, firing 5m later; msi's passed 900 s at 16m and
+  # was shipped (closed, back to 0) at 18m, inside for:; a preempted session past 900 s is not a reply
   - interval: 1m
     input_series:
       - series: 'exec_pool_waiting_oldest_seconds{job="node-exporter",node="acer-swift",host="acer-swift",reason="turn_end"}'
         values: '0+60x30'
       - series: 'exec_pool_waiting_oldest_seconds{job="node-exporter",node="acer-swift",host="msi-ms7758",reason="turn_end"}'
-        values: '0+60x10 0x20'
+        values: '0+60x17 0x12'
       - series: 'exec_pool_waiting_oldest_seconds{job="node-exporter",node="acer-swift",host="msi-ms7758",reason="preempted"}'
         values: '0+60x30'
     alert_rule_test:
@@ -589,7 +589,7 @@ tests:
           - exp_labels: {severity: warning, team: homelab, host: acer-swift}
             exp_annotations:
               summary: "An execution pool session last run on acer-swift has waited over 15 minutes with its reply unread"
-              description: "The oldest session on acer-swift whose last turn parked as turn_end, with no message sent since, has waited 21m 0s: its final reply, often an open pull request, sits unshipped. Run exec-pool list on acer for the waiting turn_end sessions, read each with exec-pool status ID, then ship it and close it with exec-pool cancel ID, or send it on with exec-pool send ID --prompt TEXT (runbook)."
+              description: "The oldest session on acer-swift whose last turn parked as turn_end, with nothing unread in its inbox, has waited 21m 0s: its final reply, often an open pull request, sits unshipped. Run exec-pool list --limit 200 on acer for the sessions waiting on turn_end, read each with exec-pool status ID, then ship it and close it with exec-pool cancel ID, or send it on with exec-pool send ID --prompt TEXT (runbook)."
               query: 'exec_pool_waiting_oldest_seconds{job="node-exporter",host="acer-swift",reason="turn_end"}'
               runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/nspawn-workers.md#execpoolreplyunread"
 
