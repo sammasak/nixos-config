@@ -1,4 +1,4 @@
-# promtool test rules for homelab.yaml's failed-unit alert (flake-modules/monitoring-check.nix runs it).
+# promtool test rules for homelab.yaml's failed-unit and systemd-collector alerts (flake-modules/monitoring-check.nix runs it).
 rule_files: [../homelab.yaml]
 evaluation_interval: 1m
 tests:
@@ -19,3 +19,66 @@ tests:
               description: "caddy.service has been in the failed state on acer-swift for 15 minutes. Run systemctl status caddy.service and journalctl -u caddy.service there; systemctl reset-failed clears it once fixed."
               query: 'node_systemd_unit_state{job="node-exporter",node="acer-swift",state="failed"} == 1'
               runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#nodesystemdunitfailed"
+
+  # msi's systemd collector fails from 5m; lenovo's at 20m for 5 minutes only; acer's never; black-pi serves no series
+  - interval: 1m
+    input_series:
+      - series: 'node_scrape_collector_success{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",collector="systemd"}'
+        values: '1x4 0x40'
+      - series: 'node_scrape_collector_success{job="node-exporter",instance="lenovo-21CB001PMX",node="lenovo-21CB001PMX",collector="systemd"}'
+        values: '1x19 0x5 1x20'
+      - series: 'node_scrape_collector_success{job="node-exporter",instance="acer-swift",node="acer-swift",collector="systemd"}'
+        values: '1x44'
+      - series: 'node_scrape_collector_success{job="node-exporter",instance="black-pi",node="black-pi",collector="cpu"}'
+        values: '1x44'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: NodeSystemdCollectorFailed
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: NodeSystemdCollectorFailed
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: msi-ms7758}
+            exp_annotations:
+              summary: "node-exporter's systemd collector fails on msi-ms7758"
+              description: "node-exporter on msi-ms7758 has answered for 10 minutes without its systemd collector, so no unit state reaches black-pi: NodeSystemdUnitFailed and StoreUploadStale are blind for it. Run journalctl -u prometheus-node-exporter --since -30m | grep systemd there."
+              query: 'node_scrape_collector_success{job="node-exporter",node="msi-ms7758",collector="systemd"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#nodesystemdcollectorfailed"
+      # lenovo has been at 0 since 20m, less than for:, and acer and black-pi never: msi alone
+      - eval_time: 24m
+        alertname: NodeSystemdCollectorFailed
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: msi-ms7758}
+            exp_annotations:
+              summary: "node-exporter's systemd collector fails on msi-ms7758"
+              description: "node-exporter on msi-ms7758 has answered for 10 minutes without its systemd collector, so no unit state reaches black-pi: NodeSystemdUnitFailed and StoreUploadStale are blind for it. Run journalctl -u prometheus-node-exporter --since -30m | grep systemd there."
+              query: 'node_scrape_collector_success{job="node-exporter",node="msi-ms7758",collector="systemd"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#nodesystemdcollectorfailed"
+      - eval_time: 40m
+        alertname: NodeSystemdCollectorFailed
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: msi-ms7758}
+            exp_annotations:
+              summary: "node-exporter's systemd collector fails on msi-ms7758"
+              description: "node-exporter on msi-ms7758 has answered for 10 minutes without its systemd collector, so no unit state reaches black-pi: NodeSystemdUnitFailed and StoreUploadStale are blind for it. Run journalctl -u prometheus-node-exporter --since -30m | grep systemd there."
+              query: 'node_scrape_collector_success{job="node-exporter",node="msi-ms7758",collector="systemd"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#nodesystemdcollectorfailed"
+
+  # a host that goes down while its collector fails serves no series: the alert resolves, TargetDown speaks
+  - interval: 1m
+    input_series:
+      - series: 'node_scrape_collector_success{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",collector="systemd"}'
+        values: '1x4 0x20 stale'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: NodeSystemdCollectorFailed
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: msi-ms7758}
+            exp_annotations:
+              summary: "node-exporter's systemd collector fails on msi-ms7758"
+              description: "node-exporter on msi-ms7758 has answered for 10 minutes without its systemd collector, so no unit state reaches black-pi: NodeSystemdUnitFailed and StoreUploadStale are blind for it. Run journalctl -u prometheus-node-exporter --since -30m | grep systemd there."
+              query: 'node_scrape_collector_success{job="node-exporter",node="msi-ms7758",collector="systemd"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#nodesystemdcollectorfailed"
+      - eval_time: 30m
+        alertname: NodeSystemdCollectorFailed
+        exp_alerts: []

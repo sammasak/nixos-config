@@ -71,6 +71,18 @@ Fires: a service, socket, timer, target or path unit is in the failed state for 
 First: on the host, `systemctl status <unit>` and `journalctl -u <unit> -b`. `systemctl reset-failed <unit>` once
 the cause is fixed.
 
+## NodeSystemdCollectorFailed
+
+Fires: the host's node-exporter answers but `node_scrape_collector_success{collector="systemd"}` is 0 for 10
+minutes. A host that is down or asleep serves no series and is TargetDown's or HostExpectedOff's, not this one's.
+Blind while it fires: every `node_systemd_unit_state` series of that host, so NodeSystemdUnitFailed, ShuntCollectorStale's
+failed-unit leg and StoreUploadStale (which picks its senders by `store-upload.path`) cannot fire for it.
+First: on the host, `journalctl -u prometheus-node-exporter --since -30m | grep systemd` for the collector's error,
+then `systemctl status dbus` and `busctl --system list` to see whether D-Bus answers.
+Fix: what the error names, then `systemctl restart prometheus-node-exporter`. If D-Bus itself does not answer,
+reboot the host in a quiet moment; do not restart dbus in place, which drops every client on the bus. The alert
+resolves at the next scrape that succeeds.
+
 ## NodeTemperatureHigh
 
 Fires: black-pi's `cpu-thermal` zone reads 85 °C or more for 15 minutes.
