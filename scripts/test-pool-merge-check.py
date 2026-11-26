@@ -221,12 +221,13 @@ with tempfile.TemporaryDirectory() as tmp:
     check(r == ["store gc free"], f"another subcommand runs unlocked ({r})")
 
     (d / "gate").touch()
-    start = time.monotonic()
-    r = runs("eval", "--raw", ".#x")
-    check(r == ["eval --raw .#x locked"] and time.monotonic() - start < 1,
-          f"no scheduled gate: a slot's evaluation takes the light lock at once ({r})")
+    w = subprocess.run([str(wrappers["nix"]), "eval", "--raw", ".#x"], env=env, capture_output=True, text=True, check=False)
+    r = (d / "log").read_text().splitlines()[-1:]
+    check(r == ["eval --raw .#x locked"] and "scheduled gate" not in w.stderr,
+          f"no scheduled gate: a slot's evaluation takes the light lock without waiting ({r}, {w.stderr.strip()!r})")
     holder = subprocess.Popen(["flock", str(d / "gate"), "sleep", "2"])
-    time.sleep(0.3)
+    while subprocess.run(["flock", "-n", str(d / "gate"), "true"], check=False).returncode == 0:
+        time.sleep(0.05)
     (d / "log").write_text("")
     start = time.monotonic()
     w = subprocess.run([str(wrappers["nix"]), "eval", "--raw", ".#x"], env=env, capture_output=True, text=True, check=False)

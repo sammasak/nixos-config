@@ -117,9 +117,10 @@ in
             lib.hiPrio (
               pkgs.writeShellScriptBin name ''
                 light() {
-                  # the scheduled gate runs alone (#835): its scheduled-gate.lock (pkgs/heavy-lock) is waited out first,
-                  # within the same 900 s
-                  start=$SECONDS gate=/run/work-locks/scheduled-gate.lock
+                  # no evaluation starts while the scheduled gate holds the heavy lock (#835): its scheduled-gate.lock
+                  # (pkgs/heavy-lock) is waited out first, within the same 900 s. One already running goes on: held
+                  # shared across it, overlapping slots would starve the gate's exclusive take.
+                  local start=$SECONDS gate=/run/work-locks/scheduled-gate.lock w rc
                   if [ -e "$gate" ] && ! ${pkgs.util-linux}/bin/flock -s -n "$gate" true; then
                     echo "${name}: waiting for the scheduled gate, which holds /run/work-locks/heavy-work.lock" >&2
                     ${pkgs.util-linux}/bin/flock -s -w 900 -E 75 "$gate" true || {

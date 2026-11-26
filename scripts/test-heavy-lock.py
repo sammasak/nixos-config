@@ -63,6 +63,14 @@ with tempfile.TemporaryDirectory() as t:
                        text=True, timeout=20, check=False)
     check(r.stdout.strip() == "HELD",
           f"the scheduled gate holds scheduled-gate.lock beside the lock, for a slot to wait on ({r.stdout.strip()})")
+    holder = subprocess.Popen(["flock", str(lock), "sleep", "2"])
+    time.sleep(0.3)
+    queued = subprocess.Popen([*PROGRAM, "true"], env=env | {"NIXOS_QA_MODE": "scheduled"}, stderr=subprocess.DEVNULL)
+    time.sleep(0.5)
+    free = subprocess.run(["flock", "-n", str(mark), "true"], check=False).returncode == 0
+    holder.wait()
+    queued.wait(timeout=20)
+    check(free, "a scheduled gate still queued for the lock leaves scheduled-gate.lock free: a slot waits on no other job")
 
     r, waited = contended("bash", "-c", WAIT)
     holder_named = "waiting for" in r.stderr and "held by pid" in r.stderr
