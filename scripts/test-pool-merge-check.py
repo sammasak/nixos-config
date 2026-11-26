@@ -63,6 +63,10 @@ for path in ("flake.nix", "flake-modules/pkgs-dir.nix", "scripts/flake-output-ki
     k = got(path)
     check(evals(k) == set(HOSTS) and ("script", "scripts/test-flake-output-kinds.py") in k,
           f"{path}: every host and the output-kinds test")
+check(got("scripts/test-x.py", "scripts/test-y.sh") == set(), "a test script: nothing, no host")
+reads = [f"{f}: {l.strip()}" for f in sorted(HERE.parent.glob("[!.]*/**/*.nix")) if f.parts[len(HERE.parent.parts)] != "flake-modules"
+         for l in f.read_text().splitlines() if "/scripts/test-" in l and not l.lstrip().startswith("#")]
+check(reads == [], f"no host module reads a scripts/test-* file, so its change needs no host evaluation ({reads})")
 s = got("pkgs/scheduled-gate/scheduled_gate.py")
 check(("build", "scheduled-gate") in s and evals(s) == set(HOSTS), "another package: its build and every host")
 check(evals(got("pkgs/patches/x.patch")) == set(HOSTS) and not any(k == "build" for k, _ in got("pkgs/patches/x.patch")),
