@@ -187,7 +187,7 @@ own left running in the turn's unit: a Bash tool command (`pane::tool_shell`), a
 job (`nohup` or `setsid`, `pane::detached`: a process in the unit's cgroup adopted by the container's init, in a
 session that is not the agent's) keeps it
 busy, the time limit still the bound; a job started outside the unit (`systemd-run`) is not seen and dies at the park. Idle is the session's
-**pause**: the agent stays in its pane for `homelab.execPool.idleGraceSecs` (600 s; `idleGraceBusySecs`, 60 s, while a
+**pause**: the agent stays in its pane for `homelab.execPool.idleGraceSecs` (120 s; `idleGraceBusySecs`, 60 s, while a
 task is queued and no slot is idle on any host), and whatever the owner types in the pane, or a message `exec-pool send`
 puts in the inbox meanwhile (handed over in the turn hint `turn.json` beside the manifest, `runner::TurnHint`, every
 heartbeat; the helper prompts it, and the park marks it read), works on in the same turn. Once the grace runs out (at

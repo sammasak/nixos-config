@@ -252,6 +252,8 @@ let
     exit "$rc"
   '';
   ownCache = w: w.rootInGuest || w.ownNixCache;
+  # a docked instance's sessions get their pane from whoever moves them in, per turn: a standing one would sit empty
+  surfaced = w: cfg.sessionSurface != null && !w.sessionDock;
   aliasOf = w: if w.rootInGuest then "${w.name}.${keyAlias}" else keyAlias;
   hostKeyOf =
     w:
@@ -1557,9 +1559,7 @@ in
           w:
           [
             (lib.nameValuePair "container@${w.name}" {
-              wants = lib.optional (
-                cfg.sessionSurface != null
-              ) "${cfg.unitPrefix}-${cfg.sessionSurface.name}-${w.name}.service";
+              wants = lib.optional (surfaced w) "${cfg.unitPrefix}-${cfg.sessionSurface.name}-${w.name}.service";
               # A changed guest (any guest module, nixpkgs) switches live through the stock ExecReload, which runs the new
               # system's switch-to-configuration inside: the agent's ssh session keeps running. Changed memory and CPU
               # properties take effect at the daemon-reload, also without a restart.
@@ -1614,7 +1614,7 @@ in
               };
             })
           ]
-          ++ lib.optional (cfg.sessionSurface != null) (
+          ++ lib.optional (surfaced w) (
             lib.nameValuePair "${cfg.unitPrefix}-${cfg.sessionSurface.name}-${w.name}" (
               let
                 surface = cfg.sessionSurface.script (w // { ctl = lib.getExe (ctl w); });

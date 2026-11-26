@@ -1157,9 +1157,10 @@ def check_pool_compat():
         # the host's shared units list every instance, so a slot moves them; each named worker's own units stay
         shared = {"dev-env-egress.service", "dev-env-records.service", "dev-env-reset@.service", "dev-env-usage.service"}
         moved = {u for u in units.keys() - mine if units[u] != absent.get("units", {}).get(u)}
-        check(moved <= shared and units.keys() - mine == absent.get("units", {}).keys() and len(mine) == 4 * n
+        check(moved <= shared and units.keys() - mine == absent.get("units", {}).keys() and len(mine) == 3 * n
+              and not any(u.startswith("worker-herdr-pool") for u in mine)
               and {k: v for k, v in on.get("containers", {}).items() if k not in names} == absent.get("containers") and on.get("inventory") == (n > 0),
-              f"slots = {n}: a container@, dev-env-reset@ drop-in, worker- and worker-herdr- unit per slot, the named workers' units and containers unchanged, worker-pool-inventory {'installed' if n else 'absent'} ({sorted(mine)}, moved {sorted(moved)})")
+              f"slots = {n}: a container@, dev-env-reset@ drop-in and worker- unit per slot and no standing worker-herdr- one (the runner opens a turn's pane), the named workers' units and containers unchanged, worker-pool-inventory {'installed' if n else 'absent'} ({sorted(mine)}, moved {sorted(moved)})")
     # agents = [ "claude" ]: the slot gets a named Claude worker's route, the anthropic proxy, and nothing more
     on = pool_eval('{ homelab.execPool = { enable = true; slots = 1; agents = [ "claude" ]; }; }')
     s = on.get("slots", {}).get("pool1", {})
@@ -1391,8 +1392,8 @@ def check_runner():
     herdr = json.loads(env.get("EXEC_POOL_HERDR", "[]"))
     check(env.get("EXEC_POOL_ATTACH") == "/run/current-system/sw/bin/worker-%i turn" and env.get("EXEC_POOL_DTACH", "").endswith("/bin/dtach")
           and herdr[:1] and herdr[0].endswith("/bin/setpriv") and "--reuid=lukas" in herdr and herdr[-1].endswith("/bin/herdr")
-          and got.get("grace") == ["600", "60"] and got.get("execTimeout") == "infinity",
-          f"a session turn's pane is in the host user's Herdr (herdr run as that user), attached by the slot's `turn` entry point to the agent's dtach terminal; an idle agent pauses 600 s, 60 s while work waits; the helper has no start timeout, a session turn being as long as the owner works in it ({herdr}, {env.get('EXEC_POOL_ATTACH')}, {got.get('grace')}, {got.get('execTimeout')})")
+          and got.get("grace") == ["120", "60"] and got.get("execTimeout") == "infinity",
+          f"a session turn's pane is in the host user's Herdr (herdr run as that user), attached by the slot's `turn` entry point to the agent's dtach terminal; an idle agent pauses 120 s, 60 s while work waits; the helper has no start timeout, a session turn being as long as the owner works in it ({herdr}, {env.get('EXEC_POOL_ATTACH')}, {got.get('grace')}, {got.get('execTimeout')})")
     # a slot's reset restarts its container once per task turn, seconds apart in a session: the reset clears the
     # container's start limit, which still ends a guest that never gets ready
     script = got.get("reset", "")

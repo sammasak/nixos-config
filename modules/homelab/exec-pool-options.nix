@@ -129,7 +129,7 @@ in
     };
     idleGraceSecs = mkOption {
       type = types.ints.unsigned;
-      default = 600;
+      default = 120;
       description = "How long a session's agent, idle and waiting for input, stays in its slot's Herdr pane, where the owner's typing or a message sent to the session answers it in the same turn, before the session parks (its work pushed) and frees the slot.";
     };
     idleGraceBusySecs = mkOption {
