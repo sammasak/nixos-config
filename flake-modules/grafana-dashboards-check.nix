@@ -5,7 +5,7 @@
 #   the names scripts/shipping-metrics.py, scripts/nav-metrics.py, scripts/shunt-metrics.py, scripts/guest-records.py
 #   and pkgs/scheduled-gate and pkgs/alert-investigations print with --list (shipping.prom, nav.prom, shunt.prom,
 #   guest-records.prom, scheduled-gate.prom, alert-investigations.prom) and the series exec-pool's renderer types
-#   (exec-pool.prom) and acer's Codex login script (codex-egress.prom);
+#   (exec-pool.prom), acer's Codex login script (codex-egress.prom) and store-upload's gauges (store-upload.prom);
 # - the monitoring stack's own /metrics, run here (scripts/monitoring-exposition.sh: Prometheus, Alertmanager, Alloy);
 # - name literals and registrations in the source each host runs: Loki, Alloy, Caddy and blackbox (`sources` below),
 #   llm-gateway, Authentik; AdGuard's (dns.prom); the GPU exporter's (the gpu-telemetry-exporter check's output);
@@ -574,6 +574,9 @@ in
             # acer's Codex login textfile, written by the inline script in modules/workers/codex-auth.nix
             rg --no-filename -o 'f"codex_egress_[a-z_]+ ' ${../modules/workers/codex-auth.nix} | sed 's/^f"//; s/ $//' | sort -u > codex-egress.prom
             grep -qx codex_egress_login_present codex-egress.prom
+            # the store-upload textfile both its sides write (modules/core/store-upload.nix)
+            rg --no-filename -o '# TYPE store_upload_[a-z_]+' ${../modules/core/store-upload.nix} | awk '{ print $3 }' | sort -u > store-upload.prom
+            grep -qx store_upload_last_success_timestamp_seconds store-upload.prom
             # the slot hosts' push filter textfile (pkgs/exec-pool-push-filter)
             ${
               lib.getExe (pkgs.callPackage ../pkgs/exec-pool-push-filter/package.nix { })
@@ -583,7 +586,7 @@ in
               ${lib.head (lib.splitString " " acer.systemd.services.authentik.serviceConfig.ExecStart)} > authentik.prom
             checker=${pkgs.python3.withPackages (ps: [ ps.pyyaml ])}/bin/python3
             static=(node-exporter=node.prom node-exporter=systemd.prom node-exporter=writers.prom
-              node-exporter=${adguardCheck}/dns.prom node-exporter=shipping.prom node-exporter=nav.prom node-exporter=shunt.prom node-exporter=guest-records.prom node-exporter=scheduled-gate.prom node-exporter=exec-pool.prom node-exporter=codex-egress.prom node-exporter=push-filter.prom
+              node-exporter=${adguardCheck}/dns.prom node-exporter=shipping.prom node-exporter=nav.prom node-exporter=shunt.prom node-exporter=guest-records.prom node-exporter=scheduled-gate.prom node-exporter=exec-pool.prom node-exporter=codex-egress.prom node-exporter=store-upload.prom node-exporter=push-filter.prom
               node-exporter=alert-investigations.prom
               node-exporter=${compactionInfo}
               llm-gateway=llm-gateway.prom authentik-server=authentik.prom authentik-worker=authentik.prom
