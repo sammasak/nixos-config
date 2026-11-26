@@ -595,7 +595,7 @@ if fc:
 # its output kinds (and the flake check's host toplevels); a failure or a dirty checkout records nothing; the flake
 # check's flake show is not run for a recorded tree, unless NIXOS_EVAL_RECORD=0, the checkout is dirty, or the record is
 # another tree's; recorded kinds that differ from flakeKinds still fail the step
-pe = re.search(r"\n  pushEval =\s+gate\s+\"nixos-push-eval\".*?''\n(.*?)\n *'';\n", src, re.S)
+pe = re.search(r"\n  pushEval =\s+gate\s+\"nixos-push-eval\".*?''\n(.*?)\n *'';\n", src, re.DOTALL)
 check(pe is not None and fc is not None, "pushEval and flakeCheck found in devenv.nix")
 if pe and fc:
     with tempfile.TemporaryDirectory() as t:
@@ -651,7 +651,7 @@ if pe and fc:
 
         def run_(which, **extra):
             calls.write_text(""), recs.write_text("")
-            r = subprocess.run(["bash", "-euo", "pipefail", "-c", bodies[which]], cwd=pr, env={**genv, **extra}, capture_output=True, text=True)
+            r = subprocess.run(["bash", "-euo", "pipefail", "-c", bodies[which]], cwd=pr, env={**genv, **extra}, capture_output=True, text=True, check=False)
             showed = any(c.startswith("flake show") for c in calls.read_text().splitlines())
             return r.returncode, showed, json.loads(rfile.read_text()) if rfile.exists() else None, r.stderr, recs.read_text()
 
@@ -671,7 +671,7 @@ if pe and fc:
               f"FC a miss: the flake check runs its flake show and records it with each host's toplevel ({rc}, {rec}, {err[-300:]!r})")
         rc, showed, rec, err, rr = run_("flake")
         check(rc == 0 and not showed and "flake show skipped: tree" in err and "(eval record; NIXOS_EVAL_RECORD=0 runs it)" in err
-              and re.search(r"^gate-step gate=nixos-qa step=nixos-flake-check check=flake-output-kinds owner=msi-ms7758 seconds=0 result=cached ", rr, re.M),
+              and re.search(r"^gate-step gate=nixos-qa step=nixos-flake-check check=flake-output-kinds owner=msi-ms7758 seconds=0 result=cached ", rr, re.MULTILINE),
               f"FC a hit: no flake show, said so, and a cached gate-step record for it ({rc}, {err[-300:]!r}, {rr!r})")
         rc, showed, rec, err, rr = run_("flake", NIXOS_EVAL_RECORD="0")
         check(rc == 0 and showed, f"FC NIXOS_EVAL_RECORD=0: the flake show runs ({rc})")
@@ -697,11 +697,11 @@ if pe and fc:
         check(list((t / "tmp").iterdir()) == [], f"the flake check leaves no temporary toplevels file ({list((t / 'tmp').iterdir())})")
 
 # a docs push's doc tests (docTests) build no whole probe: each test builds only its section, under the light lane
-dt = re.search(r"\n  docTests =\s+gate\s+\"nixos-doc-tests\".*?''\n(.*?)\n *'';\n", src, re.S)
+dt = re.search(r"\n  docTests =\s+gate\s+\"nixos-doc-tests\".*?''\n(.*?)\n *'';\n", src, re.DOTALL)
 check(dt is not None and "getExe probe" not in dt.group(1) and "unset GATE_PROBE" in dt.group(1),
       "docTests builds no whole probe and leaves each test to build its own section")
 sys.path.insert(0, str(ROOT / "scripts"))
-import gate_probe  # noqa: E402
+import gate_probe
 
 with tempfile.TemporaryDirectory() as t:
     t = pathlib.Path(t)

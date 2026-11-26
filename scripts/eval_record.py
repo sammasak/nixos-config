@@ -65,7 +65,7 @@ def clean_tree(repo: pathlib.Path) -> str | None:
     flags = git(repo, "ls-files", "-v")
     sparse = git(repo, "config", "--bool", "core.sparseCheckout")
     tree = git(repo, "rev-parse", "HEAD^{tree}")
-    if status != "" or flags is None or re.search(r"^[a-zS]", flags, re.M) or (sparse or "").strip() == "true":
+    if status != "" or flags is None or re.search(r"^[a-zS]", flags, re.MULTILINE) or (sparse or "").strip() == "true":
         return None
     tree = (tree or "").strip()
     return tree if TREE.fullmatch(tree) else None
