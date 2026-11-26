@@ -99,6 +99,25 @@ let
     "scrape_samples_post_metric_relabeling"
     "scrape_series_added"
   ];
+  # read at evaluation: interpolating ../modules and ../scripts rebuilt this check for every edit under them
+  writers = lib.concatMapStrings (n: "${n} 0\n") (
+    lib.unique (
+      lib.sort lib.lessThan (
+        lib.concatMap
+          (
+            f:
+            lib.concatLists (
+              lib.filter lib.isList (builtins.split "printf '(homelab_[a-z_]+)" (builtins.readFile f))
+            )
+          )
+          (
+            lib.filter (f: builtins.match ".*\\.(nix|sh|py)" (toString f) != null) (
+              lib.filesystem.listFilesRecursive ../modules ++ lib.filesystem.listFilesRecursive ../scripts
+            )
+          )
+      )
+    )
+  );
   render =
     (import ../modules/homelab/monitoring/dashboards.nix {
       inherit lib;
@@ -499,7 +518,7 @@ in
             # timex needs adjtimex, which the sandbox may refuse
             python3 -I ${../scripts/node-exporter-collector-names.py} $src timex >> systemd.prom
             # what the repo's own textfile writers print (open-webui's edge check, the generation file)
-            rg --no-filename -o "printf '(homelab_[a-z_]+)" -r '$1 0' ${../modules} ${../scripts} | sort -u > writers.prom
+            cp ${pkgs.writeText "writers.prom" writers} writers.prom
             # the deployed command line, with only the listener, the textfile directory and the fixture roots swapped
             ${
               lib.replaceStrings

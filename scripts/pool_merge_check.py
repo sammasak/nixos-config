@@ -10,6 +10,7 @@ A path maps to checks only where the gate's history shows what it can break (goa
   dashboards (*.json)          the dashboard checks and black-pi's evaluation (its datasource assertion)
   pkgs/exec-pool/              its package build (crate tests, clippy, rustfmt) and the evaluation of the pool's hosts;
                                a migration also its numbering, one name per number and no gap
+  scripts/test-*               nothing: no host reads one, and the push hook and the full gate run it
   flake.lock                   every host's evaluation and scripts/test-deploy-recipes.py (private inputs over ssh)
   flake.nix, flake-modules/    every host's evaluation and scripts/test-flake-output-kinds.py: a new output kind fails
                                the gate's nixos-flake-check step only after every output evaluated
@@ -78,7 +79,7 @@ def plan(paths: list[str], hosts: list[str], pkgdirs: list[str]) -> list[Check]:
     want: set[Check] = set()
     every_host = False
     for p in paths:
-        if is_doc(p):
+        if is_doc(p) or p.startswith("scripts/test-"):
             continue
         if RULES.fullmatch(p):
             want.update(Check("check", c) for c in RULE_CHECKS)
