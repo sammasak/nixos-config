@@ -24,8 +24,9 @@ let
   # in the proxy's runtime directory, which no guest binds whole; no instance name starts with a dot
   pushSocket = "/run/dev-env-egress/.push.sock";
   repoRegex = repos: "(?i:${lib.concatMapStringsSep "|" (lib.escapeRegex) repos})";
-  # the ref updates and a pull request's head are in the body, which Caddy cannot read: every receive-pack and pull
-  # request creation, however spelled, goes to the filter, which passes the slot's own task's on to the push site below
+  # the ref updates and a pull request's head are in the body, which Caddy cannot read: every receive-pack, and every
+  # pull request creation on a listed repository, however spelled, goes to the filter, which passes the slot's own
+  # task's on to the push site below
   filterRoute =
     i:
     lib.optionalString (ownRefs i) (
@@ -33,8 +34,16 @@ let
       + lib.removeSuffix "\n" ''
         @receive path_regexp (?i)git-receive-pack
         @pulls {
+          path_regexp (?i)^/repos/${repoRegex i.egress.github.repos}/pulls/?$
+          method POST
+        }
+        # msi's forward would otherwise pass another repository's to acer, which holds them to its own list alone
+        @otherPulls {
           path_regexp (?i)^/repos/[^/]+/[^/]+/pulls/?$
           method POST
+        }
+        handle @otherPulls {
+          respond 403
         }
         handle @receive {
           reverse_proxy unix/${filterSocket} {

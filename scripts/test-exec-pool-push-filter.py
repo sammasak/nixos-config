@@ -114,7 +114,7 @@ def free_port():
         return s.getsockname()[1]
 
 
-def raw(sock, slot, body, headers=None):
+def raw(sock, slot, body, headers=None, path="/o/r.git/git-receive-pack"):
     """A request straight to the filter's socket, the way Caddy would send it."""
     conn = http.client.HTTPConnection("localhost", timeout=10)
     conn.sock = socket.socket(socket.AF_UNIX)
@@ -122,7 +122,7 @@ def raw(sock, slot, body, headers=None):
     h = {"Content-Type": "application/x-git-receive-pack-request", **(headers or {})}
     if slot is not None:
         h["X-Pool-Slot"] = slot
-    conn.request("POST", "/o/r.git/git-receive-pack", body=body, headers=h)
+    conn.request("POST", path, body=body, headers=h)
     status = conn.getresponse().status
     conn.close()
     return status
@@ -153,7 +153,7 @@ def main():
 http://127.0.0.1:{port} {{
   @receive path_regexp (?i)git-receive-pack
   @pulls {{
-    path_regexp (?i)^/repos/[^/]+/[^/]+/pulls/?$
+    path_regexp (?i)^/repos/(?i:o/r)/pulls/?$
     method POST
   }}
   handle @receive {{
@@ -188,7 +188,7 @@ http:// {{
             wait_for(lambda: socket.socket(socket.AF_UNIX).connect(push), "caddy's push socket", caddy)
             wait_for(lambda: socket.socket(socket.AF_UNIX).connect(fsock), "the filter", filt)
             run(d, f"http://127.0.0.1:{port}/o/r.git", bare, fsock, manifest, prom)
-            pulls(port, manifest, prom)
+            pulls(port, fsock, manifest, prom)
         finally:
             filt.terminate()
             caddy.terminate()
@@ -293,11 +293,13 @@ def run(d, url, bare, fsock, manifest, prom):
           f"a request with no slot or an unknown one counts as unknown, not as its header's name ({c})")
 
 
-def api(port, path, body):
+def api(port, path, body, headers=None, chunked=False):
     """A REST call as gh api sends it through the slot's site: its status and the JSON it got back."""
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
-    conn.request("POST", path, body=body if isinstance(body, bytes) else json.dumps(body).encode(),
-                 headers={"Content-Type": "application/json", "X-GitHub-Api-Version": "2022-11-28"})
+    data = body if isinstance(body, bytes) else json.dumps(body).encode()
+    conn.request("POST", path, body=iter([data]) if chunked else data, encode_chunked=chunked,
+                 headers={"Content-Type": "application/json; charset=utf-8", "X-GitHub-Api-Version": "2022-11-28",
+                          **(headers or {})})
     resp = conn.getresponse()
     out = resp.read()
     conn.close()
@@ -307,7 +309,7 @@ def api(port, path, body):
         return resp.status, {"text": out.decode(errors="replace")}
 
 
-def pulls(port, manifest, prom):
+def pulls(port, fsock, manifest, prom):
     pr = {"head": "pool/t-1", "base": "main", "title": "t", "body": "b"}
     pushes = counts(prom)
     status, got = api(port, "/repos/o/r/pulls", pr)
@@ -315,6 +317,9 @@ def pulls(port, manifest, prom):
           f"a pull request from the task's own branch reaches the API as sent ({status} {got} {Backend.api})")
     status, _ = api(port, "/repos/O/r/pulls/", {**pr, "head": "o:pool/t-1", "head_repo": "r"})
     check(status == 201 and len(Backend.api) == 2, f"and named with the repository's own owner ({status})")
+    status, _ = api(port, "/repos/o/r/pulls", {**pr, "head_repo": "o/r"}, chunked=True)
+    check(status == 201 and len(Backend.api) == 3 and json.loads(Backend.api[-1][1])["head_repo"] == "o/r",
+          f"and sent chunked, its repository named in full ({status})")
     for what, body in [
         ("main", {**pr, "head": "main"}),
         ("another task's branch", {**pr, "head": "pool/t-2"}),
@@ -325,19 +330,31 @@ def pulls(port, manifest, prom):
         ("a head given twice", b'{"head": "pool/t-1", "head": "main", "base": "main"}'),
         ("a body that is no JSON object", b'["pool/t-1"]'),
         ("a body that is no JSON", b"head=pool/t-1"),
+        ("a head given twice, one escaped", b'{"head": "pool/t-1", "h\\u0065ad": "main"}'),
+        ("an issue turned into one", {**pr, "issue": 7}),
+        ("a body over 1 MiB", {**pr, "body": "x" * (1 << 20)}),
+        ("another repository's branch named in full", {**pr, "head_repo": "o/elsewhere"}),
+        ("a form body", (b"head=pool/t-1", {"Content-Type": "application/x-www-form-urlencoded"})),
+        ("a compressed body", (json.dumps(pr).encode(), {"Content-Encoding": "gzip"})),
     ]:
-        status, got = api(port, "/repos/o/r/pulls", body)
-        check(status == 403 and len(Backend.api) == 2 and "refused by the pool's filter" in got.get("message", ""),
+        body, headers = body if isinstance(body, tuple) else (body, {})
+        status, got = api(port, "/repos/o/r/pulls", body, headers)
+        check(status == 403 and len(Backend.api) == 3 and "refused by the pool's filter" in got.get("message", ""),
               f"a pull request from {what} is refused with a message, and never reaches the API ({status} {got})")
     manifest.rename(manifest.with_suffix(".gone"))
     status, _ = api(port, "/repos/o/r/pulls", pr)
-    check(status == 403 and len(Backend.api) == 2, "with no manifest (no task in the slot) no pull request is opened")
+    check(status == 403 and len(Backend.api) == 3, "with no manifest (no task in the slot) no pull request is opened")
     manifest.with_suffix(".gone").rename(manifest)
+    js = {"Content-Type": "application/json"}
+    check(raw(fsock, "pool9", json.dumps(pr).encode(), js, "/repos/o/r/pulls") == 403
+          and raw(fsock, "pool1", json.dumps(pr).encode(), js, "/repos/o/r/pulls?x=1") == 403 and len(Backend.api) == 3,
+          "a pull request from a slot the filter does not know, or with a query, is refused")
     status, _ = api(port, "/repos/o/r/issues/1/comments", {"body": "head: main"})
     check(status == 201 and Backend.api[-1][0] == "/repos/o/r/issues/1/comments",
           f"another API call passes unread ({status})")
     c = counts(prom, PULLS)
-    check(c[("pool1", "passed")] == 2 and c[("pool1", "refused")] == 10 and counts(prom) == pushes,
+    check(c[("pool1", "passed")] == 3 and c[("pool1", "refused")] == 17 and c[("unknown", "refused")] == 1
+          and counts(prom) == pushes,
           f"pull requests count apart from pushes, the comment in neither ({c})")
 
 

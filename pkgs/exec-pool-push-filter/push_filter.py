@@ -9,7 +9,7 @@ to its file, the runner's). Anything else, or anything it cannot read, is a 403 
 
 A slot's `POST /repos/<owner>/<repo>/pulls` comes here too: the pull request it opens is passed on only when its JSON
 body's `head` is `pool/<id>` (or `<owner>:pool/<id>`) in that same repository; which repositories a slot reaches is the
-sites' own list, not the filter's.
+sites' own list, not the filter's. Passed means passed the filter: GitHub may still refuse it.
 
 GitHub's own answer is passed back as it comes, so the client sees whether the push landed. A broken upstream is a 502
 and nothing is tried again: the push may or may not have landed, and only the client (the park checks with ls-remote)
@@ -203,6 +203,8 @@ def check_pull(body: bytes, owner: str, repo: str, task: str) -> None:
         raise Refused(f"not a JSON body: {e}") from e
     if not isinstance(pr, dict):
         raise Refused("not a JSON object")
+    if "issue" in pr:
+        raise Refused("an issue turned into a pull request: it may be anyone's")
     head, branch = pr.get("head"), f"pool/{task}"
     # `<owner>:<branch>` names a fork's branch: only the repository's own owner is the same repository
     who, colon, ref = head.rpartition(":") if isinstance(head, str) else ("", "", "")
@@ -242,7 +244,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         print(f"{what} slot={self.headers.get('X-Pool-Slot')!r} path={self.path!r}", file=sys.stderr, flush=True)
 
     def kind(self) -> str:
-        return "pull" if PULLS_PATH.fullmatch(self.path) else "push"
+        return "pull" if PULLS_PATH.fullmatch(self.path.split("?", 1)[0]) else "push"
 
     def refuse(self, why: str) -> None:
         self.note(f"refused ({why})")
@@ -281,6 +283,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             raise Refused("not a repository's git-receive-pack")
         body = self.body()
         if pulls is not None:
+            # what GitHub parses as a form could hold another head than the JSON this reads
+            if self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/json":
+                raise Refused("not an application/json body")
             data = body.read(MAX_PULL_BODY + 1)
             if len(data) > MAX_PULL_BODY:
                 raise Refused("a body over 1 MiB")
