@@ -1550,6 +1550,8 @@ fn the_submitter_cli_cancels_its_task_and_wait_returns_on_it() {
     let run = |args: &[&str]| {
         Command::new(env!("CARGO_BIN_EXE_exec-pool"))
             .args(args)
+            // no repository list: these submit example.org, which the pool host's list would refuse
+            .env("EXEC_POOL_REPOS", "/nonexistent")
             .env(
                 "EXEC_POOL_DB",
                 pg.conninfo()
@@ -2591,6 +2593,8 @@ fn the_submitter_cli_starts_a_session_messages_it_and_waits_for_its_park() {
     let submitter = |args: &[&str]| {
         let out = Command::new(env!("CARGO_BIN_EXE_exec-pool"))
             .args(args)
+            // no repository list: these submit example.org, which the pool host's list would refuse
+            .env("EXEC_POOL_REPOS", "/nonexistent")
             .env(
                 "EXEC_POOL_DB",
                 pg.conninfo()
