@@ -47,8 +47,8 @@ check(u["persistenced"] and "nvidia-persistenced.service" in u["after"],
 for seed, watts in (("powerHigh", 271), ("powerLow", 99)):
     check(any(f"gpuPowerLimit is {watts} W" in m for m in failing[seed]),
           f"seeded: a {watts} W cap fails evaluation {failing[seed]}")
-check(any("promptCacheMiB 8192 is above half of ollama.service's MemoryMax 8G" in m for m in failing["cacheAtCap"]),
-      f"seeded: a prompt cache of 8192 MiB, the whole MemoryMax, fails evaluation {failing['cacheAtCap']}")
+check(any("promptCacheMiB 8192 is above half of ollama.service's MemoryMax " in m for m in failing["cacheAtCap"]),
+      f"seeded: a prompt cache of 8192 MiB, at least asus's whole MemoryMax, fails evaluation {failing['cacheAtCap']}")
 check(any("OLLAMA_CONTEXT_LENGTH is 65536" in m for m in failing["ctx64k"]),
       f"seeded: a server context above qwen's trained 32768 fails evaluation {failing['ctx64k']}")
 check(any("OLLAMA_CONTEXT_LENGTH is 2048" in m for m in failing["ctx2k"]),
