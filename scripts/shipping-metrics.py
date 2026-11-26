@@ -43,6 +43,7 @@ METRICS = {
     "shipping_gate_seconds": "Duration of the last full gate runs (push or scheduled mode), by host and quantile.",
     "shipping_gate_step_failures": "Distinct heads a push-gate step (or the flake check's inner check) failed on in the last 7 d, by step and check.",
     "shipping_gate_step_last_failure_timestamp_seconds": "Unix time of the newest of those failures, by step and check.",
+    "shipping_gate_step_scheduled_pass_timestamp_seconds": "Unix time a scheduled full gate on main last passed a failed step or check, by step and check.",
     "shipping_deploys": "Recorded deploys in the last 7 d, by result.",
     "shipping_deploy_rollbacks": "Deploys deploy-rs rolled back, in the window.",
     "shipping_deploy_rollbacks_open": "Per host, deploys rolled back in the last 24 h with no good deploy of that host since.",
@@ -365,6 +366,11 @@ def gates(loki, out, want):
     for (step, check), n in sorted(step_failures(records).items()):
         out.add("shipping_gate_step_failures", n, step=step, check=check, window="7d")
         out.add("shipping_gate_step_last_failure_timestamp_seconds", newest[step, check], step=step, check=check)
+    heads = sorted({head7(r) for _, r in loki_records(loki, GATE_QUERY, 7) if r.get("mode") == "scheduled"} - {""})
+    if newest and heads:
+        passes = loki_records(loki, '{job="platform",kind="gate-step"} != "result=fail" |~ "(sha|head)=(%s)"' % "|".join(heads), 7)
+        for (step, check), t in sorted(step_scheduled_passes(passes, heads, newest).items()):
+            out.add("shipping_gate_step_scheduled_pass_timestamp_seconds", t, step=step, check=check)
 
 
 def step_failures(records):
@@ -390,15 +396,30 @@ def step_last_failures(records):
     return newest
 
 
+def head7(r):
+    h = r.get("head") or r.get("sha") or ""
+    return h[:7] if re.fullmatch(r"[0-9a-f]{7,64}", h) else ""
+
+
+def step_scheduled_passes(records, heads, units):
+    """{(step, check): unix time} of the newest pass of each failed unit on a scheduled full gate's head (main), so
+    RetroDueStepFailsRepeat clears once main passes it again while another step keeps that run red. A check passes by
+    its own record only (built, fetched or present): the step's pass says nothing of a check it deferred."""
+    newest = {}
+    for t, r in records:
+        unit = (r.get("step", "?"), r.get("check") or "step")
+        ok = ("built", "fetched", "present") if r.get("check") else ("pass",)
+        if r.get("gate") == "nixos-qa" and head7(r) in heads and unit in units and r.get("result") in ok:
+            newest[unit] = max(t, newest.get(unit, t))
+    return newest
+
+
 def step_failure_units(records):
     """(time, (step, check), head) per failure step_failures counts."""
     fails = [(t, r) for t, r in records if r.get("gate") == "nixos-qa" and r.get("result") == "fail"]
-    def head(r):
-        h = r.get("head") or r.get("sha") or ""
-        return h[:7] if re.fullmatch(r"[0-9a-f]{7,64}", h) else ""
-    inner = {(r.get("step"), head(r)) for _, r in fails if r.get("check") and head(r)}
+    inner = {(r.get("step"), head7(r)) for _, r in fails if r.get("check") and head7(r)}
     for i, (t, r) in enumerate(fails):
-        step, h, check = r.get("step", "?"), head(r), r.get("check") or "step"
+        step, h, check = r.get("step", "?"), head7(r), r.get("check") or "step"
         if not r.get("check") and h and (step, h) in inner:
             continue
         yield t, (step, check), h or f"no-head-{i}"

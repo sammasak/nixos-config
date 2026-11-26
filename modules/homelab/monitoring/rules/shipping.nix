@@ -169,7 +169,7 @@ in
         # clears newFailureHours after the unit's last failure unless its count rose since (a failure Loki received
         # late, under its old time), and fires again on the next; with no timestamp (an older collector) the count
         # alone decides. A scheduled full gate on main that started after the last failure is the pattern handled, unless
-        # it deferred that check to its owner host
+        # it deferred that check to its owner host, and so is one that passed that step or check since, red elsewhere
         (alert "RetroDueStepFailsRepeat"
           (
             let
@@ -180,9 +180,9 @@ in
               }";
               rose = "${fails} > ${before} or ${fails} unless on (step, check) ${before}";
             in
-            "${fails} >= ${toString a.RetroDueStepFailsRepeat.minFailures.value} unless on (step, check) (${stale} unless on (step, check) (${rose})) and on () ${gateRuns} >= ${toString a.RetroDueStepFailsRepeat.lastRuns.value} unless on (step, check) (max by (step, check) (shipping_gate_step_last_failure_timestamp_seconds) < on () group_left max(homelab_scheduled_gate_green_timestamp_seconds{job=\"node-exporter\"}) unless on (step, check) max by (step, check) (homelab_scheduled_gate_green_deferred{job=\"node-exporter\"}))"
+            "${fails} >= ${toString a.RetroDueStepFailsRepeat.minFailures.value} unless on (step, check) (${stale} unless on (step, check) (${rose})) and on () ${gateRuns} >= ${toString a.RetroDueStepFailsRepeat.lastRuns.value} unless on (step, check) (max by (step, check) (shipping_gate_step_last_failure_timestamp_seconds) < on () group_left max(homelab_scheduled_gate_green_timestamp_seconds{job=\"node-exporter\"}) unless on (step, check) max by (step, check) (homelab_scheduled_gate_green_deferred{job=\"node-exporter\"})) unless on (step, check) (max by (step, check) (shipping_gate_step_last_failure_timestamp_seconds) < on (step, check) max by (step, check) (shipping_gate_step_scheduled_pass_timestamp_seconds))"
           )
-          "Gate step {{ $labels.step }}{{ if eq $labels.check \"step\" }} (check=\"step\": the step's own record, no inner check named on those heads){{ else if $labels.check }}, check {{ $labels.check }},{{ end }} failed on {{ $value }} heads in 7 d: a retro is due (Shipping dashboard: failed gate steps; Platform health for the runs). Rerun it alone on main: ${rerun}; a scheduled full gate on main that passes after the last failure clears this, as does ${toString newFailureHours} h with no new one."
+          "Gate step {{ $labels.step }}{{ if eq $labels.check \"step\" }} (check=\"step\": the step's own record, no inner check named on those heads){{ else if $labels.check }}, check {{ $labels.check }},{{ end }} failed on {{ $value }} heads in 7 d: a retro is due (Shipping dashboard: failed gate steps; Platform health for the runs). Rerun it alone on main: ${rerun}; a scheduled full gate on main that passes, or passes this step or check, after the last failure clears this, as does ${toString newFailureHours} h with no new one."
           { }
         )
         # min_over_time over 45 m spans two runs (every 30 min): one failed run that the next one fixes stays quiet
