@@ -27,6 +27,8 @@ in sammasak/nixos-config, herman, skills, devenv-platform and paddock (gh, read 
 - Capacity follows the hosts that are up: msi and asus are off 21:00 to 08:30 and are never woken; acer and lenovo
   keep working the queue at night.
 - Prefer upstream nixpkgs modules and built-in features over home-made services.
+- Owner gates: only what no agent can do (physical access, a real-terminal sudo, money, an account-level
+  credential, an approval the owner reserved). Those carry `needs-owner` and stay out of the queue (Not now).
 - 26 Nov: pull requests ship on the session's narrow check on its own head, the in-session independent review and a
   textually clean merge; nobody re-runs a merge check on current main. The scheduled gate on acer, three runs a day,
   is the backstop, and a clash between two clean merges costs one fix-forward pull request.
@@ -58,36 +60,33 @@ A brief number is the coordinator's, not on GitHub.
 |---|-------------|---------|--------------------|
 | 1 | PR [#950](https://github.com/sammasak/nixos-config/pull/950), brief 236 | a one-shot task's `gh` reaches the signing proxy, so it stops getting 401 while sessions work | 2, sandboxes with no credentials |
 | 2 | brief 237 (per coordinator, no PR yet) | a host drain stops waiting without bound on a running one-shot task, so a deploy or power-off goes ahead | 2, work stops for a deploy or power-off |
-| 3 | [#825](https://github.com/sammasak/nixos-config/issues/825) | the next scheduled gate on main is green on the five steps red at 18:20 UTC (fixes #931, #936, #938, #939, #942, #947); a red `qa-push-test` or `nixos-flake-check` goes back to the efficiency-plan session | 3, no long test rituals |
-| 4 | herman [#62](https://github.com/sammasak/herman/issues/62), herman PR [90](https://github.com/sammasak/herman/pull/90) (sent back at 7/10) | an unmarked amendment no longer resolves on a marked sibling's citation, cross-date and cross-family shapes included, with a red control for cross-date | 2, protection against starvation: the oldest runnable item (13 Nov) |
-| 5 | briefs 235 then 232 (per coordinator), after #944 and #948 | a due `waiting_until` session is woken by the idle loop's reconcile too, not only by a running turn's heartbeat (three idle reconciles missed one) | 2, a session that waits continues where it left off |
-| 6 | PR [#940](https://github.com/sammasak/nixos-config/pull/940) (graded 8/10, being fixed) | each turn's result lists its subagent calls, so an in-session review can be checked after the session is gone (#901) | 3, agent runs are queryable |
-| 7 | none yet (per coordinator) | the `session_summaries` view reads unknown, not 0 USD, for a session with no priced turn (the follow-up to #913) | 3, where money went |
-| 8 | paddock [#26](https://github.com/sammasak/paddock/issues/26) (T2-1, track [#33](https://github.com/sammasak/paddock/issues/33)), brief 230 | expert slots described by layout (moe-ssd-1) on a branch from upstream main, passing rubric #22 | 4, MoE from SSD, fit for upstream |
-| 9 | brief 229 (per coordinator) | the qwen35 long-prompt fix alone on a branch from upstream main, an upstream candidate under rubric #22 | 4, fit for upstream |
-| 10 | paddock [#23](https://github.com/sammasak/paddock/issues/23) (T1-1, track [#32](https://github.com/sammasak/paddock/issues/32)) | flake packages on a branch from upstream main, built on acer with hashes matching asus's, the CUDA pack rebuilt bit-identical | 4, fit for upstream |
-| 11 | [#874](https://github.com/sammasak/nixos-config/issues/874) phase C, [#807](https://github.com/sammasak/nixos-config/issues/807) | Paddock serves real Pi work on asus: the GPU repro, baseline runs, the over-window repro through Pi (paddock PR 21), then 20 local-lane tasks at a local share of 50 percent or more | 4, local models useful to the fleet's agents |
-| 12 | [#903](https://github.com/sammasak/nixos-config/issues/903), [#827](https://github.com/sammasak/nixos-config/issues/827) | memory pressure lands on the slot that grows, not on the shared 9 GiB slice; the kills per busy hour on acer fall | 2, long work survives |
-| 13 | [#14](https://github.com/sammasak/nixos-config/issues/14) | AdGuard's scoped DNS ports (#878) answer a tailnet query and refuse one from outside; then close it | 1, DNS stays up; the oldest open issue (3 Oct) |
-| 14 | [#835](https://github.com/sammasak/nixos-config/issues/835), draft PR [#918](https://github.com/sammasak/nixos-config/pull/918) | the flake check's per-output evaluations in fewer processes within acer's memory budget (deploy pairs alone, the rest through nix-eval-jobs), or the follow-up dropped | 3, no long test rituals |
-| 15 | [#625](https://github.com/sammasak/nixos-config/issues/625) | Shunt kept or removed on acer pool1 from its per-arm cost and turn series | 3, judged on the running system |
-| 16 | [#624](https://github.com/sammasak/nixos-config/issues/624), [#826](https://github.com/sammasak/nixos-config/issues/826) | each firing alert has a receipt with its cause; RetroDueStepFailsRepeat clears once the scheduled gate passes `scorecard-test` (#942) | 3, alerts are few and say what to do |
-| 17 | [#837](https://github.com/sammasak/nixos-config/issues/837) | nixos:qa runs `scripts/check-tuning.py`, so Check tuning's minutes come from the records, not from PR bodies | 3, where time went |
-| 18 | [#898](https://github.com/sammasak/nixos-config/issues/898) | a slot's eval and fetch caches survive turns (resets shipped in #910); close it or name what is left | 2, long work on any slot |
+| 3 | [#825](https://github.com/sammasak/nixos-config/issues/825) | the next scheduled gate on main is green on the five steps red at 18:20 UTC (fixes #931, #936, #938, #939, #942); a red `qa-push-test` or `nixos-flake-check` goes back to the efficiency-plan session | 3, no long test rituals |
+| 4 | herman [#62](https://github.com/sammasak/herman/issues/62), herman PR [90](https://github.com/sammasak/herman/pull/90) (sent back at 7/10) | an unmarked amendment no longer resolves on a marked sibling's citation, cross-date and cross-family shapes included, with a red control for cross-date | the anti-starvation pick (oldest runnable, 13 Nov), under part 2's protection against starvation |
+| 5 | brief 232 (per coordinator) | a due `waiting_until` session is woken by the idle loop's reconcile too, as a running turn's heartbeat does since #948 (three idle reconciles missed one) | 2, a session that waits continues where it left off |
+| 6 | none yet (per coordinator) | the `session_summaries` view reads unknown, not 0 USD, for a session with no priced turn (the follow-up to #913) | 3, where money went |
+| 7 | paddock [#26](https://github.com/sammasak/paddock/issues/26) (T2-1, track [#33](https://github.com/sammasak/paddock/issues/33)), brief 230 | expert slots described by layout (moe-ssd-1) on a branch from upstream main, passing rubric #22 | 4, MoE from SSD, fit for upstream |
+| 8 | brief 229 (per coordinator) | the qwen35 long-prompt fix alone on a branch from upstream main, an upstream candidate under rubric #22 | 4, fit for upstream |
+| 9 | paddock [#23](https://github.com/sammasak/paddock/issues/23) (T1-1, track [#32](https://github.com/sammasak/paddock/issues/32)) | flake packages on a branch from upstream main, built on acer with hashes matching asus's, the CUDA pack rebuilt bit-identical | 4, fit for upstream |
+| 10 | [#874](https://github.com/sammasak/nixos-config/issues/874) phase C, [#807](https://github.com/sammasak/nixos-config/issues/807) | Paddock serves real Pi work on asus: the GPU repro, baseline runs, the over-window repro through Pi (paddock PR 21), then 20 local-lane tasks at a local share of 50 percent or more | 4, local models useful to the fleet's agents |
+| 11 | [#903](https://github.com/sammasak/nixos-config/issues/903), [#827](https://github.com/sammasak/nixos-config/issues/827) | memory pressure lands on the slot that grows, not on the shared 9 GiB slice; the kills per busy hour on acer fall | 2, long work survives |
+| 12 | [#14](https://github.com/sammasak/nixos-config/issues/14) | AdGuard's scoped DNS ports (#878) answer a tailnet query and refuse one from outside; then close it | the principle "DNS stays up"; the oldest open issue (3 Oct) |
+| 13 | [#835](https://github.com/sammasak/nixos-config/issues/835), draft PR [#918](https://github.com/sammasak/nixos-config/pull/918) | the flake check's per-output evaluations in fewer processes within acer's memory budget (deploy pairs alone, the rest through nix-eval-jobs), or the follow-up dropped | 3, no long test rituals |
+| 14 | [#625](https://github.com/sammasak/nixos-config/issues/625) | Shunt kept or removed on acer pool1 from its per-arm cost and turn series | 3, judged on the running system |
+| 15 | [#624](https://github.com/sammasak/nixos-config/issues/624), [#826](https://github.com/sammasak/nixos-config/issues/826) | each firing alert has a receipt with its cause; RetroDueStepFailsRepeat clears once the scheduled gate passes `scorecard-test` (#942) | 3, alerts are few and say what to do |
+| 16 | [#837](https://github.com/sammasak/nixos-config/issues/837) | nixos:qa runs `scripts/check-tuning.py`, so Check tuning's minutes come from the records, not from PR bodies | 3, where time went |
+| 17 | [#898](https://github.com/sammasak/nixos-config/issues/898) | a slot's eval and fetch caches survive turns (resets shipped in #910); close it or name what is left | 2, long work on any slot |
+| 18 | cleanup | close #859 (`--requires` shipped in #886, #892, skills 178) and pi-harness [#26](https://github.com/sammasak/pi-harness/issues/26) (its pin is already devenv-platform main 358f2c28); close devenv-platform [#155](https://github.com/sammasak/devenv-platform/issues/155) after a Loki reading shows no text fields | 3, the open issues say what is still owed |
 
 ### Anti-starvation
 
 - herman#62 (13 Nov 20:58) is the oldest runnable item and sits at 4, ahead of the pool and Paddock topics that
   merged most today.
 - [#14](https://github.com/sammasak/nixos-config/issues/14) (3 Oct) is the oldest open issue; its change shipped in
-  #878 and only its two checks remain (13).
-- llm-gateway [#69](https://github.com/sammasak/llm-gateway/issues/69) (23 Oct) is blocked (not now);
-  skills [#104](https://github.com/sammasak/skills/issues/104) and [#128](https://github.com/sammasak/skills/issues/128)
+  #878 and only its two checks remain (12).
+- llm-gateway#69 (23 Oct) is blocked (Not now); skills [#104](https://github.com/sammasak/skills/issues/104) and [#128](https://github.com/sammasak/skills/issues/128)
   have their changes merged (skills #172, #175) and close once a slot's review uses the shipped prompts;
   devenv-platform [#129](https://github.com/sammasak/devenv-platform/issues/129) (13 Nov) has its step A merged
   (devenv-platform PR 167).
-- pi-harness [#26](https://github.com/sammasak/pi-harness/issues/26) (now readable over REST) can close: its pin is
-  already devenv-platform main 358f2c28.
 
 ### Not now (serves no vision.md goal yet, or no agent can do it)
 
@@ -98,14 +97,12 @@ A brief number is the coordinator's, not on GitHub.
 - [#601](https://github.com/sammasak/nixos-config/issues/601), draft PR [#616](https://github.com/sammasak/nixos-config/pull/616): the kernel fix needs a physical reboot of black-pi.
 - [#474](https://github.com/sammasak/nixos-config/issues/474): naked-pi needs the issue's copy step before its next deploy; no deploy of it is queued.
 - Pi in msi slots: msi as a recipient of `claude/*.yaml` and in the `gateway-api` listener's `from` is a secrets change.
-- [#834](https://github.com/sammasak/nixos-config/issues/834), skills [#167](https://github.com/sammasak/skills/issues/167), [#168](https://github.com/sammasak/skills/issues/168): Shunt pilots for Codex and Pi; only after 15 decides Shunt.
+- [#834](https://github.com/sammasak/nixos-config/issues/834), skills [#167](https://github.com/sammasak/skills/issues/167), [#168](https://github.com/sammasak/skills/issues/168): Shunt pilots for Codex and Pi; only after queue 14 decides Shunt.
 - llm-gateway [#69](https://github.com/sammasak/llm-gateway/issues/69): request id in a header, blocked.
 - skills [#176](https://github.com/sammasak/skills/issues/176): the owner-only list differs between the global context and the coordinator role; a wording fix with no runtime effect.
-- devenv-platform [#155](https://github.com/sammasak/devenv-platform/issues/155): its change merged as PR 168; close after a Loki reading shows no text fields.
 - devenv-platform [#141](https://github.com/sammasak/devenv-platform/issues/141): git-hooks follow-ups; no pain seen since PR 170.
-- herman is parked for the platform sprint: #1, #3, #7, #9, #10, #11, #14, #15, #21, #22, #25, #27, #29, #30, #85 and #88.
-- [#626](https://github.com/sammasak/nixos-config/issues/626): the 300K window was rejected (#875); open only until a slot sets a window again.
-- [#859](https://github.com/sammasak/nixos-config/issues/859): `--requires` shipped (#886, #892, skills 178); close it.
+- herman is parked for the platform sprint: #1, #3, #7, #9, #10, #11, #14, #15, #21, #22, #25, #27, #29, #30, #85, and #88 (opened 26 Nov: its advisory waivers go when upstream moves).
+- [#626](https://github.com/sammasak/nixos-config/issues/626): the 300K window was rejected (#875); nothing to run until a slot tries a window again.
 
 ## Open pool findings (epic #646)
 
@@ -114,11 +111,11 @@ git history.
 
 1. One-shot tasks get 401 from `gh` while sessions work: queue 1 (PR #950).
 2. A host drain waits without bound on a one-shot task: queue 2.
-3. A due `waiting_until` timer was not woken by three idle-loop reconciles: queue 5. The running-turn case shipped in
+3. A due `waiting_until` timer was not woken by three idle-loop reconciles: queue 5 (brief 232). The running-turn case shipped in
    #944 and #948 (a heartbeat reconciles every 10 s).
-4. `session_summaries` shows 0 cost for a session with no priced turn: queue 7.
+4. `session_summaries` shows 0 cost for a session with no priced turn: queue 6.
 5. An acer deploy build beside four busy slots caused four memory kills (per coordinator), so acer deploys are
-   batched at night, at about 02:30 and 07:30 CET, when slots are fewest: queue 12 and Owed deploys.
+   batched at night, at about 02:30 and 07:30 CET, when slots are fewest: queue 11 and Owed deploys.
 6. PR #916's 120 s self-continue after a first memory kill worked live at 23:07 CET (per coordinator); nothing to do.
 7. A deploy of asus restarts `paddock.service` and resets the GPU power limit, so no asus deploy while the agent
    `paddock` measures.
@@ -140,14 +137,17 @@ Fail: one retry with the check's output. Second fail: a hosted agent finishes it
 A model keeps the lane while its local share holds 50 percent or more after 20 tasks. `scripts/local-lane.py`
 runs it; llm-gateway's and herman's pre-push gates can still refuse Pi's own push (a `pool/*` skip is the owner's call).
 No lane task is prepared: herman#57, herman#76 and factum#61 have all closed, so the next ones are picked under
-#807 when asus serves a local model again (queue 11).
+#807 when asus serves a local model again (queue 10).
 
 ## Shipped since 26 Nov 20:00 UTC (PR #945's state)
 
 - Scheduled gate reds of 18:20 UTC, each fixed on main: #936 (lock records' max age, `qa-push-test` under the gate
   environment), #938 (local-lane records get a 336 h max age, `measurement-test`), #939 (`codex-egress-test` reads
-  every slot the proxy serves, not three), #942 (scorecard: a bare quoted name is a non-use), #947
-  (`test-fleet-contract`'s port scan skips rule tests' series labels); #931 had fixed the E501 before.
+  every slot the proxy serves, not three), #942 (scorecard: a bare quoted name is a non-use);
+  #931 had fixed the E501 before.
+- #947: `test-fleet-contract`'s port scan skips rule tests' series labels (a red on main apart from the five).
+- #940: each turn's result lists its subagent calls, so an in-session review can be checked after the session is
+  gone (#901; 9/10 on its last head, merged 23:05 UTC).
 - #937: panel texts name unknown rescue and partial collector data.
 - #941: `lint-fleet-pairs` scans listener address:port pairs in the lints lane.
 - #943: the push filter passes acer's refusal on, and the fleet's PR budget scales by slots.
@@ -222,7 +222,7 @@ The slowest, by minutes, with the cut for each:
 3. A deploy of acer beside busy slots: about 50 min and four memory kills. Cut: acer deploys batched at night.
 
 Follow-ups, in order: (1) the scheduled gate alone on acer; (2) one evaluation of every host shared by the probe,
-the flake check and seventh-host; (3) the flake check's per-output evaluations in fewer processes (queue 14).
+the flake check and seventh-host; (3) the flake check's per-output evaluations in fewer processes (queue 13).
 
 ### Where the time goes, and what a cache can save (Loki, read from a slot on 25 Nov)
 
@@ -251,9 +251,9 @@ CET, per coordinator), lenovo when its pool or coordinator changes need it.
 
 | Host | Running | Owed |
 |------|---------|------|
-| msi-ms7758 | `3ae473ac` (per coordinator; the deploy at `b46a64e3` failed its checks) | main, for the pool runner changes (#913, #943, #944, #948) and everything since `3ae473ac` |
+| msi-ms7758 | `3ae473ac` (per coordinator; the deploy at `b46a64e3` failed its checks) | main, for the pool runner changes (#913, #940, #943, #944, #948) and everything since `3ae473ac` |
 | asus-b460m | behind since 25 Nov (per coordinator) | everything since 25 Nov plus #949's `rgb-off`, before its 21:00 CET power-off on 27 Nov, after an asus toplevel build on acer by day; not while the agent `paddock` measures (finding 7) |
-| acer-swift | confirmed after #913 (per coordinator) | #943, #944 and #948 at the next night batch |
+| acer-swift | confirmed after #913 (per coordinator) | #940, #943, #944 and #948 at the next night batch |
 | lenovo | `0bd1b958` (per coordinator) | nothing queued that needs it |
 
 Day-later reads, on 27 Nov evening (per coordinator):
