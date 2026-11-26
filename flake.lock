@@ -575,11 +575,11 @@
     "skills": {
       "flake": false,
       "locked": {
-        "lastModified": 1795654435,
-        "narHash": "sha256-cOc/l7ZNk10bmTYAEK1jvsNPDTKZAOIThdQi0tSNmF4=",
+        "lastModified": 1795686722,
+        "narHash": "sha256-mz3rFnL8/AV/a8iwsAfehXua0FbJbLro6xZrpvFZSko=",
         "ref": "refs/heads/main",
-        "rev": "e65559f202392ce6e1e9589fb7e968d33c9b0f46",
-        "revCount": 474,
+        "rev": "d335f688a93ef368c62454701b0e2feb1c38f79b",
+        "revCount": 483,
         "type": "git",
         "url": "ssh://git@github.com/sammasak/skills"
       },

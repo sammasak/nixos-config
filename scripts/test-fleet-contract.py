@@ -4,7 +4,8 @@ modules/core/fleet.nix names either port (one allowlisted line, with its reason)
 sam.fleet fact fails an assertion, every host's rendered firewall admits each sam.fleet listener's port from exactly
 its callers' addresses and opens nothing the listeners and public entries do not list (an open port, an upstream
 openFirewall, a stray rule and a trusted interface each fail evaluation), each listener's service binds its port, and
-lenovo's sam.herdr.machines and jump hosts must be the runtime hosts of flake-modules/hosts.nix: one left out, one the
+no tracked file, docs included, names a listener by its address:port instead of its inside name, lenovo's
+sam.herdr.machines and jump hosts must be the runtime hosts of flake-modules/hosts.nix: one left out, one the
 table no longer has, and the table with asus-b460m removed each fail evaluation; a collector on a host without a fleet
 address fails too."""
 import importlib.util
@@ -68,6 +69,41 @@ seeded = literals(files + [("modules/homelab/x.nix", f'  listen = ":{ports["ntfy
                            ("pkgs/platform-record/platform_record.py", f'READY = "http://loki:{ports["loki"]}/ready"')])
 check([(p, k) for p, _, k, _ in seeded] == [("modules/homelab/x.nix", "ntfy"), ("pkgs/platform-record/platform_record.py", "loki")],
       f"seeded: a module naming the ntfy port, and a second Loki literal in the allowlisted script, are found ({seeded})")
+
+# a listener's address:port in any tracked file, docs and goals.md too: it is named by its inside name (sam.fleet.zone)
+PAIRS = {p["literal"]: p["name"] for p in P["pairs"]}
+# path prefix -> why a literal there stays
+PAIR_ALLOWED = {
+    "docs/records/": "dated records of what was run, as it was run",
+    "modules/homelab/monitoring/rules/tests/": "Prometheus series labels: a scrape's instance is its address",
+    "lib/app-manifest/golden/": "the rendered scrape config the manifest library is held to",
+    "pkgs/platform-record/platform_record.py": "a record must ship with DNS down; its default is held to sam.fleet.loki.url above",
+    "pkgs/scorecard/scorecard.py": "its defaults are held to sam.fleet's urls; scorecard reads with DNS down too",
+}
+
+
+def pair_literals(files):
+    """files: [(path, text)] -> [(path, line number, literal, its inside name)]"""
+    found = []
+    for path, text in files:
+        if path == "flake.lock" or path.startswith(tuple(PAIR_ALLOWED)):
+            continue
+        for n, line in enumerate(text.splitlines(), 1):
+            for m in re.finditer(r"(?<![0-9.])([0-9]{1,3}(?:[.][0-9]{1,3}){3}:[0-9]+)(?![0-9])", line):
+                if m.group(1) in PAIRS:
+                    found.append((path, n, m.group(1), PAIRS[m.group(1)]))
+    return found
+
+
+every = [(p, (ROOT / p).read_text(errors="ignore")) for p in tracked if (ROOT / p).is_file()]
+check(len(PAIRS) >= 10 and all(".fleet." in n for n in PAIRS.values()), f"the listeners' inside names are read ({len(PAIRS)})")
+pairs = pair_literals(every)
+check(pairs == [], "no tracked file names a listener by address:port, use its inside name: "
+      + "; ".join(f"{p}:{n} {l} -> {k}" for p, n, l, k in pairs))
+lit = next(iter(PAIRS))
+seeded = pair_literals([("docs/x.md", f"curl http://{lit}/ready"), ("docs/records/x.md", f"ran http://{lit}/")])
+check([(p, l) for p, _, l, _ in seeded] == [("docs/x.md", lit)],
+      f"seeded: a runbook naming {lit} is found, a dated record is not ({seeded})")
 
 F = P["failing"]
 check(len(F["hosts"]) >= 6 and all(m == [] for m in F["hosts"].values()), f"every host passes its assertions ({F['hosts']})")

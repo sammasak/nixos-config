@@ -10,8 +10,8 @@ From a machine allowed to query the existing receivers:
 
 ```bash
 python3 scripts/monitoring-baseline.py \
-  --prometheus-url http://192.168.10.137:9090 \
-  --loki-url http://192.168.10.137:3100 > baseline.json
+  --prometheus-url http://prometheus.fleet.sammasak.dev:9090 \
+  --loki-url http://loki.fleet.sammasak.dev:3100 > baseline.json
 ```
 
 The snapshot preserves query text, evaluation time, API warnings and empty results. A query error exits nonzero while preserving other results.

@@ -33,3 +33,20 @@ tests:
               description: "adguard-textfile has not rewritten its file on lenovo-21CB001PMX for 16m 0s, so DnsDown cannot see AdGuard. Check systemctl list-timers adguard-textfile there."
               query: 'time() - node_textfile_mtime_seconds{job="node-exporter",node="lenovo-21CB001PMX",file=~".*/adguard[.]prom"}'
               runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#dnsstatsstale"
+  - interval: 1m
+    input_series:
+      - series: 'probe_dns_answer_rrs{job="inside-names-public",instance="1.1.1.1:53"}'
+        values: '0x10 1x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: InsideNamePublic
+        exp_alerts: []
+      - eval_time: 27m
+        alertname: InsideNamePublic
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, job: inside-names-public, instance: "1.1.1.1:53"}
+            exp_annotations:
+              summary: "An inside fleet name resolves on public DNS"
+              description: "1.1.1.1:53 answers the inside name black-pi asks it with 1 records: a public record exists under fleet.sammasak.dev, which only lenovo's AdGuard may answer. Delete it at Cloudflare."
+              query: 'probe_dns_answer_rrs{job="inside-names-public"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#insidenamepublic"

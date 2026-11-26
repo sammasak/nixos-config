@@ -62,6 +62,24 @@ let
     # Caddy admits black-pi; without a bearer token Alloy refuses
     https_401_405 = [ "https://otlp.sammasak.dev/v1/logs" ];
   };
+  probeJob = job_name: static_configs: {
+    inherit job_name static_configs;
+    metrics_path = "/probe";
+    relabel_configs = [
+      {
+        source_labels = [ "__address__" ];
+        target_label = "__param_target";
+      }
+      {
+        source_labels = [ "__param_target" ];
+        target_label = "instance";
+      }
+      {
+        target_label = "__address__";
+        replacement = "${blackbox.listenAddress}:${toString blackbox.port}";
+      }
+    ];
+  };
   https = codes: {
     prober = "http";
     timeout = "10s";
@@ -101,6 +119,18 @@ in
                   regexp = "^https://auth\\.sammasak\\.dev/";
                 }
               ];
+            };
+          };
+          dns_inside_nxdomain = {
+            prober = "dns";
+            timeout = "5s";
+            dns = {
+              query_name = config.sam.fleet.listeners.prometheus.dnsName;
+              # the default is ANY, which 1.1.1.1 refuses (NOTIMP)
+              query_type = "A";
+              transport_protocol = "udp";
+              preferred_ip_protocol = "ip4";
+              valid_rcodes = [ "NXDOMAIN" ];
             };
           };
           # otlp: Alloy refuses a request without a bearer token
@@ -228,28 +258,19 @@ in
           ]
       ++ [
         (static "blackbox-exporter" [ "${blackbox.listenAddress}:${toString blackbox.port}" ])
-        {
-          job_name = "blackbox";
-          metrics_path = "/probe";
-          static_configs = lib.mapAttrsToList (module: targets: {
+        (probeJob "blackbox" (
+          lib.mapAttrsToList (module: targets: {
             inherit targets;
             labels.__param_module = module;
-          }) probes;
-          relabel_configs = [
-            {
-              source_labels = [ "__address__" ];
-              target_label = "__param_target";
-            }
-            {
-              source_labels = [ "__param_target" ];
-              target_label = "instance";
-            }
-            {
-              target_label = "__address__";
-              replacement = "${blackbox.listenAddress}:${toString blackbox.port}";
-            }
-          ];
-        }
+          }) probes
+        ))
+        # an inside name asked of a public resolver: NXDOMAIN, or it can be found from outside the LAN
+        (probeJob "inside-names-public" [
+          {
+            targets = [ "1.1.1.1:53" ];
+            labels.__param_module = "dns_inside_nxdomain";
+          }
+        ])
       ];
     };
   };

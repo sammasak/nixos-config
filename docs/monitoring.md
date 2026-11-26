@@ -23,6 +23,24 @@ Which host may reach which port is `sam.fleet.listeners` (`modules/core/fleet.ni
 into firewall rules. The scrape jobs are in `prometheus.nix`. The node-exporter and nvidia-gpu targets come from `sam.fleet.hosts`, so a host
 added there is scraped, labelled `node=<hostName>` and, if it `sleeps`, `sleeps="true"`.
 
+## Inside and outside names
+
+Two name spaces, both from `sam.fleet`:
+
+- Outside: `<site>.sammasak.dev`, through Caddy on the edge, with Authentik where the site has it (`edge.nix`).
+- Inside: every listener and ntfy as `<listener>.fleet.sammasak.dev` (`sam.fleet.zone`), with its port, for
+  example `http://prometheus.fleet.sammasak.dev:9090`, `http://loki.fleet.sammasak.dev:3100`,
+  `http://alertmanager.fleet.sammasak.dev:9093`, `http://store-cache-acer-swift.fleet.sammasak.dev:5000`. lenovo's
+  AdGuard answers each with its serving host's LAN address (`adguardhome.nix`), so the fleet and its slots resolve
+  it; no login, the firewall's `from` is the boundary. A listener's `dnsName` and `dnsUrl` give the name.
+
+The inside names point straight at the serving host, not at the edge, so monitoring and the caches keep working
+when acer or Caddy is what broke; the cost is the port in the URL. Services keep `url` (the address), so nothing
+they do depends on DNS. Neither can be answered from outside: `edge.nix` fails evaluation on a site or certificate
+in the zone, `adguardhome.nix` on a hand-written rewrite in it, and black-pi's `InsideNamePublic` fires when 1.1.1.1
+answers one. A name in the zone with no listener falls to the `*.sammasak.dev` rewrite, the edge, which serves
+nothing there.
+
 GPU power metrics distinguish the requested software limit
 (`nvidia_smi_power_limit_watts`) from the effective enforced limit
 (`nvidia_smi_enforced_power_limit_watts`). Hardware and software thermal slowdown

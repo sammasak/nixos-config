@@ -20,7 +20,7 @@ by the `monitoring-alert-annotations` check (`flake-modules/monitoring-check.nix
 | `runbook_url` | a heading in a tracked doc of this repo, on `main`; for a kube-prometheus-stack rule, upstream's page for that alert |
 
 The ntfy page (Alertmanager's webhook payload, `modules/homelab/monitoring/alertmanager.nix`) carries `summary`,
-`description` and `Query: <query>`, and a tap opens `runbook_url`; all four also show in Prometheus's alert view. Run a PromQL query at `http://192.168.10.137:9090/graph`.
+`description` and `Query: <query>`, and a tap opens `runbook_url`; all four also show in Prometheus's alert view. Run a PromQL query at `http://prometheus.fleet.sammasak.dev:9090/graph`.
 
 ## HostExpectedOff
 
@@ -34,7 +34,7 @@ First: nothing to do. If the host should be on, check its power window in `modul
 Fires: over 10 % of a job's scrape targets have not answered black-pi's Prometheus for 10 minutes, leaving out the
 targets of a host off as planned (`homelab:node:off_as_planned`). One page per job; a host down outside its plan also
 fires NodeChronicNotReady, which names it.
-First: the `query` lists the down targets; `http://192.168.10.137:9090/targets?search=<job>` shows each one's scrape
+First: the `query` lists the down targets; `http://prometheus.fleet.sammasak.dev:9090/targets?search=<job>` shows each one's scrape
 error. A refused connection is the exporter's unit on that host (`systemctl status` it there), a timeout the host or
 the LAN.
 
@@ -111,6 +111,13 @@ First: on the DNS host, `systemctl status adguardhome` and `journalctl -u adguar
 
 Fires: `adguard.prom` has not been rewritten for over 5 minutes, for 10 minutes, so DnsDown is blind.
 First: on the DNS host, `systemctl list-timers adguard-textfile` and `journalctl -u adguard-textfile`.
+
+## InsideNamePublic
+
+Fires: black-pi's blackbox probe asked a public resolver (1.1.1.1) for an inside name (`prometheus.fleet.sammasak.dev`)
+and got records for 15 minutes. The inside names carry no Authentik, so only lenovo's AdGuard may answer them.
+First: `dig @1.1.1.1 prometheus.fleet.sammasak.dev`, then the sammasak.dev zone at Cloudflare for a record or wildcard
+under `fleet.sammasak.dev`; delete it.
 
 ## RootFilesystemLow
 
@@ -206,9 +213,9 @@ the `alert-fire-resolve` VM check proves the page's format. Run it in the daytim
 1. As root on black-pi, write the series an hour stale (node-exporter reads only `*.prom`):
    `ssh -t black-pi 'printf "homelab_backup_collector_last_success_timestamp_seconds %d\n" $(( $(date +%s) - 3600 )) | sudo tee /run/node-exporter-textfile/synthetic.tmp >/dev/null && sudo mv /run/node-exporter-textfile/synthetic.tmp /run/node-exporter-textfile/synthetic.prom'`
 2. Within a minute, `time() - homelab_backup_collector_last_success_timestamp_seconds{node="black-pi"}` reads about
-   3600 at `http://192.168.10.137:9090/graph`, and `http://192.168.10.137:9090/alerts` shows BackupCollectorStale
+   3600 at `http://prometheus.fleet.sammasak.dev:9090/graph`, and `http://prometheus.fleet.sammasak.dev:9090/alerts` shows BackupCollectorStale
    pending for black-pi.
-3. After 15 minutes it fires: `http://192.168.10.137:9093` lists one BackupCollectorStale, `node="black-pi"`,
+3. After 15 minutes it fires: `http://alertmanager.fleet.sammasak.dev:9093` lists one BackupCollectorStale, `node="black-pi"`,
    `severity="warning"`, `team="homelab"`, and within the 30 s group wait ntfy's `homelab-alerts` gets one
    `[WARNING]` page at priority 3: the summary "The backup-metrics collector on black-pi is stale or missing", its
    description, `Query: time() - homelab_backup_collector_last_success_timestamp_seconds{job="node-exporter",node="black-pi"}`
@@ -263,7 +270,7 @@ First: on acer, `systemctl status open-webui-edge-check.timer`; then `systemctl 
 ## AppDown
 
 Fires: black-pi's HTTPS probe of a public name through Caddy fails for 5 minutes.
-First: `http://192.168.10.137:9090/targets?search=blackbox` for the probe's error; `curl -sv https://<name>` from the
+First: `http://prometheus.fleet.sammasak.dev:9090/targets?search=blackbox` for the probe's error; `curl -sv https://<name>` from the
 LAN; on acer, `journalctl -u caddy --since -10m`.
 
 ## CertificateExpiringSoon
@@ -467,7 +474,7 @@ is blind.
 First: on lenovo, `journalctl -u alert-investigations.service` names the session and the reason;
 `homelab_alert_investigation_failures_total` counts them by reason. The issue holds the session id: `exec-pool result
 ID` and `exec-pool logs ID` show what it did. A pushed branch is left for the owner to read and delete. Without
-`investigated`, `curl -sf http://192.168.10.137:9093/-/ready` from lenovo.
+`investigated`, `curl -sf http://alertmanager.fleet.sammasak.dev:9093/-/ready` from lenovo.
 Do not: delete `/var/lib/alert-investigations/state.json` to clear it; the counters and the per-name issue numbers
 live there, and every firing still active would be investigated again.
 Rollback: `homelab.alertInvestigations.alerts = [ ];` on lenovo and deploy (or drop a name from the JSON and deploy lenovo

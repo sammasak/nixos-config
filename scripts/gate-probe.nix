@@ -144,6 +144,20 @@ let
         lenovo = lenovo;
         acer-swift = acer;
       };
+      # each host's fleet Bash hooks before a tool call, in order
+      bashHooks =
+        lib.mapAttrs
+          (
+            _: c:
+            lib.concatMap (e: map (h: h.command) e.hooks) (
+              builtins.filter (e: (e.matcher or "") == "Bash") (hm c).programs.claude-code.settings.hooks.PreToolUse
+            )
+          )
+          {
+            lenovo = lenovo;
+            acer-swift = acer;
+          };
+      inherit (lenovo.sam.fleet) deployer;
       services = (hm lenovo).systemd.user.services;
       wakeup = wakeup.outPath or null;
       script = wakeup.text or null;
@@ -420,8 +434,31 @@ let
         inherit (r) domain answer;
       }) lenovo.services.adguardhome.settings.filtering.rewrites;
       fleet = lib.mapAttrs (_: h: h.address) lenovo.sam.fleet.hosts;
+      # the inside names: each listener and ntfy, and the address of the host serving it
+      inside = lib.mapAttrs (_: e: {
+        inherit (e) dnsName;
+        address = lenovo.sam.fleet.hosts.${e.host}.address;
+      }) (lenovo.sam.fleet.listeners // { inherit (lenovo.sam.fleet) ntfy; });
+      inherit (lenovo.sam.fleet) zone;
       failing = {
         lenovo = failing lenovo;
+        zoneRewrite = failing (
+          extend "lenovo" [
+            {
+              homelab.dns.rewrites = [
+                {
+                  domain = "*.${lenovo.sam.fleet.zone}";
+                  answer = lenovo.sam.fleet.hosts.acer-swift.address;
+                }
+              ];
+            }
+          ]
+        );
+        edgeSite = failing (
+          extend "acer-swift" [
+            { services.caddy.virtualHosts."loki.${lenovo.sam.fleet.zone}".extraConfig = "respond 200"; }
+          ]
+        );
         hostsfileOn = failing (
           extend "lenovo" [
             ({ lib, ... }: { services.adguardhome.settings.dns.hostsfile_enabled = lib.mkForce true; })
@@ -852,6 +889,11 @@ let
             ;
         }) listeners;
         inherit (lenovo.sam.fleet) public lanCidr;
+        # a listener's or ntfy's address:port, which the tree names by its inside name instead
+        pairs = lib.mapAttrsToList (_: e: {
+          literal = "${lenovo.sam.fleet.hosts.${e.host}.address}:${toString e.port}";
+          name = "${e.dnsName}:${toString e.port}";
+        }) (listeners // { inherit (lenovo.sam.fleet) ntfy; });
         firewall = lib.mapAttrs' (
           _: h:
           let

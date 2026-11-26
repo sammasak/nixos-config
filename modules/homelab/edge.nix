@@ -23,6 +23,21 @@ let
   };
   domain = "sammasak.dev";
   caddy = config.services.caddy;
+  # every name Caddy serves or ACME certifies, in sam.fleet.zone: a route or certificate would reach the inside names
+  # from wherever the edge is reachable, without Authentik
+  inZone = d: lib.hasSuffix ".${config.sam.fleet.zone}" d || d == config.sam.fleet.zone;
+  insideServed = lib.filter inZone (
+    lib.concatLists (
+      lib.mapAttrsToList (
+        n: v:
+        [ (lib.head (lib.splitString ":" (lib.removePrefix "https://" (lib.removePrefix "http://" n)))) ]
+        ++ v.serverAliases
+      ) caddy.virtualHosts
+    )
+    ++ lib.concatLists (
+      lib.mapAttrsToList (_: c: [ c.domain ] ++ c.extraDomainNames) config.security.acme.certs
+    )
+  );
   adminSocket = "unix//run/caddy/admin.sock|0200";
   # the native server and its embedded outpost (authentik.nix)
   authentik = "127.0.0.1:9000";
@@ -208,6 +223,10 @@ in
         lib.hasInfix "\nX-Reload-Triggers=" config.systemd.units."caddy.service".text
         && !lib.elem caddy.configFile config.systemd.services.caddy.restartTriggers;
       message = "modules/homelab/edge.nix: a Caddyfile change must reload Caddy, not restart it (every site drops): the rendered caddy.service needs X-Reload-Triggers and the Caddyfile out of its restartTriggers.";
+    }
+    {
+      assertion = insideServed == [ ];
+      message = "modules/homelab/edge.nix: ${toString insideServed} is in sam.fleet.zone, the inside names with no Authentik: the edge must not serve or certify one.";
     }
   ];
 }
