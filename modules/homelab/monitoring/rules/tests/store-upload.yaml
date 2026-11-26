@@ -97,11 +97,13 @@ tests:
 
   # /var fills on msi at 30m: its tries stop before the textfile write, so the queue reads 0 and the mtime stays 1800.
   # Stale past 1800 s from 61m, firing 30m later. asus keeps writing every 10 minutes; acer's own file (the retain
-  # job's, no queue gauge) is older still and stays silent.
+  # job's, no store-upload.path) is older still and stays silent.
   - interval: 1m
     input_series:
       - series: 'up{job="node-exporter",instance="acer-swift",node="acer-swift"}'
         values: '1x130'
+      - series: 'node_systemd_unit_state{job="node-exporter",instance="acer-swift",node="acer-swift",name="store-upload-retain.timer",state="failed",type="timer"}'
+        values: '0x130'
       - series: 'node_textfile_mtime_seconds{job="node-exporter",instance="acer-swift",node="acer-swift",file="/run/node-exporter-textfile/store-upload.prom"}'
         values: '0x130'
       - series: 'up{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true"}'
@@ -110,12 +112,16 @@ tests:
         values: '0x130'
       - series: 'node_textfile_mtime_seconds{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true",file="/run/node-exporter-textfile/store-upload.prom"}'
         values: '0x9 600x9 1200x9 1800x100'
+      - series: 'node_systemd_unit_state{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true",name="store-upload.path",state="failed",type="path"}'
+        values: '0x130'
       - series: 'up{job="node-exporter",instance="asus-b460m",node="asus-b460m",sleeps="true"}'
         values: '1x130'
       - series: 'store_upload_queue_paths{job="node-exporter",instance="asus-b460m",node="asus-b460m",sleeps="true"}'
         values: '0x130'
       - series: 'node_textfile_mtime_seconds{job="node-exporter",instance="asus-b460m",node="asus-b460m",sleeps="true",file="/run/node-exporter-textfile/store-upload.prom"}'
         values: '0x9 600x9 1200x9 1800x9 2400x9 3000x9 3600x9 4200x9 4800x9 5400x9 6000x9 6600x9 7200x9 7800x9'
+      - series: 'node_systemd_unit_state{job="node-exporter",instance="asus-b460m",node="asus-b460m",sleeps="true",name="store-upload.path",state="failed",type="path"}'
+        values: '0x130'
     alert_rule_test:
       - eval_time: 90m
         alertname: StoreUploadStale
@@ -144,13 +150,15 @@ tests:
         values: '0x130'
       - series: 'node_textfile_mtime_seconds{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true",file="/run/node-exporter-textfile/store-upload.prom"}'
         values: '0x9 600x9 1200x9 1800x100'
+      - series: 'node_systemd_unit_state{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true",name="store-upload.path",state="failed",type="path"}'
+        values: '0x130'
     alert_rule_test:
       - eval_time: 125m
         alertname: StoreUploadStale
         exp_alerts: []
 
   # asus reboots at 30m onto a full /var: no try writes the file in /run again, so neither it nor the queue gauge is
-  # served from 31m and the 5m lookback leaves them at 36m; the gauge from before the boot marks asus a sender.
+  # served from 31m and the 5m lookback leaves them at 36m; store-upload.path, loaded again at boot, marks asus a sender.
   # Past 30 minutes of uptime from 61m, firing 30m later.
   - interval: 1m
     input_series:
@@ -164,6 +172,8 @@ tests:
         values: '0+60x30 _x100'
       - series: 'node_boot_time_seconds{job="node-exporter",instance="asus-b460m",node="asus-b460m",sleeps="true"}'
         values: '-86400x30 1800x100'
+      - series: 'node_systemd_unit_state{job="node-exporter",instance="asus-b460m",node="asus-b460m",sleeps="true",name="store-upload.path",state="failed",type="path"}'
+        values: '0x130'
     alert_rule_test:
       - eval_time: 90m
         alertname: StoreUploadStale
@@ -189,13 +199,15 @@ tests:
         values: '0x130'
       - series: 'node_textfile_mtime_seconds{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true",file="/run/node-exporter-textfile/store-upload.prom"}'
         values: '0x9 600x9 1200x9 1800x100'
+      - series: 'node_systemd_unit_state{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true",name="store-upload.path",state="failed",type="path"}'
+        values: '0x130'
     alert_rule_test:
       - eval_time: 125m
         alertname: StoreUploadStale
         exp_alerts: []
 
-  # msi's weekend: last served at 10m, off until 60h (3600m), and it boots onto a full /var. Its queue gauge, 60 h old,
-  # still marks it a sender in the 4d window (1d would not); silent through the boot grace, firing 30m after it.
+  # msi's weekend: last served at 10m, off until 60h (3600m), and it boots onto a full /var: store-upload.path, served
+  # from boot, marks it a sender; silent through the boot grace, firing 30m after it.
   - interval: 1m
     input_series:
       - series: 'up{job="node-exporter",instance="acer-swift",node="acer-swift"}'
@@ -208,6 +220,8 @@ tests:
         values: '0+60x10'
       - series: 'node_boot_time_seconds{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true"}'
         values: '-86400x10 _x3589 216000x200'
+      - series: 'node_systemd_unit_state{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true",name="store-upload.path",state="failed",type="path"}'
+        values: '0x10 _x3589 0x200'
     alert_rule_test:
       - eval_time: 3660m
         alertname: StoreUploadStale
@@ -221,3 +235,52 @@ tests:
               description: "store-upload on msi-ms7758 has not rewritten /run/node-exporter-textfile/store-upload.prom for over 30 minutes, or has not written it since boot, for 30 minutes while both hosts are up: its tries fail before the write, so the queue gauge is stale and StoreUploadStuck cannot fire while its builds stop reaching acer-swift. Run df -h /var and journalctl -u store-upload -n 20 on msi-ms7758. Owning issue: sammasak/nixos-config#835."
               query: 'time() - node_textfile_mtime_seconds{job="node-exporter",node="msi-ms7758",file=~".*/store-upload[.]prom"}'
               runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#storeuploadstuck"
+
+  # msi off for 5 days (last served at 10m, back at 7200m) boots onto a full /var: its last queue gauge is older than
+  # any lookback would keep, but store-upload.path marks it a sender from boot; firing 30m after the boot grace
+  - interval: 1m
+    input_series:
+      - series: 'up{job="node-exporter",instance="acer-swift",node="acer-swift"}'
+        values: '1x7400'
+      - series: 'up{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true"}'
+        values: '1x10 0x7189 1x200'
+      - series: 'store_upload_queue_paths{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true"}'
+        values: '0x10'
+      - series: 'node_textfile_mtime_seconds{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true",file="/run/node-exporter-textfile/store-upload.prom"}'
+        values: '0+60x10'
+      - series: 'node_boot_time_seconds{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true"}'
+        values: '-86400x10 _x7189 432000x200'
+      - series: 'node_systemd_unit_state{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true",name="store-upload.path",state="failed",type="path"}'
+        values: '0x10 _x7189 0x200'
+    alert_rule_test:
+      - eval_time: 7260m
+        alertname: StoreUploadStale
+        exp_alerts: []
+      - eval_time: 7261m
+        alertname: StoreUploadStale
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: msi-ms7758}
+            exp_annotations:
+              summary: "store-upload on msi-ms7758 has stopped writing its gauges"
+              description: "store-upload on msi-ms7758 has not rewritten /run/node-exporter-textfile/store-upload.prom for over 30 minutes, or has not written it since boot, for 30 minutes while both hosts are up: its tries fail before the write, so the queue gauge is stale and StoreUploadStuck cannot fire while its builds stop reaching acer-swift. Run df -h /var and journalctl -u store-upload -n 20 on msi-ms7758. Owning issue: sammasak/nixos-config#835."
+              query: 'time() - node_textfile_mtime_seconds{job="node-exporter",node="msi-ms7758",file=~".*/store-upload[.]prom"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#storeuploadstuck"
+
+  # a switch at 20m removes store-upload from msi: store-upload.path is unloaded and its series ends, while the old
+  # file stays in /run and goes stale; msi is no sender, so silent
+  - interval: 1m
+    input_series:
+      - series: 'up{job="node-exporter",instance="acer-swift",node="acer-swift"}'
+        values: '1x130'
+      - series: 'up{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true"}'
+        values: '1x130'
+      - series: 'store_upload_queue_paths{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true"}'
+        values: '0x130'
+      - series: 'node_textfile_mtime_seconds{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true",file="/run/node-exporter-textfile/store-upload.prom"}'
+        values: '0x9 600x120'
+      - series: 'node_systemd_unit_state{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true",name="store-upload.path",state="failed",type="path"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 125m
+        alertname: StoreUploadStale
+        exp_alerts: []

@@ -179,6 +179,8 @@ ssh to `store-upload@acer-swift` refused or timed out, or acer unable to reach t
 `store_upload_received_paths_total{result="failed"}`, not in this alert.
 StoreUploadStale: the sender's `store-upload.prom` is over 30 minutes old or missing, so its tries fail before the
 write and the gauges above are stale; run `df -h /var` on the sender (a full /var fails the queue and state writes).
+A sender is a host with `store-upload.path` loaded (node-exporter's systemd collector), so it counts from boot
+however long it was off.
 Do not: delete `/var/lib/store-upload/queue.sending` on the sender; the next try sends it. Issue #835.
 
 ## BackupStale
