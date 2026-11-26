@@ -1479,11 +1479,12 @@ impl Herdr {
         let _ = self.call(&["workspace", "close", workspace], Duration::ZERO);
     }
 
-    /// Prompts `text` into the agent in `pane`; an Enter it dropped is sent again, up to [`ENTER_TRIES`] times until
-    /// Herdr sees the agent's state change. A prompt Herdr refused (a blocked agent, none in the pane) is an error: no
-    /// Enter answers a dialog. So is one no Enter submitted, counted in [`PROMPTS_UNSUBMITTED`]: its turn ends with
-    /// its input unread rather than wait out its time limit.
-    fn prompt(&self, pane: &str, text: &str) -> Result<(), String> {
+    /// Prompts `text` into the agent in `pane`; an Enter it dropped is sent again. A prompt Herdr refused (a blocked
+    /// agent, none in the pane) is an error: no Enter answers a dialog. With `confirm`, the Enter is sent up to
+    /// [`ENTER_TRIES`] times until Herdr sees the agent's state change, and a prompt none submitted is an error,
+    /// counted in [`PROMPTS_UNSUBMITTED`]: its turn ends with its input unread rather than wait out its time limit.
+    /// Without it (a message, prompted again while unsubmitted) one Enter goes unchecked, so no copy stacks on another.
+    fn prompt(&self, pane: &str, text: &str, confirm: bool) -> Result<(), String> {
         let sent = self.call(
             &[
                 "agent",
@@ -1503,17 +1504,35 @@ impl Herdr {
         match sent {
             // submitted, but Herdr saw no work start in time
             Err(e) if e.contains(r#""code":"timeout""#) || e.contains("agent_prompt_stalled") => {
-                let before = self.seen(pane).ok().flatten().map_or(0, |s| s.seq);
-                for _ in 0..ENTER_TRIES {
+                let enter = || {
                     let _ = self.call(&["agent", "send-keys", pane, "Enter"], Duration::ZERO);
-                    let t = Instant::now();
-                    while t.elapsed() < ENTER_WAIT {
-                        thread::sleep(ENTER_POLL);
-                        let seen = self.seen(pane).ok().flatten();
-                        if seen.is_some_and(|s| !s.settled || s.seq != before) {
-                            return Ok(());
-                        }
+                };
+                if !confirm {
+                    enter();
+                    return Ok(());
+                }
+                let mut seen = self.seen(pane).ok().flatten();
+                let Some(before) = seen.map(|s| s.seq) else {
+                    return Err("Herdr saw no agent in the pane after the prompt".to_owned());
+                };
+                let started =
+                    |seen: Option<pane::Seen>| seen.is_some_and(|s| !s.settled || s.seq != before);
+                for _ in 0..ENTER_TRIES {
+                    if started(seen) {
+                        return Ok(());
                     }
+                    enter();
+                    let t = Instant::now();
+                    while t.elapsed() < ENTER_WAIT && !started(seen) {
+                        thread::sleep(ENTER_POLL);
+                        seen = self.seen(pane).ok().flatten();
+                    }
+                }
+                if started(seen) {
+                    return Ok(());
+                }
+                if seen.is_none() {
+                    return Err("Herdr saw no agent in the pane after the prompt".to_owned());
                 }
                 self.count_unsubmitted();
                 Err(format!(
@@ -1839,7 +1858,7 @@ impl<'a> PaneTurn<'a> {
         let Some((text, upto)) = pane::mail(&hint.mail, self.upto) else {
             return;
         };
-        if let Err(e) = self.send(p, &text) {
+        if let Err(e) = self.send(p, &text, false) {
             return note("mail", &e);
         }
         self.upto = upto;
@@ -1847,7 +1866,7 @@ impl<'a> PaneTurn<'a> {
     }
 
     /// Prompts `input` into the pane ([`Herdr::prompt`]), a long one through [`pane::INPUT_FILE`].
-    fn send(&self, p: &str, input: &str) -> Result<(), String> {
+    fn send(&self, p: &str, input: &str, confirm: bool) -> Result<(), String> {
         let (long, text) = pane::prompt(input);
         if let Some(long) = long {
             write_home(
@@ -1856,7 +1875,7 @@ impl<'a> PaneTurn<'a> {
                 owner(self.home)?,
             )?;
         }
-        self.herdr.prompt(p, &text)
+        self.herdr.prompt(p, &text, confirm)
     }
 
     /// Prompts the turn's input once the agent draws its prompt box and Herdr calls it idle, as the named workers'
@@ -1888,7 +1907,7 @@ impl<'a> PaneTurn<'a> {
                 .map_err(|e| format!("transcript: {e}"))?
                 .unwrap_or(0),
         );
-        self.send(p, self.input)?;
+        self.send(p, self.input, true)?;
         self.watch = Some(pane::TurnWatch::new(before));
         Ok(())
     }
@@ -3152,28 +3171,27 @@ esac"#,
             )
         };
         let (herdr, log) = fake_with("blocked", false, &err("agent_blocked"));
-        assert!(herdr.prompt("w1:p1", "go").is_err());
+        assert!(herdr.prompt("w1:p1", "go", true).is_err());
         assert!(
             !calls(&log).iter().any(|c| c.starts_with("agent send-keys")),
             "no Enter into a dialog"
         );
-        // the Enter landed: Herdr sees the agent working
-        let working = r#"printf '%s' '{"result":{"agents":[{"pane_id":"w1:p1","agent_status":"working","state_change_seq":4}]}}'"#;
         for code in ["timeout", "agent_prompt_stalled"] {
-            let (herdr, log) = fake_listing(code, false, &err(code), working);
-            assert_eq!(herdr.prompt("w1:p1", "go"), Ok(()));
-            let enters = calls(&log)
-                .iter()
-                .filter(|c| *c == "agent send-keys w1:p1 Enter")
-                .count();
-            assert_eq!(enters, 1);
+            let (herdr, log) = fake_with(code, false, &err(code));
+            assert_eq!(herdr.prompt("w1:p1", "go", false), Ok(()));
+            assert_eq!(calls(&log).last().unwrap(), "agent send-keys w1:p1 Enter");
         }
+        // work started after Herdr's wait: no Enter into it
+        let working = r#"printf '%s' '{"result":{"agents":[{"pane_id":"w1:p1","agent_status":"working","state_change_seq":4}]}}'"#;
+        let (herdr, log) = fake_listing("working", false, &err("timeout"), working);
+        assert_eq!(herdr.prompt("w1:p1", "go", true), Ok(()));
+        assert!(!calls(&log).iter().any(|c| c.starts_with("agent send-keys")));
         let (herdr, _) = fake_with(
             "prompted",
             false,
             r#"printf '%s' '{"id":"cli:agent:prompt","result":{"type":"ok"}}'"#,
         );
-        assert_eq!(herdr.prompt("w1:p1", "go"), Ok(()));
+        assert_eq!(herdr.prompt("w1:p1", "go", true), Ok(()));
     }
 
     #[test]
@@ -3185,7 +3203,7 @@ esac"#,
             std::env::temp_dir().join(format!("exec-pool-unsubmitted-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         herdr.counts = Some(dir.clone());
-        let e = herdr.prompt("w1:p1", "go").unwrap_err();
+        let e = herdr.prompt("w1:p1", "go", true).unwrap_err();
         assert!(e.contains("not submitted"), "{e}");
         let enters = calls(&log)
             .iter()
@@ -3203,7 +3221,14 @@ esac"#,
             dir.join("listed").display()
         );
         let (herdr, _) = fake_listing("moved", false, stalled, &moved);
-        assert_eq!(herdr.prompt("w1:p1", "go"), Ok(()));
+        assert_eq!(herdr.prompt("w1:p1", "go", true), Ok(()));
+        // no agent in the pane is not a prompt left unsubmitted
+        let (mut herdr, _) = fake_listing("gone", false, stalled, NO_AGENTS);
+        herdr.counts = Some(dir.clone());
+        let e = herdr.prompt("w1:p1", "go", true).unwrap_err();
+        assert!(e.contains("no agent"), "{e}");
+        let counted = fs::read_to_string(dir.join("exec-pool-prompt-pool9.prom")).unwrap();
+        assert!(counted.ends_with("} 1\n"), "{counted}");
         fs::remove_dir_all(&dir).unwrap();
     }
 }
