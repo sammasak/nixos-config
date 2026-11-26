@@ -311,6 +311,36 @@ for mode, (dryrun, build_rc) in plain_runs.items():
               and (r.returncode != 0) == mode.endswith("fail"),
               f"{mode}: one gate-step record for the plain check with {' '.join(want)}, and the step {'fails' if mode.endswith('fail') else 'passes'} ({r.returncode}, {lines})")
 
+# a guard or evaluation before the per-output loop that fails still names what failed in its fail record, or
+# RetroDueStepFailsRepeat names the step alone (#826)
+for want, fail in {"vm-list": "any('? driver' in x for x in a)", "flake-output-kinds": "a[:2] == ['flake', 'show']",
+                   "legacyPackages": "attr == 'legacyPackages'", "overlays": "attr == 'overlays'",
+                   "templates": "attr == 'templates'", "output-list": "'builtins.attrNames' in a"}.items():
+    with tempfile.TemporaryDirectory() as t:
+        t = pathlib.Path(t)
+        rec = t / "records"
+        (t / "nix").write_text("#!/usr/bin/env python3\nimport json, sys\na = sys.argv[1:]\n"
+                               "attr = next((x[2:] for x in a if x.startswith('.#')), '')\n"
+                               f"if {fail}: print('error: seeded', file=sys.stderr); sys.exit(1)\n"
+                               "elif a[:2] == ['flake', 'show']: print(json.dumps({k: 0 for k in ['checks','deploy','formatter','legacyPackages','nixosConfigurations','overlays','packages','templates']}))\n"
+                               "elif '--expr' in a: print('x86_64-linux', end='')\n"
+                               "elif any('? driver' in x for x in a): print(json.dumps([]))\n"
+                               "elif 'builtins.attrNames' in a: print(json.dumps([]))\n"
+                               "elif attr in ('legacyPackages', 'overlays', 'templates'): print('{}')\n")
+        (t / "nix-store").write_text("#!/usr/bin/env bash\nexit 0\n")
+        (t / "uname").write_text("#!/usr/bin/env bash\necho acer-swift\n")
+        (t / "record").write_text(f'#!/usr/bin/env bash\necho "$*" >> "{rec}"\n')
+        for f in ("nix", "nix-store", "uname", "record"):
+            (t / f).chmod(0o755)
+        body = textwrap.dedent(fc.group(1)).replace("${pkgs.coreutils}/bin/uname", str(t / "uname"))
+        body = body.replace("${lib.getExe record}", str(t / "record")).replace("${gateHeavy}", gate_heavy.group(1)).replace("${flakeKinds}", KINDS).replace("''$", "$")
+        r = subprocess.run(["bash", "-euo", "pipefail", "-c", body], capture_output=True, text=True, cwd=t,
+                           env={**os.environ, "PATH": f"{t}:{os.environ['PATH']}", "NIXOS_QA_HEAD": "0123abc"})
+        lines = rec.read_text().splitlines() if rec.exists() else []
+        check(r.returncode != 0 and len(lines) == 1 and f"check={want} " in lines[0] and "result=fail" in lines[0]
+              and "step=nixos-flake-check" in lines[0],
+              f"seeded: a failed {want} records check={want} ({r.returncode}, {lines}, {r.stderr[-200:]!r})")
+
 # the deferral contract a gate step outside the flake check uses (scripts/gate_defer.py; scripts/test-ollama-gpu.py):
 # the same owner:check line and head=/drv= record the flake check writes, which scripts/deferred-checks.py reads
 with tempfile.TemporaryDirectory() as t:
