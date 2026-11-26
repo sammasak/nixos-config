@@ -17,7 +17,8 @@ fragment, directive or operation), and that pull request, read upstream with a q
 `pool/<id>` of a repository in the slot's `repos`, from that repository. The fleet's sidecar sends msi's here as slot
 `.fleet`, with no manifest: for it the head is any task's `pool/<id>`, and the filter's own read query is answered
 too, for a listed repository's pull request alone. A refusal after that read tells the slot a fixed text, never
-what the owner's token read, and each slot reads at most MAX_LOOKUPS pull requests in LOOKUP_WINDOW.
+what the owner's token read, and each slot reads at most MAX_LOOKUPS pull requests in LOOKUP_WINDOW (`.fleet`,
+FLEET_LOOKUPS).
 
 GitHub's own answer is passed back as it comes, so the client sees whether the push landed. A broken upstream is a 502
 and nothing is tried again: the push may or may not have landed, and only the client (the park checks with ls-remote)
@@ -67,8 +68,8 @@ NODE_ID = re.compile(r"[A-Za-z0-9_=+/-]{1,200}")
 RESOLVE = ("query($id: ID!) { node(id: $id) { ... on PullRequest { headRefName "
            "headRepository { nameWithOwner } repository { nameWithOwner } } } }")
 # the GraphQL tokens a ready mark needs: a name, a plain string, `$ ! : ( ) { }`; anything else (`...`, `@`, `=`,
-# `[`, a number, a block string) is no ready mark
-TOKEN = re.compile(r'[ \t\n\r,\ufeff]+|#[^\n\r]*|(?P<name>[_A-Za-z][_0-9A-Za-z]*)'
+# `[`, a number, a block string, a comment, a BOM: where another parser could end it apart) is no ready mark
+TOKEN = re.compile(r'[ \t\n\r,]+|(?P<name>[_A-Za-z][_0-9A-Za-z]*)'
                    r'|(?P<str>"(?:[^"\\\x00-\x1f]|\\(?:["\\/bfnrt]|u[0-9A-Fa-f]{4}))*")(?!")|(?P<punct>[$!:(){}])')
 # what a ready mark may read back of its own result, nothing a query could use
 PAYLOAD = {"__typename", "clientMutationId"}
@@ -87,6 +88,8 @@ FLEET = ".fleet"
 MAX_RESOLVE = 1 << 16
 # reads upstream with the owner's token, per slot: a few ready marks, never a scan of the owner's pull requests
 MAX_LOOKUPS, LOOKUP_WINDOW = 20, 600.0
+# all of msi's slots, each mark read twice there (msi's filter's read, then the mark's own)
+FLEET_LOOKUPS = 8 * MAX_LOOKUPS
 
 
 class Slot(NamedTuple):
@@ -525,8 +528,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         slot, now = self.headers.get("X-Pool-Slot", ""), time.monotonic()
         with self.lookups_lock:
             recent = [t for t in self.lookups.get(slot, []) if now - t < LOOKUP_WINDOW]
-            if len(recent) >= MAX_LOOKUPS:
-                raise Refused(f"over {MAX_LOOKUPS} pull request reads in {LOOKUP_WINDOW:.0f} s")
+            limit = FLEET_LOOKUPS if slot == FLEET else MAX_LOOKUPS
+            if len(recent) >= limit:
+                raise Refused(f"over {limit} pull request reads in {LOOKUP_WINDOW:.0f} s: try again later")
             self.lookups[slot] = [*recent, now]
         conn = UnixConnection(self.upstream)
         try:
@@ -536,11 +540,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             resp = conn.getresponse()
             raw = resp.read(MAX_RESOLVE + 1)
         except (OSError, http.client.HTTPException) as e:
-            raise Refused(f"the pull request could not be read: {e}") from e
+            raise Refused(f"the pull request could not be read upstream, try again later: {e}") from e
         finally:
             conn.close()
         if resp.status != 200 or len(raw) > MAX_RESOLVE or resp.getheader("Content-Encoding", "identity") != "identity":
-            raise Hidden(f"the pull request could not be read: {resp.status}")
+            # a status names nothing the token read; through acer's sidecar it is acer's refusal or GitHub's failure
+            raise Refused(f"the pull request could not be read upstream ({resp.status}), try again later")
         try:
             pr = json.loads(raw)["data"]["node"]
             if not (isinstance(pr["headRefName"], str) and isinstance(pr["repository"]["nameWithOwner"], str)

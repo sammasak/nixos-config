@@ -411,8 +411,8 @@ def graphql(port, fsock, prom):
     for what, body in [
         ("inline", {"query": 'mutation Ready { markPullRequestReadyForReview(input: {pullRequestId: "PR_own"}) '
                              "{ clientMutationId pullRequest { id url } } }", "operationName": "Ready"}),
-        ("its whole input a variable, commas and a comment", {
-            "query": "mutation($in: MarkPullRequestReadyForReviewInput!) {\n  # gh api graphql\n"
+        ("its whole input a variable, and commas", {
+            "query": "mutation($in: MarkPullRequestReadyForReviewInput!) {\n"
                      "  markPullRequestReadyForReview(input: $in) { __typename, }\n}",
             "variables": {"in": {"pullRequestId": "PR_own"}}}),
     ]:
@@ -457,6 +457,8 @@ def graphql(port, fsock, prom):
         ("no JSON", b"mutation { markPullRequestReadyForReview }"),
         ("a form body", ({"query": READY}, {"Content-Type": "application/x-www-form-urlencoded"})),
         ("a control character in its id", {"query": READY.replace("$id}", '"PR_own\tx"}').replace("($id: ID!) ", "")}),
+        ("a comment", {"query": READY.replace("{ isDraft }", "{ isDraft # x\n }"), "variables": {"id": "PR_own"}}),
+        ("a BOM", {"query": "\ufeff" + READY, "variables": {"id": "PR_own"}}),
         ("a vertical tab, no GraphQL whitespace", {"query": READY.replace("mutation", "mutation\v"), "variables": {"id": "PR_own"}}),
         ("the filter's own read", {"query": RESOLVE, "variables": {"id": "PR_own"}}),
     ]:
@@ -473,13 +475,19 @@ def graphql(port, fsock, prom):
           "a ready mark with a query, another spelling of the path, or from a slot the filter does not know, is refused")
     c = counts(prom, PULLS)
     check(c[("pool1", "passed")] - before[("pool1", "passed")] == 3
-          and c[("pool1", "refused")] - before[("pool1", "refused")] == 33,
+          and c[("pool1", "refused")] - before[("pool1", "refused")] == 35,
           f"ready marks count with the slot's pull requests ({c})")
-    reads = len(Backend.reads)
-    for _ in range(20):
+    # the last pool1 case: it leaves the slot out of reads, which fleet() shows is the slot's alone
+    first = len(Backend.reads)
+    for _ in range(21):
         status, got = api(port, "/graphql", {"query": READY, "variables": {"id": "PR_main"}})
-    check(status == 403 and "over 20 pull request reads" in got.get("message", "") and len(Backend.reads) - reads == 11,
-          f"a slot reads at most 20 pull requests upstream in 10 minutes, then is refused before reading ({got})")
+        if "over 20 pull request reads" in got.get("message", ""):
+            break
+    reads = len(Backend.reads)
+    status, again = api(port, "/graphql", {"query": READY, "variables": {"id": "PR_own"}})
+    check(0 < reads - first <= 20 and status == 403 and len(Backend.reads) == reads and "try again later" in again["message"],
+          f"a slot reads at most 20 pull requests upstream in 10 minutes, then is refused before reading, told to "
+          f"retry ({got} {again})")
     fleet(fsock, ready, js, sent)
 
 
@@ -489,6 +497,8 @@ RESOLVE = ("query($id: ID!) { node(id: $id) { ... on PullRequest { headRefName "
 
 def fleet(fsock, ready, js, sent):
     """The fleet's sidecar's slot: msi's filter's read and ready mark, already held to its task there."""
+    fleet_reads = len(Backend.reads)
+
     def post(body):
         conn = http.client.HTTPConnection("localhost", timeout=10)
         conn.sock = socket.socket(socket.AF_UNIX)
@@ -500,8 +510,9 @@ def fleet(fsock, ready, js, sent):
         return resp.status, out
 
     status, out = post({"query": RESOLVE, "variables": {"id": "PR_other_task"}})
-    check(status == 200 and json.loads(out)["data"]["node"]["headRefName"] == "pool/t-2" and len(Backend.api) == sent,
-          f"the fleet's slot answers the filter's own read of a listed repository's pull request ({status} {out[:200]!r})")
+    check(status == 200 and len(Backend.reads) == fleet_reads + 1 and json.loads(out)["data"]["node"]["headRefName"] == "pool/t-2" and len(Backend.api) == sent,
+          f"the fleet's slot, beside pool1 out of reads, answers the filter's own read of a listed repository's pull "
+          f"request ({status} {out[:200]!r})")
     status, _ = post({"query": RESOLVE, "variables": {"id": "PR_unlisted"}})
     check(status == 403, f"and not of an unlisted repository's ({status})")
     status, _ = post({"query": RESOLVE.replace("headRefName", "headRefName title"), "variables": {"id": "PR_own"}})
