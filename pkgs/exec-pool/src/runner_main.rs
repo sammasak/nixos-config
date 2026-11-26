@@ -31,11 +31,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use exec_pool::queue::{Arm, Change, Claim, Park, QueueError, Store, TRANSCRIPT_BYTES, Transcript};
 use exec_pool::runner::{
     CAPTURE_BYTES, DRAIN_REQUEST, ExecResult, Listed, MEMORY_KILLS, Manifest, PARK_PUSH_FAILURES,
-    PROMPTS_UNSUBMITTED,
-    PREPARE_FAILURES, ParkedAt, QUICK_SECS, Session, Stage, Step, TurnHint, TurnSettle, claim_fits,
-    decide, decide_turn, drain_holds, guest_exit, handed_back, holds_tree, oom_victims,
-    parks_undelivered, read_bytes, read_regular, read_regular_up_to, receipt, relink, remote_head,
-    session_checkpoint, tail, tree_check, while_unavailable,
+    PREPARE_FAILURES, PROMPTS_UNSUBMITTED, ParkedAt, QUICK_SECS, Session, Stage, Step, TurnHint,
+    TurnSettle, claim_fits, decide, decide_turn, drain_holds, guest_exit, handed_back, holds_tree,
+    oom_victims, parks_undelivered, read_bytes, read_regular, read_regular_up_to, receipt, relink,
+    remote_head, session_checkpoint, tail, tree_check, while_unavailable,
 };
 use exec_pool::snapshot::{self, Git, Plan, Resume, landed, listed, plan};
 use exec_pool::task_result::TaskResult;
@@ -3059,7 +3058,8 @@ mod tests {
         fake_listing(name, pane_run_fails, prompt, NO_AGENTS)
     }
 
-    const NO_AGENTS: &str = r#"printf '%s' '{"id":"cli:agent:list","result":{"agents":[],"type":"agent_list"}}'"#;
+    const NO_AGENTS: &str =
+        r#"printf '%s' '{"id":"cli:agent:list","result":{"agents":[],"type":"agent_list"}}'"#;
 
     /// [`fake_with`], `agent list` answering with the shell snippet `list`.
     fn fake_listing(
@@ -3176,7 +3176,8 @@ esac"#,
         let stalled = r#"printf '%s' '{"error":{"code":"timeout","message":"m"},"id":"cli:agent:prompt"}' >&2; exit 1"#;
         let idle = r#"printf '%s' '{"result":{"agents":[{"pane_id":"w1:p1","agent_status":"idle","state_change_seq":3}]}}'"#;
         let (mut herdr, log) = fake_listing("unsubmitted", false, stalled, idle);
-        let dir = std::env::temp_dir().join(format!("exec-pool-unsubmitted-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("exec-pool-unsubmitted-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         herdr.counts = Some(dir.clone());
         let e = herdr.prompt("w1:p1", "go").unwrap_err();
