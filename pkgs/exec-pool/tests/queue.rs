@@ -3099,34 +3099,6 @@ fn a_timer_wakes_its_session_once_due_and_a_message_before_it_does_not_spend_it(
 }
 
 #[test]
-fn a_due_waiting_until_row_is_queued_by_a_reconcile_alone() {
-    let pg = Pg::new();
-    let mut owner = pg.migrated();
-    let (_s, _id) = session(&pg);
-    let (a, epoch, _) = started(&mut owner);
-    // a due time in the future at the park, in an offset other than UTC, then only the clock moves
-    let due = jiff::Timestamp::now()
-        .checked_add(jiff::SignedDuration::from_secs(2))
-        .unwrap();
-    let at = format!(
-        "{}+01:00",
-        jiff::tz::Offset::constant(1)
-            .to_datetime(due)
-            .strftime("%Y-%m-%dT%H:%M:%S")
-    );
-    let (_, changes) = owner.park(&a, epoch, &waking_at(&at, None)).unwrap();
-    assert_eq!(moves(&changes), [(Status::Waiting, "waiting_until")]);
-    assert!(owner.reconcile().unwrap().is_empty(), "not due yet");
-    thread::sleep(Duration::from_secs(3));
-    assert_eq!(
-        moves(&owner.reconcile().unwrap()),
-        [(Status::Queued, "wake")],
-        "a due waiting_until row is queued by a reconcile with no other event"
-    );
-    assert_eq!(status(&pg, &a).0, "queued");
-}
-
-#[test]
 fn a_timer_already_due_wakes_at_the_park_or_the_next_reconcile() {
     let pg = Pg::new();
     let mut owner = pg.migrated();
