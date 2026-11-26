@@ -202,7 +202,8 @@ PROBE = ["env", "WORK_LOCKS_HELD=1", "GC_FREE_SPACE_DIVISOR=16", "nix", "eval", 
 
 def gate_heavy(tree: pathlib.Path) -> str | None:
     """devenv.nix's gateHeavy, the pattern scripts/gate_defer.py defers a CUDA build by (it fails without one)."""
-    m = re.search(r'^  gateHeavy = "([^"]+)";$', (tree / "devenv.nix").read_text(), re.M)
+    f = tree / "devenv.nix"
+    m = re.search(r'^  gateHeavy = "([^"]+)";$', f.read_text() if f.exists() else "", re.M)
     return m.group(1) if m else None
 
 
