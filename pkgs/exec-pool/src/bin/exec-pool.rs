@@ -18,11 +18,13 @@ use jiff::ZonedDateTime;
 use serde_json::{Value, json};
 
 const DB: &str = "host=/run/postgresql dbname=exec_pool user=exec_pool_submit";
+/// The repositories a slot reaches (homelab.execPool.repos), one `owner/name` a line; a host without it checks none.
+const REPOS: &str = "/etc/exec-pool/repos";
 const USAGE: &str = "usage: exec-pool COMMAND
   submit --agent claude|codex|pi --repo URL --rev REV --workdir PATH --prompt TEXT|--prompt-file FILE [--model M]
         [--key K] [--priority N]
         prints the task id. The checkout of REV at URL is cloned into the slot and the agent runs in PATH, relative
-        to it. FILE - reads the prompt from stdin, which no shell re-splits (an ssh command line). K is the idempotency key, by default derived from the rest: the same submission again is the same
+        to it, and is refused unless it is in the pool's repository list (homelab.execPool.repos, /etc/exec-pool/repos). FILE - reads the prompt from stdin, which no shell re-splits (an ssh command line). K is the idempotency key, by default derived from the rest: the same submission again is the same
         task, so give a new --key to run it once more. N, -100 to 100 (0), orders the claim: higher first, and a
         queued task gains one for every 10 minutes it waits, so a low one still runs; a running task is never stopped
         for another. The same key again keeps the priority it was first given.
@@ -258,6 +260,11 @@ fn run(cmd: &str, args: &Args, store: &mut Store) -> Result<(), Fail> {
     match cmd {
         "submit" | "start" => {
             let task = task_spec(cmd, args)?;
+            match std::fs::read_to_string(REPOS) {
+                Ok(list) => listed(&task.source.repo, &list).map_err(Fail::Usage)?,
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                Err(e) => return Err(Fail::Usage(format!("{REPOS}: {e}"))),
+            }
             let priority = args.opt("priority").map_or(Ok(0), |n| {
                 n.parse::<i32>()
                     .ok()
@@ -424,6 +431,23 @@ fn github_repo(url: &str) -> Option<(&str, &str)> {
                 .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
     };
     (ok(owner) && ok(name)).then_some((owner, name))
+}
+
+/// Whether the slot proxy lets a task reach `repo`: a GitHub repository named in `list`, as its regex matches (case
+/// aside). Refused here, a start is not left to fail at prepare, where git cannot read through the proxy.
+fn listed(repo: &str, list: &str) -> Result<(), String> {
+    let refused = || {
+        format!(
+            "--repo {repo:?} is not in the execution pool's repository list (homelab.execPool.repos, {REPOS}): add it there and deploy the pool's hosts"
+        )
+    };
+    let (owner, name) = github_repo(repo).ok_or_else(refused)?;
+    let want = format!("{owner}/{name}");
+    list.lines()
+        .map(str::trim)
+        .any(|l| l.eq_ignore_ascii_case(&want))
+        .then_some(())
+        .ok_or_else(refused)
 }
 
 /// The newest pull request of a GitHub `pulls?head=…&state=all` listing: its number, state (merged once it has a
@@ -798,6 +822,25 @@ mod tests {
         ] {
             let got = spec(&a).unwrap_err();
             assert!(got.contains(want), "{a:?}: {got}");
+        }
+    }
+
+    #[test]
+    fn a_repository_off_the_pool_s_list_is_refused_naming_the_list() {
+        let list = "sammasak/nixos-config\nsammasak/Pi-Harness\n";
+        for url in [
+            "https://github.com/sammasak/nixos-config.git",
+            "git@github.com:sammasak/pi-harness.git",
+        ] {
+            assert_eq!(listed(url, list), Ok(()), "{url}");
+        }
+        for url in [
+            "https://github.com/sammasak/paddock.git",
+            "https://github.com/other/nixos-config",
+            "/srv/git/nixos-config",
+        ] {
+            let got = listed(url, list).unwrap_err();
+            assert!(got.contains("homelab.execPool.repos"), "{url}: {got}");
         }
     }
 

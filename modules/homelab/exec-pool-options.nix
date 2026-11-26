@@ -82,6 +82,7 @@ in
         "herman"
         "devenv-platform"
         "paddock"
+        "pi-harness"
       ];
       description = "The GitHub repositories a slot reaches, through the host's sidecar (or sam.fleet.listeners.github-egress's host), which signs its fetch, push and gh calls so the slot holds no credential. A session's park pushes its snapshot ref there too. A repository whose flake or devenv has a private input needs that input listed.";
     };
