@@ -47,9 +47,15 @@ pub const PULL_REQUEST: &str = "To open a pull request from your branch, or comm
 `gh pr create` and `gh pr comment` use GraphQL, which the pool's GitHub proxy refuses. Open it with \
 `gh api repos/{repo}/pulls -f head={branch} -f base=BASE -f title=TITLE -F body=@FILE` and comment with \
 `gh api repos/{repo}/issues/NUMBER/comments -F body=@FILE`; no merge, review or other branch. Before you open a \
-pull request, check your diff against every item of the task and against what a strict reviewer looks for (privilege, \
-PATH and secrets; failure and rollback paths; a test for each behaviour); fix what you find and name in the pull \
-request body what is still unmet. That is your own check, not the independent review. ";
+pull request, check your diff against every item of the task and against what a strict reviewer looks for: odd input \
+shapes for any parser or flag handling; privilege, PATH and secrets; failure and rollback paths; docs, comments and \
+the pull request body against the code; every sibling call site; a test for each behaviour. Run the task's \
+acceptance check and put its command and output in the body; fix what you find and name in the body what is still \
+unmet. That is your own check, not the independent review: before you report, give a subagent of this session that \
+did not write the diff the pull request number and the full head sha. It reviews the diff at that head and returns \
+its review, first line `Grade: N/10 (head <sha>)`, its findings below, last line `-- {branch} reviewer`; post that \
+text unchanged with the comment call above. Below 9, fix the findings, push and have the new head reviewed the same \
+way, until a 9 or more on the current head; after three rounds below 9, stop and report the open findings. ";
 
 /// What a session's first turn is also told, before "The task:" of [`PREFIX`]: how to wait for an outside event, and
 /// what a pause keeps.

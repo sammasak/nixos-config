@@ -238,11 +238,11 @@ def main():
           and "pool:wait only with timeout_seconds 60 or less" in script
           and "On outcome_unknown run the status_command it returns and nothing else" in script,
           "the prompt dispatches as pool sessions: one per issue, follow-ups as sends to it, waiting is a free slot, needs_review wants a look, a short wait, an uncertain answer is only checked")
-    check("An open PR head that is unreviewed, no signed grade on that head and no review task for it, gets one review: pool:submit" in script
-          and "review OWNER/REPO#N@<head sha>, post a comment Grade: N/10 (head <sha>) on that head, signed -- <host> <agent>), never the implementing session" in script
+    check("A session has its own diff reviewed in that session: a subagent that did not write it returns its review, first line Grade: N/10 (head <sha>), last line -- pool/<session_id> reviewer, which the session posts unchanged, until a 9 or more on the current head or three rounds below 9." in script and "markdown-only" not in script
+          and "An open PR head that is unreviewed, no grade on that head, gets one pool:send to its implementing session asking for that review on that head, never a separate review task." in script
           and "A head already graded below 9 gets no second review: pool:send its findings to the implementing session" in script
           and "a merged or closed PR is never reviewed" in script and "is reported as ready to merge, and the interactive coordinator session merges it." in script,
-          "the prompt reviews an unreviewed head once as a one-shot pool task in the form coord:brief parses, sends findings to the implementing session, never reviews a merged PR, and reports a 9+ head ready to merge for the interactive coordinator (pool slots have no merge route)")
+          "the prompt has a session review its own diff in-session with a graded comment, sends an unreviewed head back to its implementing session for it, sends findings to the implementing session, never reviews a merged PR, and reports a 9+ head ready to merge for the interactive coordinator (pool slots have no merge route)")
     check("herdr:message" not in script.split("Work is dispatched", 1)[1].split("' \"$ts\"", 1)[0].replace("coord:handoff, herdr:message and coord:capacity are not yours", ""),
           "the prompt sends nothing over Herdr")
     check(': > "$pending"; rm -f "$attempts"' in script and 'if [ "$rc" -eq 0 ]; then' in script
