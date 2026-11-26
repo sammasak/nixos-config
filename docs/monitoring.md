@@ -165,9 +165,9 @@ Alertmanager's webhook (ntfy) counters over the same 7 days: 202 notifications s
 
 | Alert | Sev | Rule | Signal (producer) | Route | Fired in 7 d | Last receipt | Gap / owner |
 |---|---|---|---|---|---|---|---|
-| ScheduledGateRed | warning | `shipping.nix` | `homelab_scheduled_gate_red` (`scheduled-gate.nix`, acer) | ntfy, night mute | 24 Nov 15:02 to now, firing; 16 episodes, 48 h | ntfy unknown: no line names it. Webhook send 26 Nov 17:59:03 (counter 85 to 86), 44 s after its re-fire at 17:58:19 with no other routed alert changing within 5 min (inferred); alert-investigations 18:14 (cap reached) | firing at 18:35, not muted or inhibited then (night mute from 19:00); per-alert log gap (below); flaps, ending and re-firing within 30 s; #825 |
+| ScheduledGateRed | warning | `shipping.nix` | `homelab_scheduled_gate_red` (`scheduled-gate.nix`, acer) | ntfy, night mute | 24 Nov 15:02 to now, firing; 16 episodes, 48 h | ntfy unknown: no line names it. Webhook send 26 Nov 17:59:03 (counter 85 to 86), 44 s after its re-fire at 17:58:19 with no other routed alert changing within 5 min (inferred); alert-investigations 18:14 (cap reached) | firing at 18:35, not muted or inhibited then (night mute from 19:00); per-alert log gap (below); flaps, ending and re-firing within a minute; #825 |
 | RetroDueStepFailsRepeat | warning | `shipping.nix` | `shipping_gate_step_failures` and the gate-green timestamps (`shipping-metrics.nix`, lenovo; `scheduled-gate.nix`) | ntfy, night mute | window start to 26 Nov 16:07; 2 episodes, 166 h | Alertmanager: alert-investigations 26 Nov 01:24 (not started, GitHub unreachable); ntfy unknown | never resolved for 166 of 168 h; #826 |
-| GateFailRateHigh | warning | `shipping.nix` | `shipping_gate_fail_ratio`, `shipping_gate_runs_counted` (`shipping-metrics.nix`) | ntfy, night mute | 25 Nov 18:38 to now, firing; 1 episode, 22 h | ntfy unknown: no line names it. Webhook send 25 Nov 18:40:00 (counter 41 to 42), 80 s after it started at 18:38:40 with no other routed alert changing within 5 min (inferred); its 12 h repeat fell in the night mute, and the morning release (26 Nov 07:32 to 07:34, 4 sends) does not say which shipping group each was | firing at 18:35, not muted or inhibited then; per-alert log gap (below) |
+| GateFailRateHigh | warning | `shipping.nix` | `shipping_gate_fail_ratio`, `shipping_gate_runs_counted` (`shipping-metrics.nix`) | ntfy, night mute | 25 Nov 18:38 to now, firing; 1 episode, 22 h | ntfy unknown: no line names it. Webhook send by 25 Nov 18:39:33 (counter 41 to 42), at most 53 s after it started at 18:38:40 with no other routed alert changing within 5 min (inferred); its 12 h repeat fell in the night mute, and the morning release (26 Nov 07:32 to 07:34, 4 sends) does not say which shipping group each was | firing at 18:35, not muted or inhibited then; per-alert log gap (below) |
 | DeployRolledBack | warning | `shipping.nix` | `shipping_deploy_rollbacks_open` (`shipping-metrics.nix`) | ntfy, night mute | 23 Nov 09:08 to 26 Nov 07:37 (lenovo); 3 episodes, 43 h | unknown | no receipt found |
 | EscapeFound | warning | `shipping.nix` | `shipping_escapes` (`shipping-metrics.nix`) | ntfy, night mute | 24 Nov 21:08 to 25 Nov 05:37; 1 episode, 8 h | unknown | no receipt found |
 | HostBehindMain | warning | `shipping.nix` | `shipping_deploy_lag_hours` (`shipping-metrics.nix`), `up` | ntfy, night mute | 20 Nov 12:08 to 24 Nov 08:37 (lenovo); 2 episodes, 69 h | unknown | no receipt found |
@@ -213,8 +213,9 @@ Queries, each over `$PROMETHEUS_URL` unless named:
 - Receipts in Loki (`$LOKI_ADDR`): `{unit="alert-investigations.service"}` and `{unit="cluster-watchdog.service"}`;
   `{unit="ntfy-sh.service"}` carries only server stats, no alert name
 - Receipts for the six still firing at 17:05, read again 26 Nov 18:35 to 18:45 UTC: `ALERTS{alertstate="firing"}`;
-  Alertmanager's `/api/v2/alerts` (readable now; `status.inhibitedBy`, `mutedBy`, `silencedBy`, `startsAt`; its
-  `/api/v2/status`, `/api/v2/silences` and `/api/v2/alerts/groups` still 403); the raw
+  Alertmanager's `/api/v2/alerts` (readable at 18:35, unlike at 17:05 as the paragraph above says;
+  `status.inhibitedBy`, `mutedBy`, `silencedBy`, `startsAt`; its `/api/v2/status`, `/api/v2/silences` and
+  `/api/v2/alerts/groups` still 403); the raw
   `alertmanager_notifications_total{integration="webhook"}` samples (30 s scrape) set against each alert's
   `ALERTS` transitions over 26 h at 15 s steps. Webhook failures over 7 d: 0
   (`alertmanager_notifications_failed_total`, `alertmanager_notification_requests_failed_total`). "Inferred" marks
