@@ -26,7 +26,7 @@ pub const DOWN: &str = include_str!("../migrations/0001_queue.down.sql");
 /// From 7 each records its floor, the oldest VERSION whose reads and writes stay correct on it: an additive one keeps
 /// the previous floor, so a binary rolled back across it still serves; one an older binary would misread or break by
 /// its writes records its own version.
-const STEPS: [(i32, &str); 29] = [
+const STEPS: [(i32, &str); 30] = [
     (1, UP),
     (2, include_str!("../migrations/0002_submitter.up.sql")),
     (3, include_str!("../migrations/0003_result.up.sql")),
@@ -71,6 +71,10 @@ const STEPS: [(i32, &str); 29] = [
     (27, include_str!("../migrations/0027_result_head.up.sql")),
     (28, include_str!("../migrations/0028_requires.up.sql")),
     (29, include_str!("../migrations/0029_subagent_calls.up.sql")),
+    (
+        30,
+        include_str!("../migrations/0030_unpriced_sessions.up.sql"),
+    ),
 ];
 const DOWN_SUBMITTER: &str = include_str!("../migrations/0002_submitter.down.sql");
 const DOWN_RESULT: &str = include_str!("../migrations/0003_result.down.sql");
@@ -90,7 +94,7 @@ const DOWN_SESSION_SUMMARIES: &str = include_str!("../migrations/0020_session_su
 const DOWN_TURN_ARM: &str = include_str!("../migrations/0021_turn_arm.down.sql");
 const DOWN_CONTINUE_BODY: &str = include_str!("../migrations/0023_continue_body.down.sql");
 const DOWN_HOLD_INPUT: &str = include_str!("../migrations/0025_hold_input.down.sql");
-const VERSION: i32 = 29;
+const VERSION: i32 = 30;
 /// The fence's SQLSTATE, raised by `attempts_fence`.
 const FENCED: &str = "XP409";
 /// `submit_task`'s SQLSTATE for capabilities no recent slot offers (`0028_requires.up.sql`).

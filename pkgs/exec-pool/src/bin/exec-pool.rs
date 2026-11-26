@@ -58,7 +58,7 @@ const USAGE: &str = "usage: exec-pool COMMAND
                     where each session's (and one-shot agent task's) time and money went, one JSON object per line,
                     newest first (N, 20), with its model (its --model, default when none) and session: turns,
                     wall, running, queued, review and waiting seconds (waiting_by_reason: by why its turns parked),
-                    the tokens and cost its turns reported, and pr: the pull request of its branch pool/<task> on
+                    the tokens and cost its turns reported (cost_usd null when no turn was priced), and pr: the pull request of its branch pool/<task> on
                     GitHub as gh finds it ({number, state open|closed|merged, merged_at, url, head}; null with none,
                     and pr_error when gh could not tell), and rescued: true when it merged at another commit than
                     the one the task pushed (head), null when either is not known. --merged: only those whose pull request merged. --report FILE:
