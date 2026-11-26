@@ -408,6 +408,20 @@ pub fn memory_killed(names: &[String]) -> String {
 /// they are spent, the session waits for a message (`exec_pool_sessions_stalled`).
 pub const ERROR_BACKOFF_SECS: [u32; 3] = [600, 1800, 5400];
 
+/// The first delay instead when that first error is a memory kill: the kill is the shared slice's, and often of a
+/// neighbour's growth that is gone a couple of minutes later.
+pub const MEMORY_KILL_FIRST_BACKOFF_SECS: u32 = 120;
+
+/// The delay before the continue after the `n`th error in a row ([`unattended`]), the last one for `reason`; `None`
+/// once [`ERROR_BACKOFF_SECS`] is spent.
+#[must_use]
+pub fn error_backoff(reason: ParkReason, n: usize) -> Option<u32> {
+    match (reason, n) {
+        (ParkReason::TurnMemoryKill, 1) => Some(MEMORY_KILL_FIRST_BACKOFF_SECS),
+        _ => ERROR_BACKOFF_SECS.get(n.saturating_sub(1)).copied(),
+    }
+}
+
 /// How many of `attempt`'s last turns, the one just parked included, ended in an error or a timeout with no message
 /// read since the first of them; a park for a preemption or a drain between them is passed over, any other park and a
 /// turn that read a message start a run.
@@ -447,8 +461,8 @@ fn unattended(
 /// The `continue` row a park for `reason` at `epoch` leaves, if any, after it retires any earlier one still unread (a
 /// backoff's, overtaken by a message or a timer), so a park sets at most one. At once after a preemption or a drain.
 /// After errors and timeouts in a row ([`unattended`], mixed or not): a timeout continues while the run is short of
-/// [`TIMEOUTS_IN_A_ROW`]; an error up to [`ERROR_BACKOFF_SECS`]'s length, due after that run's delay. The delay it
-/// left, in seconds; `None`: no continue.
+/// [`TIMEOUTS_IN_A_ROW`]; an error up to [`ERROR_BACKOFF_SECS`]'s length, due after that run's [`error_backoff`]. The
+/// delay it left, in seconds; `None`: no continue.
 fn leave_continue(
     tx: &mut Transaction<'_>,
     (task, attempt, epoch): (&str, &str, i64),
@@ -464,8 +478,7 @@ fn leave_continue(
             (unattended(tx, (task, attempt))? < TIMEOUTS_IN_A_ROW).then_some(0)
         }
         ParkReason::TurnError | ParkReason::TurnMemoryKill => {
-            let n = unattended(tx, (task, attempt))?;
-            ERROR_BACKOFF_SECS.get(n.saturating_sub(1)).copied()
+            error_backoff(reason, unattended(tx, (task, attempt))?)
         }
         _ => None,
     };
@@ -1161,7 +1174,7 @@ impl Store {
     /// Ends a session's turn at `epoch`, in one transaction: running or checkpointing to `waiting` with the try given
     /// back and the slot freed, `park.checkpoint` and `park.result` recorded, the inbox rows up to `park.upto` marked
     /// read at `epoch`; a turn preempted, stopped for a draining host or timed out (up to [`TIMEOUTS_IN_A_ROW`]) leaves a
-    /// `continue` row, one that ended in an error a `continue` due after its [`ERROR_BACKOFF_SECS`] delay (while any
+    /// `continue` row, one that ended in an error a `continue` due after its [`error_backoff`] delay (while any
     /// is left), and `park.wake` a timer row (a `turn_end` with one parks as `waiting_until`). Then, if an unread row is due, the session is queued
     /// for its next turn. Every change, in order.
     ///
@@ -2010,6 +2023,29 @@ fn waiting(tx: &mut Transaction<'_>, out: &mut String, hosts: &[String]) -> Resu
         let _ = writeln!(
             out,
             "exec_pool_waiting{{host=\"{host}\",reason=\"{why}\"}} {n}"
+        );
+    }
+    // any unread inbox row is someone's answer: a message re-queues it, a timer (send --at) or held input waits on one
+    out.push_str(
+        "# HELP exec_pool_waiting_oldest_seconds Seconds since the oldest waiting attempt with nothing unread in its inbox \
+         parked, by host and the reason it last went to waiting (0 with none).\n\
+         # TYPE exec_pool_waiting_oldest_seconds gauge\n",
+    );
+    for (host, why, secs) in counted(
+        tx,
+        &format!(
+            "SELECT {LAST_HOST}, p.reason, extract(epoch FROM now() - min(p.at))::int8 FROM attempts a \
+             CROSS JOIN LATERAL (SELECT e.reason, e.at FROM events e WHERE e.attempt_id = a.id \
+             AND e.to_status = 'waiting' ORDER BY e.id DESC LIMIT 1) p WHERE a.status = 'waiting' \
+             AND NOT EXISTS (SELECT FROM inbox i WHERE i.task_id = a.task_id AND i.consumed_epoch IS NULL) \
+             GROUP BY 1, 2"
+        ),
+        hosts,
+        &ParkReason::ALL.map(ParkReason::as_str),
+    )? {
+        let _ = writeln!(
+            out,
+            "exec_pool_waiting_oldest_seconds{{host=\"{host}\",reason=\"{why}\"}} {secs}"
         );
     }
     Ok(())

@@ -116,6 +116,8 @@ FLEET_CASES = [
     ("github without a gh login", '{ sam.workers.instances.t.egress.github.repos = [ "o/r" ]; }', "signed with the token in sam.workers.ghHostsFile", "asus-b460m"),
     ("github keeping the ssh key", '{ sam.workers = { ghHostsFile = "/home/lukas/hosts.yml"; instances.t = { egress.github.repos = [ "o/r" ]; credentials = [ "id_ed25519" ]; }; }; }',
      "gets neither id_ed25519 nor gh-hosts.yml"),
+    ("own refs with GraphQL", '{ sam.workers = { ghHostsFile = "/home/lukas/hosts.yml"; instances.t.egress.github = { repos = [ "o/r" ]; graphql = true; ownRefs = "/run/m.json"; }; }; }',
+     "GraphQL's createPullRequest it cannot hold to the task", "asus-b460m"),
     ("telemetry without nativeOtel", "{ sam.profile.nativeOtel = lib.mkForce false; sam.workers.instances.t.telemetry = true; }", "runs only with sam.profile.nativeOtel"),
     ("telemetry from a guest module", "{ sam.workers.instances.t.telemetry = false; services.devEnvironments.guestModules = [ { sam.claude.telemetry.enable = true; } ]; }",
      "a guest module turned on sam.claude.telemetry"),
@@ -471,15 +473,17 @@ def check_github_forward():
     opened = site_wrong(body.replace(f"remote_ip {acer.get('msiAddress')}", "remote_ip 127.0.0.1").replace(repos, "(?i:o/r\\.s)"),
                         r"https://(api\.)?github\.com", GITHUB_CASES)
     check(shut == [] and opened == [], f"acer's listener refuses any other address, and from msi's lets through what a slot's own site does ({'no caddy on PATH' if shut is None else shut + (opened or [])})")
-    check_push_filter(acer, msi)
+    check_push_filter(acer, msi, l.get("url"))
 
 
-# acer's slots push only their task's refs (homelab.execPool.ownRefsOnly): each slot site sends every receive-pack to
-# exec-pool-push-filter with its own name, and only the push site behind the filter signs one
+# acer's and msi's slots push only their task's refs (homelab.execPool.ownRefsOnly): each slot site sends every
+# receive-pack, and every pull request creation on a listed repository, to exec-pool-push-filter with its own name, and
+# only the push site behind the filter signs one (acer) or forwards it to acer's sidecar (msi)
 RECEIVE = ["/sammasak/nixos-config.git/git-receive-pack", "/SAMMASAK/nixos-config/GIT-RECEIVE-PACK", "/sammasak/skills/git-receive-pack/"]
+PULLS = ["/repos/sammasak/nixos-config/pulls", "/REPOS/sammasak/nixos-config/PULLS/", "/repos/SAMMASAK/skills/pulls"]
 
 
-def check_push_filter(acer, msi):
+def check_push_filter(acer, msi, forward):
     f = acer.get("filter", {})
     slots = f.get("slots", {})
     check(slots and all(v == f"/run/exec-pool-runner/{n}/manifest.json" for n, v in slots.items())
@@ -490,43 +494,63 @@ def check_push_filter(acer, msi):
     check(f.get("textfile") == f"{d}/push-filter.prom" and f.get("ReadWritePaths") == [f"-{d}"]
           and f"--collector.textfile.directory={d}" in f.get("exporter", []),
           f"acer's filter counts its pushes in a textfile of its own directory, which node-exporter reads ({ {k: f.get(k) for k in ('textfile', 'ReadWritePaths')} })")
-    sites = {b.split("\n", 2)[1].strip(): b for b in acer.get("caddy", "").split("http:// {")[1:]}
-    for n in slots:
-        site = sites.get(f"bind unix//run/dev-env-egress/{n}/github.sock", "")
-        check(f"header_up X-Pool-Slot {n}\n" in site and site.find("handle @receive {") < site.find("handle @git {"),
-              f"{n}'s site sends receive-pack to the filter as {n}, ahead of its git route")
-        GitHubRecorder.seen = []
-        upstream = http.server.ThreadingHTTPServer(("127.0.0.1", 0), GitHubRecorder)
-        threading.Thread(target=upstream.serve_forever, daemon=True).start()
-        # on acer the live filter listens at the site's socket and counts what it refuses (ExecPoolPushesRefused):
-        # point the site at a socket in a temp dir that nothing serves, so a receive-pack is a 502, never GitHub's
-        with tempfile.TemporaryDirectory() as t:
-            local = re.sub(r"unix/\S+", f"unix/{t}/filter.sock", site)
-            check(set(re.findall(r"unix/(\S+)", local.split("\n", 2)[2])) == {f"{t}/filter.sock"},
-                  f"{n}'s site under test proxies to no socket outside its temp dir")
-            try:
-                wrong = site_wrong(local, r"https://(api\.)?github\.com", [("POST", p, 502) for p in RECEIVE]
-                                   + [("GET", "/sammasak/nixos-config/info/refs?service=git-receive-pack", True)],
-                                   f"http://127.0.0.1:{upstream.server_port}")
-            finally:
-                upstream.shutdown()
-        check(wrong == [] and not any("receive-pack" in p.split("?")[0] for p, _ in GitHubRecorder.seen),
-              f"{n}'s site lets no receive-pack past the filter, and still the ref listing ({'no caddy on PATH' if wrong is None else wrong})")
-    push = sites.get("bind unix//run/dev-env-egress/.push.sock", "")
+    for host, caddy, upstream in [("acer", acer.get("caddy", ""), r"https://(api\.)?github\.com"),
+                                  ("msi", msi.get("caddy", ""), re.escape(forward or "-"))]:
+        sites = {b.split("\n", 2)[1].strip(): b for b in caddy.split("http:// {")[1:]}
+        for n in slots:
+            site = sites.get(f"bind unix//run/dev-env-egress/{n}/github.sock", "")
+            if host == "acer":
+                check(f"header_up X-Pool-Slot {n}\n" in site and site.find("handle @receive {") < site.find("handle @git {")
+                      and -1 < site.find("handle @pulls {") < site.find("handle @write {"),
+                      f"{n}'s site sends receive-pack and pull request creation to the filter as {n}, ahead of its git and write routes")
+            elif not site:
+                continue
+            filtered_slot(f"{host}'s {n}", site, upstream)
+        signed = host == "acer"
+        push_site(host, sites.get("bind unix//run/dev-env-egress/.push.sock", ""), upstream, signed)
+
+
+def filtered_slot(what, site, upstream_re):
+    GitHubRecorder.seen = []
+    upstream = http.server.ThreadingHTTPServer(("127.0.0.1", 0), GitHubRecorder)
+    threading.Thread(target=upstream.serve_forever, daemon=True).start()
+    # on the host the live filter listens at the site's socket and counts what it refuses (ExecPoolPushesRefused):
+    # point the site at a socket in a temp dir that nothing serves, so a receive-pack is a 502, never GitHub's
+    with tempfile.TemporaryDirectory() as t:
+        local = re.sub(r"unix/\S+", f"unix/{t}/filter.sock", site)
+        check(set(re.findall(r"unix/(\S+)", local.split("\n", 2)[2])) == {f"{t}/filter.sock"},
+              f"{what} site under test proxies to no socket outside its temp dir")
+        try:
+            wrong = site_wrong(local, upstream_re, [("POST", p, 502) for p in RECEIVE + PULLS]
+                               + [("GET", "/sammasak/nixos-config/info/refs?service=git-receive-pack", True),
+                                  ("POST", "/repos/sammasak/nixos-config/issues/1/comments", True),
+                                  ("PATCH", "/repos/sammasak/nixos-config/pulls/12", True),
+                                  ("POST", "/repos/x/pub/pulls", False), ("POST", "/REPOS/x/pub/PULLS/", False)],
+                               f"http://127.0.0.1:{upstream.server_port}")
+        finally:
+            upstream.shutdown()
+    check(wrong == [] and not any("receive-pack" in p.split("?")[0] or p.lower().rstrip("/").endswith("/pulls")
+                                  for p, _ in GitHubRecorder.seen),
+          f"{what} site lets no receive-pack or pull request creation past the filter, refuses another repository's, and still passes the ref listing and other API calls ({'no caddy on PATH' if wrong is None else wrong})")
+
+
+def push_site(host, push, upstream_re, signed):
     GitHubRecorder.seen = []
     upstream = http.server.ThreadingHTTPServer(("127.0.0.1", 0), GitHubRecorder)
     threading.Thread(target=upstream.serve_forever, daemon=True).start()
     try:
-        wrong = site_wrong(push, r"https://github\.com", [
+        wrong = site_wrong(push, upstream_re, [
             ("POST", "/sammasak/nixos-config.git/git-receive-pack", True), ("POST", "/sammasak/skills/git-receive-pack", True),
             ("POST", "/x/pub/git-receive-pack", False), ("GET", "/sammasak/skills/git-receive-pack", False),
-            ("POST", "/sammasak/skills/git-upload-pack", False), ("POST", "/repos/sammasak/skills/pulls", False),
+            ("POST", "/sammasak/skills/git-upload-pack", False), ("POST", "/repos/sammasak/skills/pulls", True),
+            ("POST", "/repos/x/pub/pulls", False), ("GET", "/repos/sammasak/skills/pulls", False),
+            ("POST", "/repos/sammasak/skills/issues/1/comments", False), ("POST", "/repos/sammasak/skills/pulls/1/comments", False),
             ("POST", "/sammasak/skills/../x/git-receive-pack", False), ("POST", "/sammasak%2fskills/git-receive-pack", False),
-        ], f"http://127.0.0.1:{upstream.server_port}")
+        ], f"http://127.0.0.1:{upstream.server_port}") if push else ["no push site"]
     finally:
         upstream.shutdown()
-    check(wrong == [] and GitHubRecorder.seen and all(a for _, a in GitHubRecorder.seen),
-          f"the push site signs a listed repository's receive-pack alone ({'no caddy on PATH' if wrong is None else wrong})")
+    check(wrong == [] and GitHubRecorder.seen and all(bool(a) == signed for _, a in GitHubRecorder.seen),
+          f"{host}'s push site {'signs' if signed else 'forwards, unsigned,'} a listed repository's receive-pack and pull request creation alone ({'no caddy on PATH' if wrong is None else wrong})")
 
 
 def check_github_proxy(site):
@@ -1434,6 +1458,49 @@ def check_runner():
               f"{host} {what}, and its helper commits as the owner's git identity ({ {k: v for k, v in p.items() if k != 'git'} }, { {k: v for k, v in git.items() if 'GIT_' in k} })")
 
 
+# modules/workers/execution-pool.nix: a slot's devenv wrapper refuses the tasks that need more than a light slot's
+# reserve at once, in one line and exit 77, whatever locks its caller holds; a full slot and other tasks pass through.
+SLOT_DEVENV = r"""
+let
+  acer = (builtins.getFlake (toString %(root)s)).nixosConfigurations.acer-swift.config;
+  wrapper = n: builtins.unsafeDiscardStringContext (builtins.head (builtins.filter (p: (p.name or "") == "devenv" && p ? text) acer.containers.${n}.config.environment.systemPackages)).text;
+in { pool3 = wrapper "pool3"; pool4 = wrapper "pool4"; }
+"""
+
+
+def check_slot_devenv():
+    out = run_eval(SLOT_DEVENV % {"root": json.dumps(ROOT)})
+    texts = json.loads(out.stdout) if out.returncode == 0 else {}
+    check(set(texts) == {"pool3", "pool4"}, f"acer's pool3 and pool4 each have a devenv wrapper ({sorted(texts) or out.stderr.strip()[-300:]})")
+    if set(texts) != {"pool3", "pool4"}:
+        return
+    with tempfile.TemporaryDirectory() as t:
+        stub = pathlib.Path(t) / "devenv"
+        stub.write_text('#!/bin/sh\necho "ran: $*"\n')
+        stub.chmod(0o755)
+
+        def run(slot, *args):
+            script = pathlib.Path(t) / slot
+            script.write_text(re.sub(r"/nix/store/[a-z0-9]{32}-devenv-[^/\s]*/bin/devenv", str(stub), texts[slot]))
+            r = subprocess.run(["bash", str(script), *args], capture_output=True, text=True,
+                               env={**os.environ, "WORK_LOCKS_HELD": "1"})
+            return r.returncode, r.stdout.strip(), r.stderr.strip()
+
+        for args in (["tasks", "run", "nixos:seventh-host-test"], ["shell", "--", "devenv", "tasks", "run", "nixos:qa"],
+                     ["tasks", "run", "nixos:fmt-check", "nixos:seventh-host-test"],
+                     ["tasks", "--verbose", "run", "--mode", "all", "nixos:qa"]):
+            rc, so, se = run("pool4", *args)
+            task = args[-1]
+            check(rc == 77 and so == "" and len(se.splitlines()) == 1 and f"{task} refused in pool4, a light slot reserving 1G" in se
+                  and "needs " in se and "full slot (2G reserved)" in se and "scheduled gate" in se,
+                  f"light pool4: `devenv {' '.join(args)}` is refused at once with exit 77 and one line naming the task, the slot's reserve, the need and where to run it instead ({rc}, {so!r}, {se!r})")
+        for slot, args in (("pool4", ["tasks", "run", "nixos:fmt-check"]), ("pool4", ["shell", "--", "grep", "nixos:qa"]),
+                           ("pool3", ["tasks", "run", "nixos:seventh-host-test"]), ("pool3", ["tasks", "run", "nixos:qa"])):
+            rc, so, se = run(slot, *args)
+            check(rc == 0 and so == f"ran: {' '.join(args)}" and "refused" not in se,
+                  f"{slot}: `devenv {' '.join(args)}` is not refused and runs devenv as given ({rc}, {so!r}, {se!r})")
+
+
 def check_nested(facts):
     managed = json.loads(facts["managed"]) if facts.get("managed") else {}
     conf = facts.get("containers", "")
@@ -1816,6 +1883,7 @@ def main():
     check_session_dock()
     check_slot_reach()
     check_runner()
+    check_slot_devenv()
     out = run_eval(fleet(FLEET_INSTANCE, FLEET_FACTS))
     facts = json.loads(out.stdout) if out.returncode == 0 else {}
     check(facts.get("assertions") == [], f"msi-ms7758 with a claude instance fails no assertion ({facts.get('assertions', out.stderr.strip()[-600:])})")

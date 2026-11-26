@@ -17,25 +17,44 @@ let
   onGithub = i: i.egress.github.repos != [ ];
   ownRefs = i: i.egress.github.ownRefs or null != null;
   refsHeld = lib.filter ownRefs (lib.attrValues dev.instances);
+  heldRepos = repoRegex (lib.unique (lib.concatMap (i: i.egress.github.repos) refsHeld));
   filterSocket = "/run/exec-pool-push-filter/filter.sock";
   # its own directory: the filter runs as the proxy's user, and node-exporter's shared one is root's
   filterMetrics = "/run/exec-pool-push-filter-metrics";
   # in the proxy's runtime directory, which no guest binds whole; no instance name starts with a dot
   pushSocket = "/run/dev-env-egress/.push.sock";
   repoRegex = repos: "(?i:${lib.concatMapStringsSep "|" (lib.escapeRegex) repos})";
-  # the ref updates are in the body, which Caddy cannot read: every receive-pack, however spelled, goes to the filter,
-  # which passes the slot's own task's refs on to the push site below
-  receiveRoute =
+  # the ref updates and a pull request's head are in the body, which Caddy cannot read: every receive-pack, and every
+  # pull request creation on a listed repository, however spelled, goes to the filter, which passes the slot's own
+  # task's on to the push site below
+  filterRoute =
     i:
     lib.optionalString (ownRefs i) (
       "\n"
       + lib.removeSuffix "\n" ''
         @receive path_regexp (?i)git-receive-pack
+        @pulls {
+          path_regexp (?i)^/repos/${repoRegex i.egress.github.repos}/pulls/?$
+          method POST
+        }
+        # msi's forward would otherwise pass another repository's to acer, which holds them to its own list alone
+        @otherPulls {
+          path_regexp (?i)^/repos/[^/]+/[^/]+/pulls/?$
+          method POST
+        }
         handle @receive {
           reverse_proxy unix/${filterSocket} {
             header_up X-Pool-Slot ${i.name}
             flush_interval -1
           }
+        }
+        handle @pulls {
+          reverse_proxy unix/${filterSocket} {
+            header_up X-Pool-Slot ${i.name}
+          }
+        }
+        handle @otherPulls {
+          respond 403
         }
       ''
     );
@@ -93,7 +112,7 @@ let
       }
       handle @adminRepo {
         respond 403
-      }${receiveRoute i}
+      }${filterRoute i}
       @git {
         path_regexp ^/${repos}(\.git)?/(info/refs|git-upload-pack|git-receive-pack)$
         method GET POST
@@ -681,7 +700,7 @@ in
       egressInaccessible = [ "/run/secrets.d" ]; # sops-nix: every host secret; the proxy gets its own as a credential
       # every address, so an early start is no bind failure: the firewall admits only `from` (modules/core/network.nix),
       # and remote_ip holds the site to it too
-      # the filter's upstream: a receive-pack it passed, signed here or forwarded to the fleet's sidecar
+      # the filter's upstream: a receive-pack or pull request it passed, signed here or forwarded to the fleet's sidecar
       egressSites =
         lib.optionalString (refsHeld != [ ]) ''
           http:// {
@@ -689,9 +708,11 @@ in
             log github-push
             ${oddMatcher}
             @push {
-              path_regexp ^/${
-                repoRegex (lib.unique (lib.concatMap (i: i.egress.github.repos) refsHeld))
-              }(\.git)?/git-receive-pack$
+              path_regexp ^/${heldRepos}(\.git)?/git-receive-pack$
+              method POST
+            }
+            @pulls {
+              path_regexp ^/repos/${heldRepos}/pulls/?$
               method POST
             }
             handle @odd {
@@ -700,6 +721,11 @@ in
             handle @push {
               ${
                 if ghForward then forwardSite else upstream "https://github.com" "Basic {file.${githubToken}.basic}"
+              }
+            }
+            handle @pulls {
+              ${
+                if ghForward then forwardSite else upstream "https://api.github.com" "token {file.${githubToken}}"
               }
             }
             handle {
@@ -766,7 +792,7 @@ in
             if ghForward then
               i:
               if ownRefs i then
-                lib.removePrefix "\n" (receiveRoute i) + "\nhandle {\n" + forwardSite + "}\n"
+                lib.removePrefix "\n" (filterRoute i) + "\nhandle {\n" + forwardSite + "}\n"
               else
                 forwardSite
             else
@@ -1037,6 +1063,10 @@ in
           i: !onGithub i || !lib.elem "id_ed25519" i.credentials && !lib.elem "gh-hosts.yml" i.credentials
         ) (lib.attrValues dev.instances);
         message = "sam.workers: an instance with egress.github.repos gets neither id_ed25519 nor gh-hosts.yml.";
+      }
+      {
+        assertion = lib.all (i: !(ownRefs i && i.egress.github.graphql)) (lib.attrValues dev.instances);
+        message = "sam.workers: an instance with egress.github.ownRefs opens its pull requests over REST, which the push filter reads; GraphQL's createPullRequest it cannot hold to the task.";
       }
       {
         assertion = lib.all onGithub refsHeld;

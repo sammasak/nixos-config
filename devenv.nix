@@ -1002,7 +1002,15 @@ let
           lock=(flock -o -w 900 /run/work-locks/light-work.lock)
         fi
         began=$(${lib.getExe evalRecord} tree 2>/dev/null) || began=""
-        kinds=$(WORK_LOCKS_HELD=1 GC_FREE_SPACE_DIVISOR=16 "''${lock[@]}" nix flake show --json --all-systems --no-write-lock-file | jq -c 'keys')
+        # the show's JSON to a file, not a pipe: the kill's 137 is nix's own status, not jq's on a cut-off stream
+        out=$(mktemp)
+        trap 'rm -f "$out"' EXIT
+        WORK_LOCKS_HELD=1 GC_FREE_SPACE_DIVISOR=16 "''${lock[@]}" nix flake show --json --all-systems --no-write-lock-file >"$out" || {
+          rc=$?
+          [ "$rc" -ne 137 ] || echo "nixos-push-eval: nix flake show was killed (SIGKILL) $SECONDS s into the push eval; in a pool slot that is the OOM killer at environments.slice, which all slots share, and this evaluation takes 4 to 6 GiB: push again when the other slots are idle" >&2
+          exit "$rc"
+        }
+        kinds=$(jq -c 'keys' "$out")
         # a pass on a clean tree is recorded for it: the next push, pool-merge-check or flake check of it skips this
         [ -z "$began" ] || ${lib.getExe evalRecord} put "$began" --flake-kinds "$kinds" || true
       '';

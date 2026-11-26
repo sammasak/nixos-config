@@ -1988,6 +1988,68 @@ fn a_message_sent_while_a_turn_runs_is_delivered_after_its_park() {
 }
 
 #[test]
+fn only_a_reply_parked_past_the_window_with_an_empty_inbox_counts_as_unread() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, old) = session(&pg);
+    let mut parked_ago = |s: &mut Store, key: Option<&str>, minutes: i32| {
+        let id = key.map_or_else(
+            || old.clone(),
+            |k| {
+                let mut task: TaskSpec = serde_json::from_value(agent_task()).unwrap();
+                k.clone_into(&mut task.idempotency_key);
+                s.start_session(&task, 0).unwrap().0
+            },
+        );
+        let (a, epoch, turn) = started(&mut owner);
+        owner
+            .park(&a, epoch, &park(ParkReason::TurnEnd, turn.upto))
+            .unwrap();
+        pg.sql()
+            .execute(
+                "UPDATE events SET at = now() - make_interval(mins => $2) \
+                 WHERE attempt_id = $1 AND to_status = 'waiting'",
+                &[&a, &minutes],
+            )
+            .unwrap();
+        id
+    };
+    parked_ago(&mut s, None, 20);
+    let fresh = parked_ago(&mut s, Some("cli:fresh"), 5);
+    let sent = parked_ago(&mut s, Some("cli:sent"), 30);
+    let timed = parked_ago(&mut s, Some("cli:timed"), 50);
+    s.send_timer(&timed, "later", "2999-01-01T00:00:00Z")
+        .unwrap();
+    let closed = parked_ago(&mut s, Some("cli:closed"), 40);
+    s.cancel(&closed).unwrap();
+    s.send(&sent, "and then this").unwrap();
+    let oldest = |m: &str, why: &str| -> i64 {
+        let head =
+            format!("exec_pool_waiting_oldest_seconds{{host=\"msi-ms7758\",reason=\"{why}\"}} ");
+        m.lines()
+            .find_map(|l| l.strip_prefix(&head))
+            .unwrap_or_else(|| panic!("{m}"))
+            .parse()
+            .unwrap()
+    };
+    let metrics = owner.metrics().unwrap();
+    let age = oldest(&metrics, "turn_end");
+    assert!(
+        (1200..1260).contains(&age),
+        "the 20 minute one, not the re-queued, timed or closed ones: {age}"
+    );
+    assert_eq!(oldest(&metrics, "preempted"), 0);
+    for id in [&old, &fresh, &sent, &timed, &closed] {
+        assert!(!metrics.contains(id.as_str()), "no id in the metrics: {id}");
+    }
+    s.cancel(&old).unwrap();
+    let age = oldest(&owner.metrics().unwrap(), "turn_end");
+    assert!((300..360).contains(&age), "the 5 minute one: {age}");
+    s.cancel(&fresh).unwrap();
+    assert_eq!(oldest(&owner.metrics().unwrap(), "turn_end"), 0);
+}
+
+#[test]
 fn a_message_sent_while_a_turn_runs_reaches_its_pane_and_is_read_at_its_park() {
     let pg = Pg::new();
     let mut owner = pg.migrated();
@@ -2425,6 +2487,19 @@ fn a_memory_kill_continues_as_an_error_does_and_tells_the_agent_what_was_killed(
         moves(&runner.park(&a, epoch, &p).unwrap().1)
     };
     assert_eq!(killed(&mut runner), [(Status::Waiting, "turn_memory_kill")]);
+    let due: i64 = pg
+        .sql()
+        .query_one(
+            "SELECT extract(epoch FROM due_at - now())::int8 FROM inbox \
+             WHERE kind = 'continue' AND consumed_epoch IS NULL",
+            &[],
+        )
+        .unwrap()
+        .get(0);
+    assert!(
+        (60..=120).contains(&due),
+        "a first memory kill continues in 120 s, not an error's 600: due in {due} s"
+    );
     assert_eq!(all_due(&pg, &mut owner), [(Status::Queued, "wake")]);
     let (a, epoch, turn) = started(&mut runner);
     assert!(
@@ -2459,6 +2534,24 @@ fn a_memory_kill_continues_as_an_error_does_and_tells_the_agent_what_was_killed(
             == "exec_pool_session_turns_total{host=\"msi-ms7758\",reason=\"turn_memory_kill\"} 2"),
         "{metrics}"
     );
+}
+
+#[test]
+fn only_a_memory_kill_that_opens_a_run_of_errors_continues_sooner() {
+    use exec_pool::queue::error_backoff;
+    let len = exec_pool::queue::ERROR_BACKOFF_SECS.len();
+    assert_eq!(error_backoff(ParkReason::TurnMemoryKill, 1), Some(120));
+    assert_eq!(error_backoff(ParkReason::TurnError, 1), Some(600));
+    for n in 2..=len {
+        assert_eq!(
+            error_backoff(ParkReason::TurnMemoryKill, n),
+            error_backoff(ParkReason::TurnError, n),
+            "error {n} of a run"
+        );
+    }
+    let past = len + 1;
+    assert_eq!(error_backoff(ParkReason::TurnMemoryKill, past), None);
+    assert_eq!(error_backoff(ParkReason::TurnError, past), None);
 }
 
 /// Makes every unread inbox row due now and runs a reconcile: the changes it made.
