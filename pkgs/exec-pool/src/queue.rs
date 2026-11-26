@@ -2413,9 +2413,9 @@ fn insert_turn(
     Ok(())
 }
 
-/// The tokens and cost session turns reported, by the host each turn ran on, the arm it ran under ([`Arm`],
-/// `unknown` when not recorded) and agent kind, and how many sessions reported a turn there: a slot's declared
-/// settings compare per turn and per session. A session whose turns ran under two arms counts once on each, and the
+/// The tokens and cost session turns reported and the turns that ended in an error, by the host each turn ran on, the
+/// arm it ran under ([`Arm`], `unknown` when not recorded) and agent kind, and how many sessions reported a turn there:
+/// a slot's declared settings compare per turn and per session. A session whose turns ran under two arms counts once on each, and the
 /// sessions that did so in the last day are counted queue-wide: a claim has no slot affinity, so they mix the arms.
 fn usage(tx: &mut Transaction<'_>, out: &mut String, hosts: &[String]) -> Result<(), QueueError> {
     // a turn's host is where its lease ran: the running event at the turn's epoch. Cost sums as numeric: a float8
@@ -2428,6 +2428,9 @@ fn usage(tx: &mut Transaction<'_>, out: &mut String, hosts: &[String]) -> Result
          coalesce(sum(u.output_tokens), 0)::bigint, coalesce(sum(u.cache_read_tokens), 0)::bigint, \
          coalesce(sum(u.cache_creation_tokens), 0)::bigint, \
          count(DISTINCT t.id) FILTER (WHERE u.input_tokens IS NOT NULL AND u.parked_at > now() - interval '1 day'), \
+         count(*) FILTER (WHERE EXISTS (SELECT FROM events e WHERE e.attempt_id = u.attempt_id \
+         AND e.lease_epoch = u.lease_epoch AND e.to_status = 'waiting' \
+         AND e.reason IN ('turn_error', 'turn_timeout', 'turn_memory_kill'))), \
          coalesce(sum(u.cost_usd::numeric), 0)::float8 \
          FROM turns u JOIN attempts a ON a.id = u.attempt_id JOIN tasks t ON t.id = a.task_id GROUP BY 1, 2, 3, 4",
         &[],
@@ -2455,6 +2458,8 @@ fn usage(tx: &mut Transaction<'_>, out: &mut String, hosts: &[String]) -> Result
          # TYPE exec_pool_session_cache_creation_tokens_total counter\n",
         "# HELP exec_pool_sessions_reported_last_day Sessions with a turn that reported its usage in the last day, by host, arm and agent kind.\n\
          # TYPE exec_pool_sessions_reported_last_day gauge\n",
+        "# HELP exec_pool_session_turn_errors_total Session turns that parked as turn_error, turn_timeout or turn_memory_kill, by host, arm and agent kind.\n\
+         # TYPE exec_pool_session_turn_errors_total counter\n",
     ];
     let row_of = |(host, variant, shunt): &(String, String, String), agent: &str| {
         rows.iter().find(|r| {
@@ -2489,7 +2494,7 @@ fn usage(tx: &mut Transaction<'_>, out: &mut String, hosts: &[String]) -> Result
         let (host, variant, shunt) = arm;
         for agent in AGENTS {
             let cost: f64 = row_of(arm, agent)
-                .map(|r| r.try_get(10))
+                .map(|r| r.try_get(11))
                 .transpose()?
                 .unwrap_or(0.0);
             let _ = writeln!(
