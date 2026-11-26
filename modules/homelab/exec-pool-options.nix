@@ -197,7 +197,7 @@ in
     {
       assertion =
         !(has "runner") || builtins.match "[a-z][a-z0-9-]{0,26}" config.networking.hostName != null;
-      message = "homelab.execPool: a runner's networking.hostName must be lower case a-z, 0-9 and -, at most 27, for its slots' host-<hostName> capability.";
+      message = "homelab.execPool: a runner's networking.hostName must be a lower-case letter then a-z, 0-9 and -, at most 27 in all, for its slots' host-<hostName> capability.";
     }
     {
       assertion = !(has "runner") || has "queue" != (cfg.queueListener != null);

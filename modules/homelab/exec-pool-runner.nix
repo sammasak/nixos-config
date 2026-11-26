@@ -66,7 +66,7 @@ let
       host = config.networking.hostName;
       id = n;
       state = "idle";
-      # host-, not host:: a capability name is [a-z0-9-] (pkgs/exec-pool/migrations/0028_requires.up.sql)
+      # host-, as a capability name has no colon: it is [a-z0-9-] (pkgs/exec-pool/migrations/0028_requires.up.sql)
       capabilities = cfg.capabilities ++ [ "host-${config.networking.hostName}" ];
       agents = [ "none" ] ++ cfg.agents;
     };

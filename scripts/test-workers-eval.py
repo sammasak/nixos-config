@@ -1357,6 +1357,8 @@ in {
   slot2 = builtins.fromJSON acer.systemd.services.exec-pool-runner-pool2.environment.EXEC_POOL_SLOT;
   msiSlots = map (n: (builtins.fromJSON msi.systemd.services."exec-pool-runner-${n}".environment.EXEC_POOL_SLOT).agents) (slots 4);
   capabilities = { acer = caps acer; msi = caps msi; noMonitoring = caps (flake.nixosConfigurations.msi-ms7758.extendModules { modules = [ { homelab.execPool.monitoring = flake.inputs.nixpkgs.lib.mkForce false; } ]; }).config; };
+  # a runner hostname that cannot be a capability name fails its host's evaluation
+  badHost = map (a: a.message) (builtins.filter (a: !a.assertion && builtins.match ".*host-<hostName>.*" a.message != null) (flake.nixosConfigurations.msi-ms7758.extendModules { modules = [ { networking.hostName = flake.inputs.nixpkgs.lib.mkForce "Msi-MS7758"; } ]; }).config.assertions);
   limits = { acer = limits acer 4; msi = limits msi 4; };
   namedLimit = { inherit (named) StartLimitIntervalSec StartLimitBurst; };
   # acer's light pool4 beside pool3, and the slice that holds both
@@ -1382,8 +1384,9 @@ def check_runner():
     caps = got.get("capabilities", {})
     check([sorted(c) for c in caps.get("acer", [])] == [["always-on", "github", "host-acer-swift", "monitoring"]] * 4
           and [sorted(c) for c in caps.get("msi", [])] == [["github", "host-msi-ms7758", "monitoring"]] * 4
-          and [sorted(c) for c in caps.get("noMonitoring", [])] == [["github", "host-msi-ms7758"]] * 4,
-          f"each slot offers the capabilities its host's facts give it, which a task's --requires names: github with repos, monitoring with homelab.execPool.monitoring (msi with it off: github alone), always-on on acer and not on msi, which has a power window, and host-<hostName> always ({caps or out.stderr.strip()[-300:]})")
+          and [sorted(c) for c in caps.get("noMonitoring", [])] == [["github", "host-msi-ms7758"]] * 4
+          and len(got.get("badHost", [])) == 1,
+          f"each slot offers the capabilities its host's facts give it, which a task's --requires names: github with repos, monitoring with homelab.execPool.monitoring (msi with it off: github alone), always-on on acer and not on msi, which has a power window, and host-<hostName> always, a runner hostname that is no capability name failing evaluation ({caps or out.stderr.strip()[-300:]})")
     polkit = got.get("polkit", "")
     resets = json.dumps([f"dev-env-reset@{n}.service" for n in acer_slots], separators=(",", ":"))
     check(f'var resets = {resets};' in polkit
