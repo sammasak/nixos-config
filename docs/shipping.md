@@ -85,7 +85,9 @@ more on the next timer, so a failure outside the tree clears itself; red again, 
 Fires: the last finished scheduled gate failed. The summary names the head, the first failed step (`step`; for the
 flake check, the check inside it, `check`, whether it failed to build, evaluate or dry-run) and `green..head`, the
 commits since the last green scheduled run; `unrecorded` means nixos:qa failed before its first step record (devenv's
-evaluation, the devenv-fresh guard).
+evaluation, the devenv-fresh guard). A scheduled run does not stop at that step: every step runs, and
+`homelab_scheduled_gate_failed_step{head,step,check}` (and the run's last journal line) lists each red one; a step that
+reads the gate probe is recorded `result=skipped` while the probe is red.
 First: rerun that step alone in a checkout of the head, with the command the summary names: `nix build -L .#<check>`
 for a flake check's check, `NIXOS_STEP=<step> devenv tasks run nixos:step` for any other step, `devenv tasks run
 nixos:qa` for `unrecorded`. RetroDueStepFailsRepeat names the same command. On acer, `journalctl -u scheduled-gate -n

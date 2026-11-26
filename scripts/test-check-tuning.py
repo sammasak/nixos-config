@@ -1,7 +1,8 @@
 """scripts/check-tuning.py on an inline fixture of gate-step records, without Nix: a pass, a fail, a record without
 seconds, a malformed seconds, one without step, skipped, deferred and dry checks, failed runs recorded with seconds=0,
 gates side by side, spool and logcli lines and a | in a value; the rows and the counts, and that neither the malformed,
-a not-run nor an unmeasured failed record is read as 0 seconds (it would lower the mean). Then from a stand-in Loki:
+a not-run nor an unmeasured failed record is read as 0 seconds (it would lower the mean); a lock wait recorded apart
+(wait_seconds=) is its own column, averaged over the runs with a number. Then from a stand-in Loki:
 day queries back to exactly --since, a day at the line limit and an HTTP error refused (exit 2) instead of short
 counts, and a URL with a password refused without printing it."""
 import http.server
@@ -20,8 +21,8 @@ from gate_probe import check, finish
 SCRIPT = pathlib.Path(__file__).resolve().parent / "check-tuning.py"
 
 FIXTURE = """\
-gate=nixos-qa-push step=nixos-push-eval seconds=120 result=pass sha=aaaa
-gate=nixos-qa-push step=nixos-push-eval seconds=240 result=fail sha=bbbb
+gate=nixos-qa-push step=nixos-push-eval seconds=120 wait_seconds=300 result=pass sha=aaaa
+gate=nixos-qa-push step=nixos-push-eval seconds=240 wait_seconds=unknown result=fail sha=bbbb
 gate=nixos-qa-push step=nixos-push-eval seconds=abc result=pass sha=cccc
 2026-11-26T10:00:00+01:00 gate-step gate=pool-merge-check step=pool-merge-eval check=lenovo seconds=30 result=pass sha=dddd
 gate=pool-merge-check step=pool-merge-eval check=lenovo result=pass sha=ffff
@@ -57,12 +58,13 @@ def rows(out: list[str]) -> list[str]:
 
 code, out = run([], FIXTURE)
 check(code == 0, f"exit 0 on the fixture ({code})")
-check(rows(out) == ["| nixos-qa | nixos-flake-check | x | 2 | 10.0 | 10.0 | 1 |",
-                    "| nixos-qa | nixos-flake-check | y | 1 | - | - | 1 |",
-                    "| nixos-qa-push | nixos-push-eval | - | 2 | 3.0 | 4.0 | 1 |",
-                    "| on-demand | s | a\\|b | 1 | 1.0 | 1.0 | 0 |",
-                    "| pool-merge-check | pool-merge-eval | lenovo | 1 | 0.5 | 0.5 | 0 |"],
-      f"one row per gate, step and check, with runs, mean and worst minutes and fails; seconds=abc, a seconds=0 "
+check(rows(out) == ["| nixos-qa | nixos-flake-check | x | 2 | 10.0 | 10.0 | - | 1 |",
+                    "| nixos-qa | nixos-flake-check | y | 1 | - | - | - | 1 |",
+                    "| nixos-qa-push | nixos-push-eval | - | 2 | 3.0 | 4.0 | 5.0 | 1 |",
+                    "| on-demand | s | a\\|b | 1 | 1.0 | 1.0 | - | 0 |",
+                    "| pool-merge-check | pool-merge-eval | lenovo | 1 | 0.5 | 0.5 | - | 0 |"],
+      f"one row per gate, step and check, with runs, mean and worst minutes of the run alone, the mean lock wait over "
+      f"the runs that recorded one (unknown is none) and fails; seconds=abc, a seconds=0 "
       f"skipped, deferred or dry check and an unmeasured fail add no 0-second time, a stepless record no row, a | "
       f"is escaped ({rows(out)})")
 check(SUMMARY in out, f"the stepless, secondless, malformed and non-record lines are skipped and counted, the not-run "
@@ -120,7 +122,7 @@ code, out = run(["--loki", url, "--since", "36h"])
 spans = [(int(q["start"][0]) / 1e9, int(q["end"][0]) / 1e9) for q in queries]
 check(code == 0 and len(spans) == 2 and spans[0][0] == spans[1][1] and before <= spans[0][1] <= time.time()
       and abs(spans[1][1] - spans[1][0] - 12 * 3600) < 1
-      and rows(out) == ["| nixos-qa | nixos-flake-check | - | 2 | 10.0 | 10.0 | 0 |"],
+      and rows(out) == ["| nixos-qa | nixos-flake-check | - | 2 | 10.0 | 10.0 | - | 0 |"],
       f"--since 36h: a day query from now and a 12 h one, meeting without overlap, a row per record read "
       f"({code}, {spans}, {rows(out)})")
 

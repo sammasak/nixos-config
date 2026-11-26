@@ -117,22 +117,31 @@ in
             lib.hiPrio (
               pkgs.writeShellScriptBin name ''
                 ${refusal name}light() {
-                  # no evaluation starts while the scheduled gate holds the heavy lock (#835): its scheduled-gate.lock
-                  # (pkgs/heavy-lock) is waited out first, within the same 900 s. One already running goes on: held
-                  # shared across it, overlapping slots would starve the gate's exclusive take.
-                  local start=$SECONDS gate=/run/work-locks/scheduled-gate.lock w rc
+                  # CLASS COMMAND...: no evaluation starts while the scheduled gate holds the heavy lock (#835): its
+                  # scheduled-gate.lock (pkgs/heavy-lock) is waited out first, for as long as a gate may run, then the
+                  # light lock within 900 s. One already running goes on: held shared across it, overlapping slots would
+                  # starve the gate's exclusive take. The light
+                  # lock is this shell's, closed in COMMAND as flock -o would; each call, a timed-out one included, is one
+                  # kind=lock record of its wait (the gate's included) apart from its hold, in the spool the host ships.
+                  local class=$1 start=$SECONDS gate=/run/work-locks/scheduled-gate.lock rc=0 fd="" held
+                  shift
                   if [ -e "$gate" ] && ! ${pkgs.util-linux}/bin/flock -s -n "$gate" true; then
                     echo "${name}: waiting for the scheduled gate, which holds /run/work-locks/heavy-work.lock" >&2
-                    ${pkgs.util-linux}/bin/flock -s -w 900 -E 75 "$gate" true || {
-                      rc=$?
-                      [ "$rc" -ne 75 ] || echo "${name}: the scheduled gate still holds $gate after 900 s" >&2
-                      return "$rc"
-                    }
+                    ${pkgs.util-linux}/bin/flock -s -w ${gateWait} -E 75 "$gate" true || rc=$?
+                    [ "$rc" -ne 75 ] || echo "${name}: the scheduled gate still holds $gate after ${gateWait} s" >&2
                   fi
-                  w=$((900 - SECONDS + start))
-                  WORK_LOCKS_HELD=1 ${pkgs.util-linux}/bin/flock -o -w $((w > 0 ? w : 0)) -E 75 /run/work-locks/light-work.lock "$@"
-                  rc=$?
-                  [ "$rc" -ne 75 ] || echo "${name}: /run/work-locks/light-work.lock still held after 900 s" >&2
+                  if [ "$rc" -eq 0 ]; then
+                    exec {fd}</run/work-locks/light-work.lock
+                    ${pkgs.util-linux}/bin/flock -w 900 -E 75 "$fd" || rc=$?
+                    [ "$rc" -ne 75 ] || echo "${name}: /run/work-locks/light-work.lock still held after 900 s" >&2
+                  fi
+                  held=$SECONDS
+                  if [ "$rc" -eq 0 ]; then
+                    WORK_LOCKS_HELD=1 "$@" {fd}<&-
+                    rc=$?
+                  fi
+                  [ -z "$fd" ] || exec {fd}<&-
+                  PLATFORM_RECORD_SHIPPER=host PLATFORM_RECORD_SPOOL=${spool} ${lib.getExe record} lock lane=light class="$class" wait_seconds=$((held - start)) seconds=$((SECONDS - held)) rc="$rc" >&2 || :
                   return "$rc"
                 }
                 if [ -z "''${WORK_LOCKS_HELD:-}" ] && [ -e /run/work-locks/light-work.lock ]; then
@@ -170,6 +179,13 @@ in
                 esac
               done
             '';
+          record = pkgs.callPackage ../../pkgs/platform-record/package.nix { };
+          # the scheduled gate's worst case, modules/homelab/scheduled-gate.nix's TimeoutStartSec (8 h; held equal by
+          # scripts/test-pool-merge-check.py): a slot waiting less fails its turn with rc 75 while a gate runs
+          gateWait = toString (8 * 3600);
+          # the spool the host ships is the guest user's own (scripts/guest-records.py), not the HOME a runner step gets
+          # (an attempt's under attempts/, a session turn's /session/cur/home: pkgs/exec-pool/src/workspace.rs)
+          spool = "${config.users.users.${dev.user}.home}/.local/state/platform-records";
           cargoJobs = toString (
             lib.max 1 (dev.instances.${devEnvironment.name}.memory.reserved / 1073741824)
           );
@@ -183,9 +199,9 @@ in
               while [ "''${!n:-}" = --option ]; do n=$((n + 3)); done
               m=$((n + 1))
               case ''${!n:-} in
-                eval | path-info | derivation) light ${nix} "$@"; exit ;;
+                eval | path-info | derivation) light "nix-''${!n}" ${nix} "$@"; exit ;;
                 # check builds as it evaluates: wholly under the lock
-                flake) case ''${!m:-} in show | metadata | info | check) light ${nix} "$@"; exit ;; esac ;;
+                flake) case ''${!m:-} in show | metadata | info | check) light "nix-flake-''${!m}" ${nix} "$@"; exit ;; esac ;;
                 build)
                   all=("$@")
                   # each flake attribute's drvPath, or each attribute's of one --expr or --file, under the lock, its build
@@ -224,7 +240,7 @@ in
                   [ ''${#attrs[@]} -gt 0 ] || attrs=("")
                   # every evaluation in one hold, not a wait on the lock per attribute. A drv is unrooted from its
                   # evaluation to the build (a guest's roots dangle on the host): a host collection between them fails it.
-                  picks=$(light ${pkgs.bash}/bin/bash -c '
+                  picks=$(light nix-build-eval ${pkgs.bash}/bin/bash -c '
                     nix=$1 apply=$2 k=$3; shift 3; flags=("''${@:1:k}"); shift "$k"; s=$1; shift; src=("''${@:1:s}"); shift "$s"
                     for a; do
                       d=$("$nix" eval "''${flags[@]}" --raw "''${src[@]}" "$a" --apply "$apply") || exit
@@ -240,7 +256,7 @@ in
               esac
             '')
             (lane "nix-instantiate" "${config.nix.package}/bin/nix-instantiate" ''
-              light ${config.nix.package}/bin/nix-instantiate "$@"; exit
+              light nix-instantiate ${config.nix.package}/bin/nix-instantiate "$@"; exit
             '')
             # its drvs instantiated under the lock, then nix-build on them: the same out-links and output paths. --add-root
             # only silences nix-instantiate's warning (a guest's roots dangle on the host); it prints the roots, a
@@ -266,7 +282,7 @@ in
               done
               roots=$(${pkgs.coreutils}/bin/mktemp -d) || exit
               trap '${pkgs.coreutils}/bin/rm -rf "$roots"' EXIT
-              out=$(light ${config.nix.package}/bin/nix-instantiate --add-root "$roots/drv" "''${inst[@]}") || exit
+              out=$(light nix-build-instantiate ${config.nix.package}/bin/nix-instantiate --add-root "$roots/drv" "''${inst[@]}") || exit
               [ -n "$out" ] || exit 0
               drvs=()
               while IFS= read -r p; do
@@ -278,11 +294,47 @@ in
               exit
             '')
             # devenv evaluates in-process and caches it: under the lock its eval, or a warm `shell -- true` for a
-            # command that runs a task or a shell, which then evaluates from that cache
+            # command that runs a task or a shell, whose shell then evaluates from that cache. No warm-up while the stamp
+            # matches what devenv's cache keys on: the files its last evaluation read (.devenv/input-paths.txt, its
+            # direnv watch list: devenv.nix, .yaml, .lock, the local overrides and every file they import), the env
+            # vars it read (eval_env_input in its db, and those this repo's cache holds), the db itself (a deleted or
+            # recreated one is cold) and devenv. A key that moved during the warm-up, a missing list or db or a failed
+            # warm-up writes no stamp, so the next call warms up again.
             (lane "devenv" devenv ''
+              warm_key() {
+                local f v db=$1/nix-eval-cache.db files=()
+                [ -f "$1/input-paths.txt" ] && [ -f "$db" ] || return
+                {
+                  echo ${devenv}
+                  ${pkgs.coreutils}/bin/stat -c 'db %d:%i' "$db"
+                  { printf '%s\n' HOME DEVENV_CONTAINER SECRETSPEC_SECRETS NIXPKGS_ALLOW_UNFREE NIXPKGS_ALLOW_INSECURE \
+                      NIXPKGS_ALLOW_BROKEN NIXPKGS_ALLOW_NONSOURCE NIXPKGS_ALLOW_UNSUPPORTED_SYSTEM
+                    ${pkgs.sqlite}/bin/sqlite3 -readonly "$db" 'SELECT DISTINCT name FROM eval_env_input' 2>/dev/null
+                  } | ${pkgs.coreutils}/bin/sort -u | while IFS= read -r v; do
+                    case $v in "" | [0-9]* | *[!A-Za-z0-9_]*) continue ;; esac
+                    if [ -n "''${!v+set}" ]; then printf 'env %s=%s\n' "$v" "''${!v}"; else echo "env $v unset"; fi
+                  done
+                  while IFS= read -r f; do
+                    if [ -d "$f" ]; then echo "$f dir $(${pkgs.coreutils}/bin/ls -A "$f" | ${pkgs.coreutils}/bin/sha256sum)"
+                    elif [ -e "$f" ]; then files+=("$f")
+                    else echo "$f absent"; fi
+                  done <"$1/input-paths.txt"
+                  [ ''${#files[@]} -eq 0 ] || ${pkgs.coreutils}/bin/sha256sum -- "''${files[@]}" 2>/dev/null
+                } | ${pkgs.coreutils}/bin/sha256sum
+              }
               case ''${1:-} in
-                eval | info | search | direnv-export) light ${devenv} "$@"; exit ;;
-                shell | tasks | test | up | processes | build) light ${devenv} shell -- true >&2 || : ;;
+                eval | info | search | direnv-export) light "devenv-$1" ${devenv} "$@"; exit ;;
+                shell | tasks | test | up | processes | build)
+                  # devenv's root: the nearest directory up with a devenv.nix, as devenv finds it
+                  d=$PWD
+                  while [ "$d" != / ] && [ ! -e "$d/devenv.nix" ]; do d=''${d%/*} d=''${d:-/}; done
+                  d=$d/.devenv
+                  k=$(warm_key "$d")
+                  if [ -z "$k" ] || [ "$(${pkgs.coreutils}/bin/cat "$d/light-warm" 2>/dev/null)" != "$k" ]; then
+                    if light devenv-warm-up ${devenv} shell -- true >&2 && [ -n "$k" ] && [ "$(warm_key "$d")" = "$k" ]; then
+                      { echo "$k" >"$d/light-warm.$$" && ${pkgs.coreutils}/bin/mv "$d/light-warm.$$" "$d/light-warm"; } 2>/dev/null || :
+                    fi
+                  fi ;;
               esac
             '')
           ];

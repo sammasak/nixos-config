@@ -104,6 +104,20 @@ groups:
           query: 'node_systemd_unit_state{job="node-exporter",node="{{ $labels.node }}",state="failed"} == 1'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#nodesystemdunitfailed"
 
+      # A host that is down serves no series at all, so this stays quiet and TargetDown or HostExpectedOff speaks.
+      # for: 10m outlasts one slow D-Bus answer at a single scrape
+      - alert: NodeSystemdCollectorFailed
+        expr: max by (node) (node_scrape_collector_success{job="node-exporter",collector="systemd"} == 0)
+        for: 10m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "node-exporter's systemd collector fails on {{ $labels.node }}"
+          description: "node-exporter on {{ $labels.node }} has answered for 10 minutes without its systemd collector, so no unit state reaches black-pi: NodeSystemdUnitFailed and StoreUploadStale are blind for it. Run journalctl -u prometheus-node-exporter --since -30m | grep systemd there."
+          query: 'node_scrape_collector_success{job="node-exporter",node="{{ $labels.node }}",collector="systemd"}'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#nodesystemdcollectorfailed"
+
       # the Pi's zone against 85 °C, where its firmware throttles hardest. x86 zones are not paged: acer's package zone
       # sits near 89 °C through a build.
       - alert: NodeTemperatureHigh
