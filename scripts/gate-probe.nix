@@ -150,7 +150,8 @@ let
           (
             _: c:
             lib.concatMap (e: map (h: h.command) e.hooks) (
-              builtins.filter (e: (e.matcher or "") == "Bash") (hm c).programs.claude-code.settings.hooks.PreToolUse
+              builtins.filter (e: (e.matcher or "") == "Bash")
+                (hm c).programs.claude-code.settings.hooks.PreToolUse
             )
           )
           {
@@ -972,6 +973,16 @@ let
             ]
           );
           trusted = failing (extend "black-pi" [ { networking.firewall.trustedInterfaces = [ "eth0" ]; } ]);
+          dnsAnySource = failing (
+            extend "lenovo" [
+              {
+                networking.firewall = {
+                  allowedUDPPorts = [ 53 ];
+                  allowedTCPPorts = [ 853 ];
+                };
+              }
+            ]
+          );
           lokiAnySource = failing (
             extend "black-pi" [ { networking.firewall.allowedTCPPorts = [ lenovo.sam.fleet.loki.port ]; } ]
           );

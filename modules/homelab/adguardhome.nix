@@ -16,6 +16,19 @@ let
     ;
   # Android Private DNS only speaks DoT on 853.
   dotPort = 853;
+  dnsPorts = [
+    {
+      port = 53;
+      proto = "udp";
+    }
+  ]
+  ++ optionals cfg.tls.enable [
+    {
+      port = dotPort;
+      proto = "tcp";
+    }
+  ];
+  inherit (import ../../lib/firewall.nix lib) mkDualBackendFirewall;
   dnsDomain = cfg.tls.domain;
   # AdGuard's UI and control API have no users, so loopback keeps them off the LAN. port_https would serve them, and
   # DoH, on this address's IP too (internal/home/web.go), so it is 0: no DoH; DNS and DoT bind dns.bind_hosts
@@ -257,10 +270,21 @@ in
       };
     };
 
-    networking.firewall = {
-      allowedUDPPorts = [ 53 ];
-      allowedTCPPorts = optionals cfg.tls.enable [ dotPort ];
-    };
+    # LAN-scoped, as network.nix expects a lan public entry (modules/core/fleet.nix), which fails the build without
+    # one; the tailnet reaches both ports on tailscale0, a trusted interface (tailscale.nix)
+    networking.firewall = lib.mkMerge (
+      map (
+        p:
+        lib.getAttrs [ "extraInputRules" "extraCommands" ] (mkDualBackendFirewall {
+          nftComment = "public ${toString p.port}";
+          sources = [ config.sam.fleet.lanCidr ];
+          ports = [ p.port ];
+          inherit (p) proto;
+          interfaces = [ ];
+          inherit (config.networking.firewall) backend;
+        })
+      ) dnsPorts
+    );
 
     # AdGuard's counters for black-pi through node-exporter's textfile directory, so the control API stays on
     # loopback and no port opens. Root, as open-webui-edge-check: the directory is root's 0755 (node-exporter.nix).

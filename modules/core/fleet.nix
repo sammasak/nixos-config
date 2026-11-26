@@ -455,12 +455,14 @@ in
         host = "lenovo-21CB001PMX";
         port = 53;
         proto = "udp";
-        why = "AdGuard, the LAN's resolver.";
+        lan = true;
+        why = "AdGuard, the LAN's resolver; the tailnet reaches it on tailscale0 (adguardhome.nix).";
       }
       {
         host = "lenovo-21CB001PMX";
         port = 853;
-        why = "AdGuard DNS-over-TLS, Android Private DNS.";
+        lan = true;
+        why = "AdGuard DNS-over-TLS, Android Private DNS on home Wi-Fi or the tailnet (adguardhome.nix).";
       }
       {
         inherit (ntfy) host port;
