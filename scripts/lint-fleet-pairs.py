@@ -12,10 +12,13 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 FLEET = "modules/core/fleet.nix"
+# rule unit tests' input series: a scrape's instance label is its address:port; scripts/test-fleet-contract.py's port
+# scan skips them too
+SERIES_LABELS = "modules/homelab/monitoring/rules/tests/"
 # path prefix -> why a literal there stays
 PAIR_ALLOWED = {
     "docs/records/": "dated records of what was run, as it was run",
-    "modules/homelab/monitoring/rules/tests/": "Prometheus series labels: a scrape's instance is its address",
+    SERIES_LABELS: "Prometheus series labels: a scrape's instance is its address",
     "lib/app-manifest/golden/": "the rendered scrape config the manifest library is held to",
     "pkgs/platform-record/platform_record.py": "a record must ship with DNS down; its default is held to sam.fleet.loki.url",
     "pkgs/scorecard/scorecard.py": "its defaults are held to sam.fleet's urls; scorecard reads with DNS down too",

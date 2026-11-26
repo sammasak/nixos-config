@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """The fleet's ntfy and Loki ports and its host list, held to their definitions: no tracked file but
-modules/core/fleet.nix names either port (one allowlisted line, with its reason), ntfy or Loki on a port off its
-sam.fleet fact fails an assertion, every host's rendered firewall admits each sam.fleet listener's port from exactly
-its callers' addresses and opens nothing the listeners and public entries do not list (an open port, an upstream
-openFirewall, a stray rule and a trusted interface each fail evaluation), each listener's service binds its port, the
-listeners' address:port pairs scripts/lint-fleet-pairs.py reads from fleet.nix's text are the evaluated ones, lenovo's
-sam.herdr.machines and jump hosts must be the runtime hosts of flake-modules/hosts.nix: one left out, one the
-table no longer has, and the table with asus-b460m removed each fail evaluation; a collector on a host without a fleet
-address fails too."""
+modules/core/fleet.nix and the rule unit tests' series labels names either port (one allowlisted line, with its
+reason), ntfy or Loki on a port off its sam.fleet fact fails an assertion, every host's rendered firewall admits each
+sam.fleet listener's port from exactly its callers' addresses and opens nothing the listeners and public entries do not
+list (an open port, an upstream openFirewall, a stray rule and a trusted interface each fail evaluation), each
+listener's service binds its port, the listeners' address:port pairs scripts/lint-fleet-pairs.py reads from fleet.nix's
+text are the evaluated ones, lenovo's sam.herdr.machines and jump hosts must be the runtime hosts of
+flake-modules/hosts.nix: one left out, one the table no longer has, and the table with asus-b460m removed each fail
+evaluation; a collector on a host without a fleet address fails too."""
 import importlib.util
 import os
 import pathlib
@@ -20,6 +20,9 @@ import gate_probe
 from gate_probe import check, finish
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+spec = importlib.util.spec_from_file_location("lint_fleet_pairs", ROOT / "scripts" / "lint-fleet-pairs.py")
+lint_fleet_pairs = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(lint_fleet_pairs)
 
 
 P = gate_probe.section("fleet-contract")
@@ -39,6 +42,8 @@ def literals(files):
     """files: [(path, text)] -> [(path, line number, port name, line)] naming a fleet port outside its definition"""
     found = []
     for path, text in files:
+        if path.startswith(lint_fleet_pairs.SERIES_LABELS):
+            continue
         for n, line in enumerate(text.splitlines(), 1):
             for name, port in ports.items():
                 if not re.search(rf"(?<![0-9]){port}(?![0-9])", line):
@@ -66,15 +71,14 @@ helper = (ROOT / "pkgs/platform-record/platform_record.py").read_text()
 check(f'LOKI_DEFAULT = "{P["lokiUrl"]}"' in helper,
       f"platform-record's default Loki is the evaluated sam.fleet.loki.url ({P['lokiUrl']})")
 seeded = literals(files + [("modules/homelab/x.nix", f'  listen = ":{ports["ntfy"]}";'),
-                           ("pkgs/platform-record/platform_record.py", f'READY = "http://loki:{ports["loki"]}/ready"')])
+                           ("pkgs/platform-record/platform_record.py", f'READY = "http://loki:{ports["loki"]}/ready"'),
+                           (lint_fleet_pairs.SERIES_LABELS + "x.yaml", f'instance="loki.fleet.sammasak.dev:{ports["loki"]}"')])
 check([(p, k) for p, _, k, _ in seeded] == [("modules/homelab/x.nix", "ntfy"), ("pkgs/platform-record/platform_record.py", "loki")],
-      f"seeded: a module naming the ntfy port, and a second Loki literal in the allowlisted script, are found ({seeded})")
+      f"seeded: a module naming the ntfy port, and a second Loki literal in the allowlisted script, are found, a rule "
+      f"test's series label is not ({seeded})")
 
 # the lint-fleet-pairs.py lint scans every tracked file for a listener's address:port on every push, reading the
 # literals from fleet.nix's text; here its parse is held to the evaluated pairs
-spec = importlib.util.spec_from_file_location("lint_fleet_pairs", ROOT / "scripts" / "lint-fleet-pairs.py")
-lint_fleet_pairs = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(lint_fleet_pairs)
 evaluated = sorted(P["pairs"], key=lambda p: (p["literal"], p["name"]))
 try:
     parsed = lint_fleet_pairs.pairs(ROOT)
