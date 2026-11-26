@@ -1295,8 +1295,9 @@ def check_slot_reach():
               and "dev-env-fresh-on-toggle" in " ".join(got.get("start", [])),
               f"{label}: the slot user has no group but its own and no sudo, and a home of the other id block is reset at the start ({ {k: got.get(k) for k in ('groups', 'sudo', 'wrappers', 'start')} })")
         if own:
-            check(all(f"vu-{n}-1000" in got.get("allowed", []) for n in slots) and "lukas" in got.get("allowed", []),
-                  f"{label}: the host daemon allows each slot's mapped user beside lukas ({got.get('allowed')})")
+            check(all(f"vu-{n}-1000" in got.get("allowed", []) and str(blocks.get(n, 0) + 1000) in got.get("allowed", []) for n in slots)
+                  and "lukas" in got.get("allowed", []),
+                  f"{label}: the host daemon allows each slot's mapped user, by name and by bare uid, beside lukas ({got.get('allowed')})")
     # a declaration that moves restarts worker-pool1 and through PartOf its container: a reload would keep the old ids
     check(None not in declarations and declarations[0] != declarations[1],
           "acer: privateUsers moves each slot's declaration unit, so the switch restarts its container, not only reloads it")
@@ -1738,8 +1739,9 @@ def main():
           f"a rootInGuest home is made with its mapped ids and its block in .id-base, which its container start checks; a plain one with the host's and 0 ({owners}, {checks})")
     check_id_check()
     allowed, trusted = got.get("allowed", []), got.get("trusted", [])
-    check(sorted(allowed) == ["alice", "vu-r-1000", "vu-s-1000"] and not any(u.startswith("vu-") for u in trusted),
-          f"the host daemon allows exactly the rootInGuest guests' users, not their root, not the other instance, and trusts none ({allowed}, {trusted})")
+    mapped = [str(i.get("privateUsers", 0) + 1000) for i in (r, s_)]
+    check(sorted(allowed) == sorted(["alice", "vu-r-1000", "vu-s-1000"] + mapped) and not any(u.startswith("vu-") or u in mapped for u in trusted),
+          f"the host daemon allows exactly the rootInGuest guests' users, by name and by the bare mapped uid it compares while machined cannot resolve it, not their root, not the other instance, and trusts none ({allowed}, {trusted})")
     check(ok.get("privateUsers") == "no" and not ok.get("extraFlags") and ok.get("binds") and not any(":" in b["dst"] for b in ok["binds"]) and ok.get("sudoPassword") is True,
           f"an instance without rootInGuest is unchanged: host uids, plain binds, sudo with a password ({ok})")
     check_host_network()
