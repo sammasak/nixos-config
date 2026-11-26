@@ -144,6 +144,20 @@ let
         lenovo = lenovo;
         acer-swift = acer;
       };
+      # each host's fleet Bash hooks before a tool call, in order
+      bashHooks =
+        lib.mapAttrs
+          (
+            _: c:
+            lib.concatMap (e: map (h: h.command) e.hooks) (
+              builtins.filter (e: (e.matcher or "") == "Bash") (hm c).programs.claude-code.settings.hooks.PreToolUse
+            )
+          )
+          {
+            lenovo = lenovo;
+            acer-swift = acer;
+          };
+      inherit (lenovo.sam.fleet) deployer;
       services = (hm lenovo).systemd.user.services;
       wakeup = wakeup.outPath or null;
       script = wakeup.text or null;

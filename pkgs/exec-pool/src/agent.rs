@@ -45,7 +45,10 @@ SKIP=); if a hook refuses the push, say why in your answer. The task:\n\n";
 pub const PULL_REQUEST: &str = "To open a pull request from your branch, or comment on one, call GitHub's REST API: \
 `gh pr create` and `gh pr comment` use GraphQL, which the pool's GitHub proxy refuses. Open it with \
 `gh api repos/{repo}/pulls -f head={branch} -f base=BASE -f title=TITLE -F body=@FILE` and comment with \
-`gh api repos/{repo}/issues/NUMBER/comments -F body=@FILE`; no merge, review or other branch. ";
+`gh api repos/{repo}/issues/NUMBER/comments -F body=@FILE`; no merge, review or other branch. Before you open a \
+pull request, check your diff against every item of the task and against what a strict reviewer looks for (privilege, \
+PATH and secrets; failure and rollback paths; a test for each behaviour); fix what you find and name in the pull \
+request body what is still unmet. That is your own check, not the independent review. ";
 
 /// What a session's first turn is also told, before "The task:" of [`PREFIX`]: how to wait for an outside event, and
 /// what a pause keeps.
@@ -55,7 +58,7 @@ review, a gate, the owner), this session pauses: after a while it parks and resu
 another slot on another host. What survives a pause: the transcript, the session home and the work tree with \
 uncommitted changes. What does not: running processes in the slot (dev servers, background shells, a build in \
 flight). Before you stop or wait, commit and push your work to your branch; do not rely on a background process \
-across a wait. ";
+across a wait. While you wait, send no status messages: report only a result or a blocker. ";
 
 /// What a session turn is told about its park, on its first turn before "The task:" and after every later turn's
 /// input: what of its slot survives the turn.
