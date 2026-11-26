@@ -1505,7 +1505,7 @@ in
 
       # The daemon sees the guest user as the mapped uid, which machined names vu-<machine>-<uid>; neither guest root nor
       # a trusted user. While machined cannot resolve it (a guest booting, a host switch) the daemon compares the bare
-      # uid: without it the guest's home-manager unit fails and with it the deploy's container reload, exit 4.
+      # uid: unlisted, the guest's home-manager unit fails, and so the deploy's container reload (exit 4).
       nix.settings.allowed-users = lib.mkIf (lib.any (w: w.rootInGuest) running) (
         lib.concatMap (w: [
           "vu-${w.name}-${toString cfg.uid}"
