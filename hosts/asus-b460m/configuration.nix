@@ -115,6 +115,28 @@ in
     exit 0
   '';
 
+  # Nothing in the repo ever switched the lights off: they went dark because the board powered down. Since the xhci
+  # unbind above (9b826d47) the USB header keeps +5VSB and the RGB controller keeps its last colour. Ordered After
+  # nvidia-persistenced so the stop runs before the GPU's I2C bus goes; bounded and non-fatal so it never holds the poweroff.
+  # Revisit if the lights still stay on: the controller may not be one OpenRGB drives.
+  hardware.i2c.enable = true;
+  services.udev.packages = [ pkgs.openrgb ];
+  systemd.services.rgb-off = {
+    description = "Lights off before poweroff";
+    wantedBy = [ "multi-user.target" ];
+    after = [
+      "nvidia-persistenced.service"
+      "systemd-udev-settle.service"
+    ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      ExecStart = "${pkgs.coreutils}/bin/true";
+      ExecStop = "-${pkgs.openrgb}/bin/openrgb --noautoconnect --mode static --color 000000";
+      TimeoutStopSec = 20;
+    };
+  };
+
   services.ollama = {
     enable = true;
     inherit (config.sam.fleet.listeners.ollama-asus) port;
