@@ -56,8 +56,22 @@ let
         handle @otherPulls {
           respond 403
         }
+        ${graphqlRoute i.name}
       ''
     );
+  # GraphQL names no repository in its path: the filter passes one mutation of it, a ready mark of the slot's own
+  # task's pull request, and every other GraphQL call stays refused
+  graphqlRoute = slot: ''
+    @graphql {
+      path /graphql
+      method POST
+    }
+    handle @graphql {
+      reverse_proxy unix/${filterSocket} {
+        header_up X-Pool-Slot ${slot}
+      }
+    }
+  '';
   # The tokens are read at request time from the unit's credential and its private directory.
   githubToken = "${dev.paths.egress.private}/github-token";
   githubRewrite."http://127.0.0.1:${toString dev.egress.github.port}/".insteadOf = [
@@ -112,7 +126,9 @@ let
       }
       handle @adminRepo {
         respond 403
-      }${filterRoute i}
+      }${filterRoute i}${
+        lib.optionalString (i.fleet or false && refsHeld != [ ]) ("\n" + graphqlRoute ".fleet")
+      }
       @git {
         path_regexp ^/${repos}(\.git)?/(info/refs|git-upload-pack|git-receive-pack)$
         method GET POST
@@ -715,6 +731,10 @@ in
               path_regexp ^/repos/${heldRepos}/pulls/?$
               method POST
             }
+            @graphql {
+              path /graphql
+              method POST
+            }
             handle @odd {
               respond 403
             }
@@ -726,6 +746,11 @@ in
             handle @pulls {
               ${
                 if ghForward then forwardSite else upstream "https://api.github.com" "token {file.${githubToken}}"
+              }
+            }
+            handle @graphql {
+              ${
+                if ghForward then forwardSite else upstream "https://api.github.com" "bearer {file.${githubToken}}"
               }
             }
             handle {
@@ -741,6 +766,7 @@ in
               respond 403
             }
             ${githubSite {
+              fleet = true;
               egress.github = {
                 inherit (config.homelab.execPool) repos;
                 graphql = false;
@@ -794,7 +820,8 @@ in
               if ownRefs i then
                 lib.removePrefix "\n" (filterRoute i) + "\nhandle {\n" + forwardSite + "}\n"
               else
-                forwardSite
+                # acer's sidecar passes a ready mark of any task's pull request, which only a slot's filter holds to its own
+                "@graphql path /graphql\nhandle @graphql {\nrespond 403\n}\nhandle {\n" + forwardSite + "}\n"
             else
               githubSite;
           port = 4102;
@@ -990,7 +1017,21 @@ in
             } ${filterSocket} ${pushSocket} ${
               pkgs.writeText "exec-pool-push-filter-slots.json" (
                 builtins.toJSON (
-                  lib.listToAttrs (map (i: lib.nameValuePair i.name i.egress.github.ownRefs) refsHeld)
+                  lib.listToAttrs (
+                    map (
+                      i:
+                      lib.nameValuePair i.name {
+                        manifest = i.egress.github.ownRefs;
+                        inherit (i.egress.github) repos;
+                      }
+                    ) refsHeld
+                  )
+                  // lib.optionalAttrs ghServes {
+                    ".fleet" = {
+                      manifest = null;
+                      inherit (config.homelab.execPool) repos;
+                    };
+                  }
                 )
               )
             } ${filterMetrics}/push-filter.prom";

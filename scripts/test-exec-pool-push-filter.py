@@ -5,6 +5,10 @@
 a tag, a mixed push, a push with no manifest, an unknown slot and an unreadable body leave the remote as it was.
 A pull request it opens (`POST /repos/o/r/pulls`, the slot site's route to the filter too) reaches the API only from
 `pool/<id>`; another branch, another task's, a fork's or a body it cannot read is refused, and other API calls pass.
+Its GraphQL (`POST /graphql`, routed to the filter too) passes one markPullRequestReadyForReview of the task's own pull
+request, its head read with the filter's own query; another task's, branch's, fork's or unlisted repository's, and any
+body with more or other than that mutation, is refused. The fleet's slot `.fleet` marks any task's ready and answers
+the filter's read for a listed repository alone.
 Its textfile counts each passed and refused request by slot, the first refusal included.
 Usage: test-exec-pool-push-filter.py FILTER   (caddy and git on PATH)"""
 
@@ -38,6 +42,11 @@ class Backend(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     root = ""
     api = []
+    # GraphQL's pull requests by node id: (head, the repository it is from, the repository it is on)
+    nodes = {"PR_own": ("pool/t-1", "o/r", "o/r"), "PR_other_task": ("pool/t-2", "o/r", "o/r"),
+             "PR_main": ("main", "o/r", "o/r"), "PR_fork": ("pool/t-1", "f/r", "o/r"),
+             "PR_unlisted": ("pool/t-1", "x/pub", "x/pub"), "PR_gone_fork": ("pool/t-1", None, "o/r")}
+    reads = []
 
     def log_message(self, *_):
         pass
@@ -81,7 +90,26 @@ class Backend(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         self.cgi("GET")
 
+    def json(self, out):
+        out = json.dumps(out).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(out)))
+        self.end_headers()
+        self.wfile.write(out)
+
     def do_POST(self):
+        if self.path == "/graphql":
+            req = json.loads(self.body())
+            if req["query"].startswith("query($id: ID!) { node(id: $id)"):
+                Backend.reads.append(req)
+                n = Backend.nodes.get(req["variables"]["id"])
+                self.json({"data": {"node": n and {"headRefName": n[0], "headRepository": n[1] and {"nameWithOwner": n[1]},
+                                                   "repository": {"nameWithOwner": n[2]}}}})
+            else:
+                Backend.api.append((self.path, json.dumps(req).encode()))
+                self.json({"data": {"markPullRequestReadyForReview": {"pullRequest": {"isDraft": False}}}})
+            return
         if self.path.startswith("/repos/"):
             Backend.api.append((self.path, self.body()))
             out = b'{"number": 1}'
@@ -143,7 +171,8 @@ def main():
 
         manifest = d / "manifest.json"
         manifest.write_text(json.dumps({"task": {"id": "t-1"}}))
-        (d / "slots.json").write_text(json.dumps({"pool1": str(manifest)}))
+        (d / "slots.json").write_text(json.dumps({"pool1": {"manifest": str(manifest), "repos": ["O/R"]},
+                                                  ".fleet": {"manifest": None, "repos": ["o/r"]}}))
         fsock, push = str(d / "filter.sock"), str(d / "push.sock")
         port = free_port()
         (d / "Caddyfile").write_text(f"""{{
@@ -163,6 +192,15 @@ http://127.0.0.1:{port} {{
     }}
   }}
   handle @pulls {{
+    reverse_proxy unix/{fsock} {{
+      header_up X-Pool-Slot pool1
+    }}
+  }}
+  @graphql {{
+    path /graphql
+    method POST
+  }}
+  handle @graphql {{
     reverse_proxy unix/{fsock} {{
       header_up X-Pool-Slot pool1
     }}
@@ -189,6 +227,7 @@ http:// {{
             wait_for(lambda: socket.socket(socket.AF_UNIX).connect(fsock), "the filter", filt)
             run(d, f"http://127.0.0.1:{port}/o/r.git", bare, fsock, manifest, prom)
             pulls(port, fsock, manifest, prom)
+            graphql(port, fsock, prom)
         finally:
             filt.terminate()
             caddy.terminate()
@@ -219,7 +258,7 @@ def counts(prom, metric=PUSHES):
 
 
 def run(d, url, bare, fsock, manifest, prom):
-    zero = {(s, r): 0 for s in ("pool1", "unknown") for r in ("passed", "refused")}
+    zero = {(s, r): 0 for s in ("pool1", ".fleet", "unknown") for r in ("passed", "refused")}
     check(counts(prom) == zero and counts(prom, PULLS) == zero and oct(prom.stat().st_mode & 0o777) == "0o644",
           f"at start the textfile holds every series at 0, readable by node-exporter ({counts(prom)})")
     work = d / "work"
@@ -356,6 +395,116 @@ def pulls(port, fsock, manifest, prom):
     check(c[("pool1", "passed")] == 3 and c[("pool1", "refused")] == 17 and c[("unknown", "refused")] == 1
           and counts(prom) == pushes,
           f"pull requests count apart from pushes, the comment in neither ({c})")
+
+
+READY = "mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { pullRequest { isDraft } } }"
+
+
+def graphql(port, fsock, prom):
+    Backend.api.clear()
+    before = counts(prom, PULLS)
+    status, got = api(port, "/graphql", {"query": READY, "variables": {"id": "PR_own"}})
+    check(status == 200 and len(Backend.api) == 1 and Backend.reads[-1] == {
+        "query": "query($id: ID!) { node(id: $id) { ... on PullRequest { headRefName headRepository { nameWithOwner } "
+                 "repository { nameWithOwner } } } }", "variables": {"id": "PR_own"}},
+          f"the ready mark of the task's own pull request reaches GraphQL, its head read with the filter's query ({status} {got})")
+    for what, body in [
+        ("inline", {"query": 'mutation Ready { markPullRequestReadyForReview(input: {pullRequestId: "PR_own"}) '
+                             "{ clientMutationId pullRequest { id url } } }", "operationName": "Ready"}),
+        ("its whole input a variable, commas and a comment", {
+            "query": "mutation($in: MarkPullRequestReadyForReviewInput!) {\n  # gh api graphql\n"
+                     "  markPullRequestReadyForReview(input: $in) { __typename, }\n}",
+            "variables": {"in": {"pullRequestId": "PR_own"}}}),
+    ]:
+        status, _ = api(port, "/graphql", body)
+        check(status == 200 and json.loads(Backend.api[-1][1]) == body, f"and written {what} ({status})")
+    sent = len(Backend.api)
+    for what, body in [
+        ("another task's pull request", {"query": READY, "variables": {"id": "PR_other_task"}}),
+        ("main's pull request", {"query": READY, "variables": {"id": "PR_main"}}),
+        ("a fork's pull request from a branch of the task's name", {"query": READY, "variables": {"id": "PR_fork"}}),
+        ("a pull request whose fork is gone", {"query": READY, "variables": {"id": "PR_gone_fork"}}),
+        ("an unlisted repository's pull request", {"query": READY, "variables": {"id": "PR_unlisted"}}),
+        ("a node that is no pull request", {"query": READY, "variables": {"id": "MDQ6VXNlcjE="}}),
+        ("a second operation", {"query": READY + " query { viewer { login } }", "variables": {"id": "PR_own"}}),
+        ("a second field", {"query": READY.replace("} } }", "} } viewer { login } }"), "variables": {"id": "PR_own"}}),
+        ("an alias", {"query": READY.replace("{ markPull", "{ m: markPull"), "variables": {"id": "PR_own"}}),
+        ("an aliased read back", {"query": READY.replace("{ isDraft }", "{ d: isDraft }"), "variables": {"id": "PR_own"}}),
+        ("a read back of more than the pull request's own fields",
+         {"query": READY.replace("{ isDraft }", "{ repository { name } }"), "variables": {"id": "PR_own"}}),
+        ("a fragment", {"query": READY.replace("{ isDraft }", "{ ...F }") + " fragment F on PullRequest { isDraft }",
+                        "variables": {"id": "PR_own"}}),
+        ("a directive", {"query": READY.replace("isDraft", "isDraft @include(if: true)"), "variables": {"id": "PR_own"}}),
+        ("a query", {"query": "query($id: ID!) { node(id: $id) { id } }", "variables": {"id": "PR_own"}}),
+        ("the shorthand query", {"query": "{ viewer { login } }"}),
+        ("a mutation by another name", {"query": READY.replace("markPullRequestReadyForReview", "mergePullRequest"),
+                                        "variables": {"id": "PR_own"}}),
+        ("the draft mark", {"query": READY.replace("markPullRequestReadyForReview", "convertPullRequestToDraft"),
+                            "variables": {"id": "PR_own"}}),
+        ("a second input field", {"query": READY.replace("$id}", "$id, clientMutationId: \"x\"}"),
+                                  "variables": {"id": "PR_own"}}),
+        ("a second input field in its variables", {
+            "query": "mutation($in: MarkPullRequestReadyForReviewInput!) { markPullRequestReadyForReview(input: $in) "
+                     "{ __typename } }", "variables": {"in": {"pullRequestId": "PR_own", "clientMutationId": "x"}}}),
+        ("a second variable", {"query": READY, "variables": {"id": "PR_own", "other": "PR_main"}}),
+        ("a variable declared and never used", {"query": READY.replace("$id}", '"PR_own"}'), "variables": {"id": "PR_main"}}),
+        ("another operation named", {"query": READY, "variables": {"id": "PR_own"}, "operationName": "Other"}),
+        ("a batch", [{"query": READY, "variables": {"id": "PR_own"}}]),
+        ("a key given twice", b'{"query": "%s", "query": "{ viewer { login } }", "variables": {"id": "PR_own"}}'
+         % READY.encode()),
+        ("a key no GraphQL request has", {"query": READY, "variables": {"id": "PR_own"}, "extensions": {}}),
+        ("a block string", {"query": READY.replace("$id}", '"""PR_own"""}').replace("($id: ID!) ", "")}),
+        ("no JSON", b"mutation { markPullRequestReadyForReview }"),
+        ("a form body", ({"query": READY}, {"Content-Type": "application/x-www-form-urlencoded"})),
+        ("the filter's own read", {"query": RESOLVE, "variables": {"id": "PR_own"}}),
+    ]:
+        body, headers = body if isinstance(body, tuple) else (body, {})
+        status, got = api(port, "/graphql", body, headers)
+        check(status == 403 and len(Backend.api) == sent and "refused by the pool's filter" in got.get("message", ""),
+              f"a GraphQL body with {what} is refused with a message, and never reaches GraphQL ({status} {got})")
+    js = {"Content-Type": "application/json"}
+    ready = json.dumps({"query": READY, "variables": {"id": "PR_own"}}).encode()
+    check(raw(fsock, "pool1", ready, js, "/graphql?x=1") == 403 and raw(fsock, "pool1", ready, js, "/GRAPHQL") == 403
+          and raw(fsock, "pool9", ready, js, "/graphql") == 403 and len(Backend.api) == sent,
+          "a ready mark with a query, another spelling of the path, or from a slot the filter does not know, is refused")
+    c = counts(prom, PULLS)
+    check(c[("pool1", "passed")] - before[("pool1", "passed")] == 3
+          and c[("pool1", "refused")] - before[("pool1", "refused")] == 31,
+          f"ready marks count with the slot's pull requests ({c})")
+    fleet(fsock, ready, js, sent)
+
+
+RESOLVE = ("query($id: ID!) { node(id: $id) { ... on PullRequest { headRefName "
+                   "headRepository { nameWithOwner } repository { nameWithOwner } } } }")
+
+
+def fleet(fsock, ready, js, sent):
+    """The fleet's sidecar's slot: msi's filter's read and ready mark, already held to its task there."""
+    def post(body):
+        conn = http.client.HTTPConnection("localhost", timeout=10)
+        conn.sock = socket.socket(socket.AF_UNIX)
+        conn.sock.connect(fsock)
+        conn.request("POST", "/graphql", body=json.dumps(body).encode(), headers={**js, "X-Pool-Slot": ".fleet"})
+        resp = conn.getresponse()
+        out = resp.read()
+        conn.close()
+        return resp.status, out
+
+    status, out = post({"query": RESOLVE, "variables": {"id": "PR_other_task"}})
+    check(status == 200 and json.loads(out)["data"]["node"]["headRefName"] == "pool/t-2" and len(Backend.api) == sent,
+          f"the fleet's slot answers the filter's own read of a listed repository's pull request ({status} {out[:200]!r})")
+    status, _ = post({"query": RESOLVE, "variables": {"id": "PR_unlisted"}})
+    check(status == 403, f"and not of an unlisted repository's ({status})")
+    status, _ = post({"query": RESOLVE.replace("headRefName", "headRefName title"), "variables": {"id": "PR_own"}})
+    check(status == 403, f"nor any other read ({status})")
+    status, _ = post({"query": READY, "variables": {"id": "PR_other_task"}})
+    check(status == 200 and len(Backend.api) == sent + 1, f"it passes the ready mark of any task's pull request ({status})")
+    for what, node in [("main's", "PR_main"), ("a fork's", "PR_fork"), ("an unlisted repository's", "PR_unlisted")]:
+        status, _ = post({"query": READY, "variables": {"id": node}})
+        check(status == 403 and len(Backend.api) == sent + 1, f"and refuses {what} ({status})")
+    check(raw(fsock, ".fleet", b"x" * 10) == 403
+          and raw(fsock, ".fleet", json.dumps({"head": "pool/t-1"}).encode(), js, "/repos/o/r/pulls") == 403,
+          "the fleet's slot pushes nothing and opens no pull request")
 
 
 if __name__ == "__main__":
