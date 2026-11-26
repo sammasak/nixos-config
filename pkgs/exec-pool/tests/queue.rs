@@ -3438,7 +3438,10 @@ fn the_sessions_cli_finds_the_pull_request_and_reports_a_merged_session_once() {
     assert_eq!(run(&dir, &["sessions", "--merged", &id]).len(), 1);
     let reported = run(&dir, &["sessions", "--report", report_arg]);
     assert_eq!(reported.len(), 1);
-    assert_eq!(std::fs::read_to_string(&report).unwrap(), format!("{id}\n"));
+    assert_eq!(
+        std::fs::read_to_string(&report).unwrap(),
+        format!("{id}\n{id} 7 -\n")
+    );
     assert!(
         run(&dir, &["sessions", "--report", report_arg]).is_empty(),
         "once"
