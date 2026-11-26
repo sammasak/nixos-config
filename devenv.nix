@@ -371,6 +371,33 @@ let
         fi
       '';
 
+  # light_held CMD...: CMD under the light-work lane (#827) where the host has one and no caller holds it
+  # (WORK_LOCKS_HELD), the lock this shell's and closed in CMD as flock -o would. light_wait is the seconds waited for it
+  # (0 with no lock file, unknown under a caller's hold: not measured here) and light_run CMD's, for a step's record.
+  lightHeld = ''
+    light_held() {
+      local fd="" rc=0 t=$SECONDS
+      light_wait=0
+      if [ -n "''${WORK_LOCKS_HELD:-}" ]; then
+        light_wait=unknown
+      elif [ -e /run/work-locks/light-work.lock ]; then
+        exec {fd}</run/work-locks/light-work.lock
+        ${pkgs.util-linux}/bin/flock -w 900 "$fd" || rc=$?
+        light_wait=$((SECONDS - t))
+      fi
+      t=$SECONDS
+      if [ "$rc" -ne 0 ]; then
+        echo "light-work.lock still held after $light_wait s" >&2
+      elif [ -n "$fd" ]; then
+        WORK_LOCKS_HELD=1 "$@" {fd}<&- || rc=$?
+      else
+        "$@" || rc=$?
+      fi
+      [ -z "$fd" ] || exec {fd}<&-
+      light_run=$((SECONDS - t))
+      return "$rc"
+    }
+  '';
   # The values the tests below assert on, from one evaluation (scripts/gate-probe.nix); a test task run on
   # its own builds only its section. GC_FREE_SPACE_DIVISOR as for flakeCheck: the probe holds acer too. The light
   # lane where there is one (#827): the push hook's doc tests run it, and its nix is this one, not a slot's wrapper.
@@ -949,8 +976,12 @@ let
         util-linux
       ])
       ''
-        WORK_LOCKS_HELD=1 GC_FREE_SPACE_DIVISOR=16 flock -o -w 900 /run/work-locks/light-work.lock \
-          nix flake show --json --all-systems --no-write-lock-file >/dev/null
+        # qaPush holds the lane itself, to record its wait apart (lightHeld)
+        lock=()
+        if [ -z "''${WORK_LOCKS_HELD:-}" ] && [ -e /run/work-locks/light-work.lock ]; then
+          lock=(flock -o -w 900 /run/work-locks/light-work.lock)
+        fi
+        WORK_LOCKS_HELD=1 GC_FREE_SPACE_DIVISOR=16 "''${lock[@]}" nix flake show --json --all-systems --no-write-lock-file >/dev/null
       '';
   heavyLock = pkgs.callPackage ./pkgs/heavy-lock/package.nix { };
   qaGreen = gate "qa-green" (with pkgs; [
@@ -1169,11 +1200,12 @@ let
             secretsVerify
           ]
         )}
-        t=$SECONDS
-        GATE_PROBE=$(${lib.getExe probe})
+        ${lightHeld}
+        probe_out() { GATE_PROBE=$(${lib.getExe probe}); }
+        light_held probe_out
         export GATE_PROBE
-        echo "nixos-qa: ${probe.name} took $((SECONDS - t)) s" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}"
-        ${lib.getExe record} gate-step gate=nixos-qa step=${probe.name} seconds=$((SECONDS - t)) result=pass sha="$sha"
+        echo "nixos-qa: ${probe.name} took $light_run s, after $light_wait s waiting for light-work.lock" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}"
+        ${lib.getExe record} gate-step gate=nixos-qa step=${probe.name} seconds="$light_run" wait_seconds="$light_wait" result=pass sha="$sha"
         python3 scripts/gate_probe.py coverage | jq -r 'to_entries[] | "\(.key) \(.value.assertions) \(.value.checks)"' \
           | while read -r node assertions checks; do
             ${lib.getExe record} coverage node="$node" assertions="$assertions" system_checks="$checks"
@@ -1310,10 +1342,10 @@ let
         trim "$gitdir/nixos-qa-times" 2000
         t=$SECONDS
         ${run pushLints}
-        e=$SECONDS
-        if ${lib.getExe pushEval}; then r=pass; else r=fail; fi
-        echo "nixos-qa: ${pushEval.name} took $((SECONDS - e)) s" | tee -a "$gitdir/nixos-qa-times"
-        ${lib.getExe record} gate-step gate=nixos-qa-push step=${pushEval.name} seconds=$((SECONDS - e)) result=$r sha="$(git rev-parse --short HEAD)"
+        ${lightHeld}
+        if light_held ${lib.getExe pushEval}; then r=pass; else r=fail; fi
+        echo "nixos-qa: ${pushEval.name} took $light_run s, after $light_wait s waiting for light-work.lock" | tee -a "$gitdir/nixos-qa-times"
+        ${lib.getExe record} gate-step gate=nixos-qa-push step=${pushEval.name} seconds="$light_run" wait_seconds="$light_wait" result=$r sha="$(git rev-parse --short HEAD)"
         [ "$r" = pass ] || { echo "nixos-qa: ${pushEval.name} failed for $(git rev-parse HEAD)" >&2; exit 1; }
         echo "nixos-qa: full QA not run for $(git rev-parse HEAD), owed to the scheduled gate on main" | tee -a "$gitdir/nixos-qa-times"
         PLATFORM_RECORD_STRICT=1 ${lib.getExe record} gate gate=nixos-qa-push seconds=$((SECONDS - t)) result=owed sha="$(git rev-parse --short HEAD)" mode=fast head="$(git rev-parse HEAD)" checkout=clean

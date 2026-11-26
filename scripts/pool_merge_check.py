@@ -32,7 +32,8 @@ both locks and built under the heavy one alone, so a push never waits on a compi
 
 It prints each check run with its seconds, and each one skipped, and records both per check as gate-step records
 (gate=pool-merge-check, step=pool-merge-<kind>, result=pass|fail|skipped; pkgs/platform-record), so the tally in
-goals.md can be read back from Loki. No gate record: the platform dashboard's gate pass rate is the full gate's.
+goals.md can be read back from Loki: seconds= its run, wait_seconds= its waits for the locks, which this process takes
+itself to time them. No gate record: the platform dashboard's gate pass rate is the full gate's.
 
 Usage: pool_merge_check.py BRANCH
        pool_merge_check.py --plan PATH...    the checks those changed paths map to, one per line (tests)"""
@@ -40,6 +41,9 @@ Usage: pool_merge_check.py BRANCH
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
+import os
 import pathlib
 import re
 import shutil
@@ -47,6 +51,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -150,30 +155,43 @@ def git(*args: str) -> str:
     return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout.strip()
 
 
-def record(check: Check, seconds: int, result: str, sha: str, head: str) -> None:
+def record(check: Check, seconds: int, wait: int, result: str, sha: str, head: str) -> None:
     # a record is evidence: one that fails never fails the check (platform_record.py exits 0 for it)
     subprocess.run(
         [sys.executable, str(RECORD), "gate-step", "gate=pool-merge-check", f"step=pool-merge-{check.kind}",
-         f"check={check.target}", f"seconds={seconds}", f"result={result}", f"sha={sha}", f"head={head}"],
+         f"check={check.target}", f"seconds={seconds}", f"wait_seconds={wait}", f"result={result}", f"sha={sha}",
+         f"head={head}"],
         check=False,
     )
 
 
-HEAVY = ["flock", "-o", str(LOCK)]
-# heavy, then light: the push hook takes light alone, so the order never deadlocks. WORK_LOCKS_HELD: a pool slot's nix
-# (modules/workers/execution-pool.nix) would otherwise wait on this light hold, and take light for the build.
-EVAL = [*HEAVY, "flock", "-o", str(LIGHT), "env", "WORK_LOCKS_HELD=1", "nix", "eval", "--raw"]
+@contextlib.contextmanager
+def held(lock: pathlib.Path, waits: list[float]) -> Iterator[None]:
+    """The lock held by this process alone, as flock -o held it: the descriptor is not inherited (PEP 446), and a killed
+    checker frees it. Read-only: a guest binds /run/work-locks read-only. The seconds waited go to waits."""
+    fd = os.open(lock, os.O_RDONLY)
+    try:
+        start = time.monotonic()
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        waits.append(time.monotonic() - start)
+        yield
+    finally:
+        os.close(fd)
+
+
+# WORK_LOCKS_HELD: a pool slot's nix (modules/workers/execution-pool.nix) would otherwise wait on this light hold, and
+# take light for the build.
+EVAL = ["env", "WORK_LOCKS_HELD=1", "nix", "eval", "--raw"]
 # devenv.nix pushEval's command, import-from-derivation off as there (flake show's default); without the divisor it
 # peaks above the 3.9 GiB the light lane is sized for
-FLAKE_SHOW = [*HEAVY, "flock", "-o", str(LIGHT), "env", "WORK_LOCKS_HELD=1", "GC_FREE_SPACE_DIVISOR=16", "nix", "flake",
-              "show", "--json", "--all-systems", "--no-write-lock-file"]
-# one heavy hold over both steps: released between them, a long wait could let a GC delete the evaluated .drv
-BUILD = 'export WORK_LOCKS_HELD=1; drv=$(flock -o "$1" nix eval --raw "$2") && nix build --no-link -L "$drv^*"'
+FLAKE_SHOW = ["env", "WORK_LOCKS_HELD=1", "GC_FREE_SPACE_DIVISOR=16", "nix", "flake", "show", "--json", "--all-systems",
+              "--no-write-lock-file"]
+BUILD = ["env", "WORK_LOCKS_HELD=1", "nix", "build", "--no-link", "-L"]
 
 
 def command(check: Check, tree: pathlib.Path) -> list[str] | None:
-    """An eval's or evalcheck's evaluation; a build's or check's drvPath evaluated under both locks, then built under the
-    heavy one."""
+    """What runs under both locks: an eval's or evalcheck's evaluation, the flake show, a build's or check's drvPath
+    (built afterwards under the heavy one alone), or a script, under none."""
     if check.kind == "eval":
         return [*EVAL, f"{tree}#nixosConfigurations.{check.target}.config.system.build.toplevel.drvPath"]
     if check.kind == "evalcheck":
@@ -182,7 +200,7 @@ def command(check: Check, tree: pathlib.Path) -> list[str] | None:
         return [*FLAKE_SHOW, str(tree)]
     if check.kind in ("build", "check"):
         attr = f"pkgsDir.{check.target}" if check.kind == "build" else f"checks.{SYSTEM}.{check.target}"
-        return [*HEAVY, "bash", "-c", BUILD, "build", str(LIGHT), f"{tree}#{attr}.drvPath"]
+        return [*EVAL, f"{tree}#{attr}.drvPath"]
     if check.kind == "script":
         return [sys.executable, check.target]
     return None
@@ -191,18 +209,29 @@ def command(check: Check, tree: pathlib.Path) -> list[str] | None:
 EVALS = ("eval", "evalcheck")
 
 
-def run(check: Check, tree: pathlib.Path) -> bool:
+def run(check: Check, tree: pathlib.Path) -> tuple[bool, float]:
+    """Whether the check passed, and its seconds waiting for the locks."""
     argv = command(check, tree)
     if argv is None:
         problem = migrations_problem(tree / check.target)
         if problem:
             say(f"{check.target}: {problem}", err=True)
-        return problem is None
-    stdout = subprocess.PIPE if check.kind in EVALS else subprocess.DEVNULL if check.kind == "show" else None
-    out = subprocess.run(argv, cwd=tree, stdout=stdout, text=True)
+        return problem is None, 0.0
+    if check.kind == "script":
+        return subprocess.run(argv, cwd=tree, check=False).returncode == 0, 0.0
+    waits: list[float] = []
+    builds = check.kind in ("build", "check")
+    stdout = subprocess.PIPE if check.kind in EVALS or builds else subprocess.DEVNULL if check.kind == "show" else None
+    # heavy, then light: the push hook takes light alone, so the order never deadlocks. One heavy hold over a build's
+    # evaluation and build: released between them, a long wait could let a GC delete the evaluated .drv
+    with held(LOCK, waits):
+        with held(LIGHT, waits):
+            out = subprocess.run(argv, cwd=tree, stdout=stdout, text=True, check=False)
+        if out.returncode == 0 and builds:
+            out = subprocess.run([*BUILD, f"{out.stdout.strip()}^*"], cwd=tree, check=False)
     if out.returncode == 0 and check.kind in EVALS:
         say(f"{check.target} evaluates to {out.stdout.strip()}")
-    return out.returncode == 0
+    return out.returncode == 0, sum(waits)
 
 
 def main() -> int:
@@ -256,8 +285,10 @@ def push_eval_passed(head: str, commit: str) -> bool:
 def check_tree(tree: pathlib.Path, branch: str, head: str, main_: str, commit: str) -> int:
     paths = git("diff", "--no-ext-diff", "--name-only", main_, commit).splitlines()
     nix = [*EVAL, "--apply", "c: toString (builtins.attrNames c)"]
-    hosts = subprocess.run([*nix, f"{tree}#nixosConfigurations"], check=True, capture_output=True, text=True).stdout.split()
-    pkgdirs = subprocess.run([*nix, f"{tree}#pkgsDir"], check=True, capture_output=True, text=True).stdout.split()
+    with held(LOCK, []), held(LIGHT, []):
+        hosts = subprocess.run([*nix, f"{tree}#nixosConfigurations"], check=True, capture_output=True,
+                               text=True).stdout.split()
+        pkgdirs = subprocess.run([*nix, f"{tree}#pkgsDir"], check=True, capture_output=True, text=True).stdout.split()
     checks = plan(paths, hosts, pkgdirs)
     sha = commit[:12]
     skipped = [Check("eval", h) for h in hosts if Check("eval", h) not in checks]
@@ -271,15 +302,16 @@ def check_tree(tree: pathlib.Path, branch: str, head: str, main_: str, commit: s
     say(f"{len(paths)} changed path(s); {len(checks)} check(s) to run, {len(skipped)} skipped")
     for c in skipped:
         say(f"skipped: {c.kind} {c.target} ({why.get(c, 'no changed path maps to it')})")
-        record(c, 0, "skipped", sha, head)
+        record(c, 0, 0, "skipped", sha, head)
     times: list[tuple[Check, int, bool]] = []
     for c in checks:
         start = time.monotonic()
-        ok = run(c, tree)
-        secs = round(time.monotonic() - start)
+        ok, waited = run(c, tree)
+        secs, wait = round(time.monotonic() - start - waited), round(waited)
         times.append((c, secs, ok))
-        say(f"{'passed' if ok else 'FAILED'}: {c.kind} {c.target} ({secs} s)", err=not ok)
-        record(c, secs, "pass" if ok else "fail", sha, head)
+        say(f"{'passed' if ok else 'FAILED'}: {c.kind} {c.target} ({secs} s, after {wait} s waiting for the locks)",
+            err=not ok)
+        record(c, secs, wait, "pass" if ok else "fail", sha, head)
     failed = [c for c, _, ok in times if not ok]
     total = sum(s for _, s, _ in times)
     summary = ", ".join(f"{c.kind} {c.target} {s} s" for c, s, _ in times) or "none"

@@ -668,6 +668,7 @@ in
         kinds = [
           "gate"
           "gate-step"
+          "lock"
           "checks-run"
           "coverage"
           "instructions"

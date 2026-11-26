@@ -33,7 +33,20 @@
         "result",
         "head",
         "drv",
-        "sha"
+        "sha",
+        "wait_seconds"
+      ]
+    },
+    "lock": {
+      "writer": "here",
+      "guest": true,
+      "panel": false,
+      "fields": [
+        "lane",
+        "class",
+        "wait_seconds",
+        "seconds",
+        "rc"
       ]
     },
     "deploy": {
