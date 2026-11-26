@@ -170,6 +170,7 @@ let
         me=$(uname -n)
         # an output that fails to evaluate or dry-run fails the step without a build record: this one names it, or
         # ScheduledGateRed and RetroDueStepFailsRepeat can name the step alone and rerun the whole gate
+        # an empty $cur records nothing: every guard and evaluation before the per-output loop names itself first
         cur=""
         failed_output() {
           local rc=$?
@@ -180,25 +181,32 @@ let
         cudahost=0
         if nix-store -qR /run/current-system 2>/dev/null | grep -qE -e "$heavy"; then cudahost=1; fi
         deferred=()
+        cur=vm-list
         here=$(nix eval --raw --impure --expr builtins.currentSystem)
         # VM checks (NixOS tests, the ones with a driver) boot QEMU, up to 4 GiB: the gate refuses to run on lenovo
         # shellcheck disable=SC2016 # the single-quoted ''${n} is Nix's, not the shell's
         vms=$(nix eval --json --no-write-lock-file ".#checks.$here" \
           --apply 'cs: builtins.filter (n: cs.''${n} ? driver) (builtins.attrNames cs)' | jq -r '.[]')
         if [ -n "$vms" ] && [ "$(${pkgs.coreutils}/bin/uname -n)" = lenovo-21CB001PMX ]; then
+          cur=""
           echo "nixos-flake-check: refused on lenovo: $(tr '\n' ' ' <<<"$vms")boot a QEMU VM (memory); run the gate on msi or acer" >&2
           exit 1
         fi
         # scripts/test-flake-output-kinds.py compares the flake with flakeKinds in seconds, without evaluating an output
+        cur=flake-output-kinds
         kinds=$(nix flake show --json --all-systems --no-write-lock-file | jq -c 'keys')
         [ "$kinds" = '${flakeKinds}' ] \
           || { echo "nixos-flake-check: flake outputs are $kinds: add the new kind to this step" >&2; exit 1; }
         # flake show omits legacyPackages' contents: pkgsDir's entries are evaluated here, built only by pool-merge-check
+        cur=legacyPackages
         nix eval --no-write-lock-file .#legacyPackages \
           --apply 'builtins.mapAttrs (_: s: builtins.mapAttrs (_: p: p.drvPath) s.pkgsDir)' >/dev/null
+        cur=overlays
         nix eval --no-write-lock-file .#overlays --apply 'builtins.mapAttrs (_: o: assert builtins.isFunction o; true)' >/dev/null
+        cur=templates
         nix eval --no-write-lock-file .#templates \
           --apply 'builtins.mapAttrs (_: t: assert builtins.pathExists t.path && builtins.isString t.description; true)' >/dev/null
+        cur=output-list
         all=()
         for kind in packages checks; do
           for s in $(names "$kind"); do
@@ -247,6 +255,7 @@ let
           fi
         }
         hosts=$(names nixosConfigurations)
+        cur=""
         held=()
         for h in $hosts; do
           c=$(covered "$h" "''${all[@]}")

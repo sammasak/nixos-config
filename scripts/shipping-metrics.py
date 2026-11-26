@@ -371,7 +371,8 @@ def step_failures(records):
     """{(step, check): heads} for the push gate's failed records (gate=nixos-qa; an on-demand check is not the gate).
     A unit counts once per head, so a re-run on one head is not a repeat. The flake check is one step over every
     check: its failure counts under the inner check that failed (that check's record, check=), and the step's own
-    record only when no inner record failed on the same head (an evaluation error). A record with no head counts on
+    record only when no inner record failed on the same head (an evaluation error), as check="step": an empty label
+    would read as a check that failed unnamed. A record with no head counts on
     its own. Heads compare on 7 hex digits: the step record says sha=<short>, a check record head=<full>. A head that
     is not hex (`none`, NIXOS_QA_HEAD's fallback outside git) is no head: two such records are not one unit."""
     units = {}
@@ -397,8 +398,8 @@ def step_failure_units(records):
         return h[:7] if re.fullmatch(r"[0-9a-f]{7,64}", h) else ""
     inner = {(r.get("step"), head(r)) for _, r in fails if r.get("check") and head(r)}
     for i, (t, r) in enumerate(fails):
-        step, h, check = r.get("step", "?"), head(r), r.get("check", "")
-        if not check and h and (step, h) in inner:
+        step, h, check = r.get("step", "?"), head(r), r.get("check") or "step"
+        if not r.get("check") and h and (step, h) in inner:
             continue
         yield t, (step, check), h or f"no-head-{i}"
 
