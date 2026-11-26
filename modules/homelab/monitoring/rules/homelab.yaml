@@ -282,6 +282,26 @@ groups:
           query: '{__name__=~"homelab_guest_records_.+",job="node-exporter",node="{{ $labels.node }}",worker="{{ $labels.worker }}"}'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#guestrecordsnotshipping"
 
+      # store-upload (modules/core/store-upload.nix) zeroes the queue gauge on every send acer takes, so a nonzero one
+      # is a failed last try; the age clause keeps one slow retry from counting. A sender never sent has last success
+      # 0 and an empty queue, so it stays silent. acer down is its own alert, and the retry timer drains the queue
+      # within 10 minutes of it coming back. The queue is the first operand, so it is $value.
+      - alert: StoreUploadStuck
+        expr: |
+          max by (node) (store_upload_queue_paths{job="node-exporter"} > 0)
+          and on (node) max by (node) (time() - store_upload_last_success_timestamp_seconds{job="node-exporter"} > 3600)
+          and on (node) max by (node) (up{job="node-exporter"} == 1)
+          and on () max(up{job="node-exporter",node="acer-swift"}) == 1
+        for: 30m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "{{ $labels.node }} has {{ $value }} built paths acer-swift has not taken"
+          description: "store-upload on {{ $labels.node }} has had {{ $value }} built paths queued for acer-swift and no batch taken for over an hour, for 30 minutes while both hosts are up, so those builds are not in acer's cache and go with the next power-off. Run systemctl status store-upload.path store-upload.timer store-upload on {{ $labels.node }}, then journalctl -u store-upload -n 20 and read the line 'store-upload: acer-swift did not take N paths'. Owning issue: sammasak/nixos-config#835."
+          query: '{__name__=~"store_upload_queue_paths|store_upload_last_success_timestamp_seconds",job="node-exporter",node="{{ $labels.node }}"}'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#storeuploadstuck"
+
       # 36 h: every job runs daily (OnCalendar, Persistent), so this is one missed run, read the afternoon after it.
       # The timestamp exists only after a recorded success, and backup.prom is on tmpfs: the two alerts below cover a
       # backup with no recorded success and a collector that is stale or, after a reboot, never wrote.

@@ -1,0 +1,70 @@
+# promtool test rules for homelab.yaml's store upload alert (flake-modules/monitoring-check.nix runs it). The textfile
+# as store-upload writes it on each try, every 10 minutes while acer refuses, scraped each minute.
+rule_files: [../homelab.yaml]
+evaluation_interval: 1m
+tests:
+  # msi's queue stays at 3 with no success; at 100m a send goes through. asus never sent and has nothing queued.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="node-exporter",instance="acer-swift",node="acer-swift"}'
+        values: '1x130'
+      - series: 'up{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true"}'
+        values: '1x130'
+      - series: 'store_upload_queue_paths{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true"}'
+        values: '3x100 0x30'
+      - series: 'store_upload_last_success_timestamp_seconds{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true"}'
+        values: '0x100 6000x30'
+      - series: 'up{job="node-exporter",instance="asus-b460m",node="asus-b460m",sleeps="true"}'
+        values: '1x130'
+      - series: 'store_upload_queue_paths{job="node-exporter",instance="asus-b460m",node="asus-b460m",sleeps="true"}'
+        values: '0x130'
+      - series: 'store_upload_last_success_timestamp_seconds{job="node-exporter",instance="asus-b460m",node="asus-b460m",sleeps="true"}'
+        values: '0x130'
+    alert_rule_test:
+      - eval_time: 85m
+        alertname: StoreUploadStuck
+        exp_alerts: []
+      - eval_time: 95m
+        alertname: StoreUploadStuck
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: msi-ms7758}
+            exp_annotations:
+              summary: "msi-ms7758 has 3 built paths acer-swift has not taken"
+              description: "store-upload on msi-ms7758 has had 3 built paths queued for acer-swift and no batch taken for over an hour, for 30 minutes while both hosts are up, so those builds are not in acer's cache and go with the next power-off. Run systemctl status store-upload.path store-upload.timer store-upload on msi-ms7758, then journalctl -u store-upload -n 20 and read the line 'store-upload: acer-swift did not take N paths'. Owning issue: sammasak/nixos-config#835."
+              query: '{__name__=~"store_upload_queue_paths|store_upload_last_success_timestamp_seconds",job="node-exporter",node="msi-ms7758"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#storeuploadstuck"
+      - eval_time: 105m
+        alertname: StoreUploadStuck
+        exp_alerts: []
+
+  # msi powers off at 20m with 5 paths queued; its last samples are held here, the up guard keeps it silent
+  - interval: 1m
+    input_series:
+      - series: 'up{job="node-exporter",instance="acer-swift",node="acer-swift"}'
+        values: '1x150'
+      - series: 'up{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true"}'
+        values: '1x20 0x130'
+      - series: 'store_upload_queue_paths{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true"}'
+        values: '5x150'
+      - series: 'store_upload_last_success_timestamp_seconds{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true"}'
+        values: '0x150'
+    alert_rule_test:
+      - eval_time: 120m
+        alertname: StoreUploadStuck
+        exp_alerts: []
+
+  # acer is down: the queue cannot drain and that is acer's alert, not the sender's
+  - interval: 1m
+    input_series:
+      - series: 'up{job="node-exporter",instance="acer-swift",node="acer-swift"}'
+        values: '0x150'
+      - series: 'up{job="node-exporter",instance="asus-b460m",node="asus-b460m",sleeps="true"}'
+        values: '1x150'
+      - series: 'store_upload_queue_paths{job="node-exporter",instance="asus-b460m",node="asus-b460m",sleeps="true"}'
+        values: '4x150'
+      - series: 'store_upload_last_success_timestamp_seconds{job="node-exporter",instance="asus-b460m",node="asus-b460m",sleeps="true"}'
+        values: '0x150'
+    alert_rule_test:
+      - eval_time: 120m
+        alertname: StoreUploadStuck
+        exp_alerts: []

@@ -156,6 +156,19 @@ side (black-pi, `systemctl status loki`); a timeout is a slow run.
 Do not: delete the worker's spool or its progress under `/var/lib/private/dev-env-records`; the next run that
 reaches Loki ships what waits.
 
+## StoreUploadStuck
+
+Fires: a sleeping store cache (msi-ms7758, asus-b460m) has built paths queued for acer-swift
+(`store_upload_queue_paths` above 0) and no batch taken for over an hour
+(`store_upload_last_success_timestamp_seconds`, 0 if never), for 30 minutes while the sender and acer-swift are
+both up. A successful send zeroes the queue, so a nonzero one means the last try failed. Those paths are only in the
+sender's store and leave the cache at its next power-off. An asleep sender has no series; acer down does not fire.
+First: on the sender, `systemctl status store-upload.path store-upload.timer store-upload` and
+`journalctl -u store-upload -n 20`: `store-upload: acer-swift did not take N paths` is the ssh to
+`store-upload@acer-swift` or acer's pull from the sender's cache failing (its `copied N, failed M` line lands in
+the sender's journal too); on acer, `journalctl -u sshd --grep store-upload` for a refused login.
+Do not: delete `/var/lib/store-upload/queue.sending` on the sender; the next try sends it. Issue #835.
+
 ## BackupStale
 
 Fires: `time() - homelab_backup_last_success_timestamp_seconds` is over 36 hours for 10 minutes. Every job is a daily
