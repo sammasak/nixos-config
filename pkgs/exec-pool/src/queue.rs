@@ -96,6 +96,8 @@ const FENCED: &str = "XP409";
 /// `submit_task`'s SQLSTATE for capabilities no recent slot offers (`0028_requires.up.sql`).
 const UNOFFERED: &str = "XP412";
 const LIVE: &str = "('leased', 'running', 'checkpointing')";
+/// A result's subagent calls are its own turn's: a runner before 29 moves its epoch without writing them.
+const SUBAGENT_EPOCH: &str = "(to_jsonb(r)->>'subagent_epoch')::bigint = r.lease_epoch";
 /// The HELP and TYPE lines both renderings of `exec_pool_queue_up` start with.
 macro_rules! up_help {
     () => {
@@ -1575,8 +1577,8 @@ impl Store {
                     "SELECT {SUMMARY} || jsonb_build_object('result', CASE WHEN r.attempt_id IS NOT NULL THEN \
                      jsonb_build_object('lease_epoch', r.lease_epoch, 'outcome', r.outcome, \
                      'exit_code', r.exit_code, 'output', r.output, 'branch', r.branch, 'recorded_at', r.recorded_at, \
-                     'subagent_calls', to_jsonb(r)->'subagent_calls', \
-                     'subagent_call_count', to_jsonb(r)->'subagent_call_count') END) \
+                     'subagent_calls', CASE WHEN {SUBAGENT_EPOCH} THEN to_jsonb(r)->'subagent_calls' END, \
+                     'subagent_call_count', CASE WHEN {SUBAGENT_EPOCH} THEN to_jsonb(r)->'subagent_call_count' END) END) \
                      FROM task_summaries t JOIN attempts a ON a.task_id = t.id \
                      LEFT JOIN results r ON r.attempt_id = a.id AND (r.lease_epoch = a.lease_epoch OR t.session) WHERE t.id = $1 OR a.id = $1"
                 ),
@@ -1790,8 +1792,9 @@ fn insert_result(
             .transpose()?;
         let count = result.subagent_call_count.map(i64::from);
         tx.execute(
-            "UPDATE results SET subagent_calls = $2, subagent_call_count = $3::bigint WHERE attempt_id = $1",
-            &[&attempt, &calls, &count],
+            "UPDATE results SET subagent_calls = $2, subagent_call_count = $3::bigint, subagent_epoch = $4 \
+             WHERE attempt_id = $1",
+            &[&attempt, &calls, &count, &epoch],
         )?;
     }
     Ok(n == 1)
@@ -2498,7 +2501,8 @@ fn usage(tx: &mut Transaction<'_>, out: &mut String, hosts: &[String]) -> Result
          count(*) FILTER (WHERE EXISTS (SELECT FROM events e WHERE e.attempt_id = u.attempt_id \
          AND e.lease_epoch = u.lease_epoch AND e.to_status = 'waiting' \
          AND e.reason IN ('turn_error', 'turn_timeout', 'turn_memory_kill'))), \
-         coalesce(sum(u.subagent_calls), 0)::bigint, coalesce(sum(u.cost_usd::numeric), 0)::float8 \
+         coalesce(sum(u.subagent_calls), 0)::bigint, count(u.subagent_calls), \
+         coalesce(sum(u.cost_usd::numeric), 0)::float8 \
          FROM turns u JOIN attempts a ON a.id = u.attempt_id JOIN tasks t ON t.id = a.task_id GROUP BY 1, 2, 3, 4",
         &[],
     )?;
@@ -2529,6 +2533,8 @@ fn usage(tx: &mut Transaction<'_>, out: &mut String, hosts: &[String]) -> Result
          # TYPE exec_pool_session_turn_errors_total counter\n",
         "# HELP exec_pool_session_subagent_calls_total Subagent calls session turns made, as their transcripts showed, by host, arm and agent kind.\n\
          # TYPE exec_pool_session_subagent_calls_total counter\n",
+        "# HELP exec_pool_session_subagent_turns_read_total Session turns whose subagent calls were read; the rest are unknown, not none.\n\
+         # TYPE exec_pool_session_subagent_turns_read_total counter\n",
     ];
     let row_of = |(host, variant, shunt): &(String, String, String), agent: &str| {
         rows.iter().find(|r| {
@@ -2563,7 +2569,7 @@ fn usage(tx: &mut Transaction<'_>, out: &mut String, hosts: &[String]) -> Result
         let (host, variant, shunt) = arm;
         for agent in AGENTS {
             let cost: f64 = row_of(arm, agent)
-                .map(|r| r.try_get(12))
+                .map(|r| r.try_get(13))
                 .transpose()?
                 .unwrap_or(0.0);
             let _ = writeln!(

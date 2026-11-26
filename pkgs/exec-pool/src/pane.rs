@@ -356,16 +356,12 @@ pub fn verdict(transcript: Option<&str>, from: usize, ended: bool) -> (String, b
     (line.to_string(), ran)
 }
 
-/// The Agent (formerly Task) tool calls in `assistant`, the session's own (no subagent's sidechain), each tool use
-/// once: the first [`SUBAGENT_CALLS_MAX`] as their short description and subagent type, never their prompt, and how many
+/// The Agent (formerly Task) tool calls in `assistant`, each tool use once: the first [`SUBAGENT_CALLS_MAX`] as their short description and subagent type, never their prompt, and how many
 /// there were.
 fn subagent_calls(assistant: &[&Value]) -> (Vec<SubagentCall>, usize) {
     let mut seen = std::collections::BTreeSet::new();
     let mut calls = Vec::new();
     for (i, v) in assistant.iter().enumerate() {
-        if v.get("isSidechain").and_then(Value::as_bool) == Some(true) {
-            continue;
-        }
         let Some(parts) = v.pointer("/message/content").and_then(Value::as_array) else {
             continue;
         };
@@ -705,7 +701,6 @@ not json
 {"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"SECRET-OUTPUT"}]}}
 {"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"t1","name":"Agent","input":{"description":"Review PR 9","subagent_type":"code-reviewer","prompt":"SECRET-PROMPT-1"}}]}}
 {"type":"assistant","message":{"id":"m2","content":[{"type":"tool_use","id":"t2","name":"Bash","input":{"command":"ls","description":"List files"}}]}}
-{"type":"assistant","isSidechain":true,"message":{"id":"s1","content":[{"type":"tool_use","id":"s9","name":"Agent","input":{"description":"nested","prompt":"x"}}]}}
 {"type":"assistant","message":{"id":"m3","content":[{"type":"tool_use","id":"t3","name":"Task","input":{"description":"Find callers","prompt":"SECRET-PROMPT-2"}},{"type":"text","text":"done"}]}}"#,
         );
         let (v, _) = verdict(Some(&t), 3, true);

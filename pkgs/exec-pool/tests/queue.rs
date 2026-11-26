@@ -3280,6 +3280,31 @@ fn a_turn_s_subagent_calls_show_in_its_result_and_count_in_the_metrics() {
         r["subagent_calls"].is_null() && r["subagent_call_count"].is_null(),
         "{r}"
     );
+    // of the two turns only the first was read: the unknown one adds no call and is no turn read
+    let m = owner.metrics().unwrap();
+    assert!(
+        m.lines().any(|l| l
+            == "exec_pool_session_subagent_turns_read_total{host=\"msi-ms7758\",variant=\"unknown\",shunt=\"unknown\",agent=\"claude\"} 1"),
+        "{m}"
+    );
+    // a runner before 29 moves the result's epoch and leaves the calls: they are not shown under its turn
+    pg.sql()
+        .batch_execute(
+            "UPDATE results SET subagent_calls = '[]', subagent_call_count = 0, subagent_epoch = lease_epoch",
+        )
+        .unwrap();
+    assert_eq!(
+        s.result(&id).unwrap().unwrap()["result"]["subagent_call_count"],
+        0
+    );
+    pg.sql()
+        .batch_execute("UPDATE results SET lease_epoch = lease_epoch + 1")
+        .unwrap();
+    let r = &s.result(&id).unwrap().unwrap()["result"];
+    assert!(
+        r["subagent_calls"].is_null() && r["subagent_call_count"].is_null(),
+        "{r}"
+    );
 }
 
 #[test]
@@ -3860,7 +3885,7 @@ fn a_park_with_subagent_calls_lands_in_a_queue_not_yet_migrated_to_record_them()
     // as a remote runner's park into a queue host still at 28
     pg.sql()
         .batch_execute(
-            "ALTER TABLE results DROP COLUMN subagent_calls, DROP COLUMN subagent_call_count; \
+            "ALTER TABLE results DROP COLUMN subagent_calls, DROP COLUMN subagent_call_count, DROP COLUMN subagent_epoch; \
              ALTER TABLE turns DROP COLUMN subagent_calls",
         )
         .unwrap();
@@ -3875,6 +3900,12 @@ fn a_park_with_subagent_calls_lands_in_a_queue_not_yet_migrated_to_record_them()
         r["subagent_calls"].is_null() && r["subagent_call_count"].is_null(),
         "{r}"
     );
+    let turns: i64 = pg
+        .sql()
+        .query_one("SELECT count(*) FROM turns", &[])
+        .unwrap()
+        .get(0);
+    assert_eq!(turns, 1);
 }
 
 #[test]

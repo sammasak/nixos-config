@@ -91,10 +91,11 @@ struct ClaudeText {
     usage: Option<ClaudeUsage>,
     #[serde(default)]
     total_cost_usd: Option<f64>,
+    /// Values, not types: a result line whose fields are not the verdict's shape loses them alone, not its text.
     #[serde(default)]
-    subagent_calls: Option<Vec<SubagentCall>>,
+    subagent_calls: Option<serde_json::Value>,
     #[serde(default)]
-    subagent_call_count: Option<u32>,
+    subagent_call_count: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -152,7 +153,16 @@ impl TaskResult {
             })
         });
         let (subagent_calls, subagent_call_count) = claude.as_mut().map_or((None, None), |c| {
-            (c.subagent_calls.take(), c.subagent_call_count)
+            let calls = c
+                .subagent_calls
+                .take()
+                .and_then(|v| serde_json::from_value(v).ok());
+            let count = c
+                .subagent_call_count
+                .take()
+                .and_then(|v| serde_json::from_value(v).ok());
+            // one without the other is no record
+            calls.zip(count).unzip()
         });
         // a run that failed preparing printed nothing to stdout worth handing back: its step and stderr say why
         let failed = result.and_then(|r| r.failed_step.as_deref().map(|step| (step, r)));
@@ -270,6 +280,12 @@ mod tests {
             Some(SUBAGENT_FIELD_BYTES)
         );
         assert_eq!(long.subagent_type.as_deref(), Some("ab"));
+        let odd = r#"{"result":"kept","subagent_calls":"x","subagent_call_count":2}"#;
+        let r = TaskResult::of(Agent::Claude, Some(&exec(Stage::Run, Some(0))), odd);
+        assert_eq!(
+            (r.output(), r.subagent_calls.as_ref(), r.subagent_call_count),
+            ("kept", None, None)
+        );
         let one_shot = r#"{"is_error":false,"result":"ok"}"#;
         let r = TaskResult::of(Agent::Claude, Some(&exec(Stage::Run, Some(0))), one_shot);
         assert_eq!(
