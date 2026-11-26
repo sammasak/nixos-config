@@ -4,7 +4,7 @@
 //! loops: reconcile, claim an attempt for the slot, accept `start`, write the manifest, start `exec-pool-exec@<slot>`,
 //! then checkpoint and settle from its result, record the result, and release the slot with `dev-env-reset@<slot>`. It
 //! begins no work before `start` is accepted, and never re-sends an event whose outcome is unknown: the lease expires
-//! and `reconcile` decides. While the helper runs it renews the lease every [`HEARTBEAT`]; a cancel the heartbeat
+//! and `reconcile` decides. While the helper runs it renews the lease and reconciles every [`HEARTBEAT`]; a cancel the heartbeat
 //! reports, or a lease it finds lost, writes the cancel marker the helper stops at. A runner that dies renews nothing,
 //! and the lease expires. A reset that fails quarantines the slot, in the queue too, until an operator removes the
 //! marker. With `EXEC_POOL_OFF_TIMER` it claims only while `EXEC_POOL_CLAIM_SECS` from now ends before that timer
@@ -475,6 +475,25 @@ impl Runner {
         }
     }
 
+    /// One [`HEARTBEAT`] of the run of `m`: [`Self::beat`], the log tail in `dir` handed over, and a reconcile, as a
+    /// slot inside a long turn is no idle slot: with every slot in one, nothing else queues a due timer.
+    fn tick(
+        &self,
+        store: &mut Store,
+        m: &Manifest,
+        stopping: Option<&'static str>,
+        dir: &Path,
+        logged: &mut Option<(u64, usize)>,
+    ) -> Option<&'static str> {
+        let stopping = self.beat(store, m, stopping);
+        self.put_log(store, m, dir, logged);
+        match store.reconcile() {
+            Ok(changes) => changes.iter().for_each(log_change),
+            Err(e) => self.error("reconcile", &e),
+        }
+        stopping
+    }
+
     /// Hands the queue the run's log tail in `dir` if it moved since `logged`, the tail it last took.
     fn put_log(
         &self,
@@ -714,8 +733,7 @@ impl Runner {
                     }
                     if beat.elapsed() >= HEARTBEAT {
                         beat = Instant::now();
-                        stopping = self.beat(store, manifest, stopping);
-                        self.put_log(store, manifest, &dir, &mut logged);
+                        stopping = self.tick(store, manifest, stopping, &dir, &mut logged);
                     }
                     thread::sleep(Duration::from_secs(1));
                 };
@@ -3230,5 +3248,192 @@ esac"#,
         let counted = fs::read_to_string(dir.join("exec-pool-prompt-pool9.prom")).unwrap();
         assert!(counted.ends_with("} 1\n"), "{counted}");
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A throwaway PostgreSQL on a Unix socket in `root`, as tests/queue.rs runs one, stopped when dropped.
+    struct Pg {
+        root: PathBuf,
+        server: Child,
+    }
+
+    impl Pg {
+        fn new(name: &str) -> Self {
+            let root =
+                std::env::temp_dir().join(format!("exec-pool-pg-{name}-{}", std::process::id()));
+            let _ = fs::remove_dir_all(&root);
+            fs::create_dir_all(&root).unwrap();
+            let ok = Command::new("initdb")
+                .args([
+                    "-U",
+                    "exec_pool",
+                    "--auth=trust",
+                    "--no-sync",
+                    "-E",
+                    "UTF8",
+                    "--locale=C",
+                    "-D",
+                ])
+                .arg(root.join("data"))
+                .stdout(Stdio::null())
+                .status()
+                .expect("initdb on PATH")
+                .success();
+            assert!(ok, "initdb failed");
+            let server = Command::new("postgres")
+                .arg("-D")
+                .arg(root.join("data"))
+                .arg("-k")
+                .arg(&root)
+                .args(["-c", "listen_addresses=", "-c", "fsync=off"])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("postgres on PATH");
+            let pg = Self { root, server };
+            let t = Instant::now();
+            while postgres::Client::connect(&pg.conninfo(), postgres::NoTls).is_err() {
+                assert!(
+                    t.elapsed() < Duration::from_secs(30),
+                    "postgres did not start"
+                );
+                thread::sleep(Duration::from_millis(50));
+            }
+            pg.sql()
+                .batch_execute(
+                    "CREATE ROLE exec_pool_submit LOGIN; CREATE ROLE exec_pool_runner LOGIN",
+                )
+                .unwrap();
+            pg
+        }
+
+        fn conninfo(&self) -> String {
+            format!(
+                "host={} dbname=postgres user=exec_pool",
+                self.root.display()
+            )
+        }
+
+        fn sql(&self) -> postgres::Client {
+            postgres::Client::connect(&self.conninfo(), postgres::NoTls).unwrap()
+        }
+
+        fn status(&self, attempt: &str) -> String {
+            self.sql()
+                .query_one("SELECT status FROM attempts WHERE id = $1", &[&attempt])
+                .unwrap()
+                .get(0)
+        }
+    }
+
+    impl Drop for Pg {
+        fn drop(&mut self) {
+            let _ = self.server.kill();
+            let _ = self.server.wait();
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    #[test]
+    fn a_heartbeat_of_a_running_turn_queues_a_due_waiting_until_session() {
+        let pg = Pg::new("tick");
+        let mut store = Store::open(&pg.conninfo()).unwrap();
+        store.migrate().unwrap();
+        let slot = Slot {
+            schema_version: SchemaVersion::CURRENT,
+            host: "acer-swift".to_owned(),
+            id: "pool9".to_owned(),
+            state: exec_pool::SlotState::Idle,
+            capabilities: std::collections::BTreeSet::new(),
+            agents: [Agent::Claude, Agent::None].into(),
+            pins: exec_pool::Pins::default(),
+        };
+        let task = |agent: &str, id: &str, credential: &str| -> TaskSpec {
+            serde_json::from_value(json!({
+                "schema_version": 1, "id": id, "idempotency_key": format!("key-{id}"),
+                "source": { "repo": "https://github.com/sammasak/nixos-config.git", "rev": "6266701" },
+                "command": { "agent": agent, "argv": ["go", "opus"], "workdir": "pkgs/exec-pool" },
+                "capabilities": [], "resource_class": "small", "credential_class": credential,
+                "retry": { "max_attempts": 1 }
+            }))
+            .unwrap()
+        };
+        // the session's start needs a slot seen offering claude
+        assert!(store.claim(&slot, 60).unwrap().is_none());
+        store
+            .start_session(&task("claude", "ignored", "slot"), 0)
+            .unwrap();
+        let waiting = store.claim(&slot, 60).unwrap().unwrap().attempt;
+        let start = |store: &mut Store, id: &str, epoch| {
+            store
+                .apply(
+                    id,
+                    &Event {
+                        epoch,
+                        kind: Kind::Start,
+                    },
+                    None,
+                )
+                .unwrap();
+        };
+        start(&mut store, &waiting.id, waiting.lease_epoch);
+        let due = jiff::Timestamp::now()
+            .checked_add(jiff::SignedDuration::from_secs(2))
+            .unwrap();
+        let (_, changes) = store
+            .park(
+                &waiting.id,
+                waiting.lease_epoch,
+                &Park {
+                    reason: ParkReason::TurnEnd,
+                    checkpoint: None,
+                    result: TaskResult::new(Some(exec_pool::Outcome::Succeeded), Some(0), "parked"),
+                    upto: 0,
+                    undelivered: false,
+                    wake: Some(
+                        Wake::new(&due.strftime("%Y-%m-%dT%H:%M:%SZ").to_string(), None).unwrap(),
+                    ),
+                    transcript: None,
+                    arm: None,
+                    memory_killed: Vec::new(),
+                },
+            )
+            .unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(pg.status(&waiting.id), "waiting");
+        // the slot's own turn, a one-shot task, runs while the timer comes due
+        store.submit(&task("none", "t-1", "none")).unwrap();
+        let claim = store.claim(&slot, 60).unwrap().unwrap();
+        start(&mut store, &claim.attempt.id, claim.attempt.lease_epoch);
+        let tmp = std::env::temp_dir().join(format!("exec-pool-tick-{}", std::process::id()));
+        fs::create_dir_all(&tmp).unwrap();
+        let runner = Runner {
+            slot,
+            lease_secs: 60,
+            runtime: tmp.join("runtime"),
+            exec_dir: tmp.join("exec"),
+            quarantine: tmp.join("pool9.quarantined"),
+            off_timer: None,
+            grace_secs: (GRACE_SECS, GRACE_SECS),
+            arm: None,
+        };
+        let manifest = Manifest {
+            schema_version: SchemaVersion::CURRENT,
+            slot: runner.slot.id.clone(),
+            attempt_id: claim.attempt.id.clone(),
+            lease_epoch: claim.attempt.lease_epoch,
+            task: claim.task.clone(),
+            session: session_of(&claim),
+        };
+        thread::sleep(Duration::from_secs(3));
+        assert_eq!(pg.status(&waiting.id), "waiting", "nothing else reconciles");
+        let stopping = runner.tick(&mut store, &manifest, None, &tmp.join("run"), &mut None);
+        assert_eq!(stopping, None);
+        assert_eq!(
+            pg.status(&waiting.id),
+            "queued",
+            "the heartbeat of a running turn queues the due timer"
+        );
+        assert_eq!(pg.status(&claim.attempt.id), "running");
+        fs::remove_dir_all(&tmp).unwrap();
     }
 }
