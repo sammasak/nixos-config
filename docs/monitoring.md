@@ -149,3 +149,66 @@ its toplevel, which is why the checks above seed its modules onto msi.
 
 Backup freshness and validation semantics: [completion metrics](backup-completion-metrics.md)
 (#564/#600; source instrumentation and live receipts are separate).
+
+## Alert inventory (26 Nov)
+
+Every alert name with a firing `ALERTS` series in the 7 days to 26 Nov 17:05 UTC (#624), read through black-pi's
+Prometheus from an acer pool slot. Rule files are under `modules/homelab/monitoring/rules/`; times are UTC; "window
+start" means firing at 19 Nov 17:05, the start of the window. Routes are from `alertmanager.nix`: "ntfy" is the
+default route to lenovo's `homelab-alerts` topic, "ntfy, night mute" the `team="shipping"` route (19:00 to 07:30
+UTC), "null" a route that notifies no one. Alertmanager's API, Loki's ruler API and ntfy were not readable from the
+slot (403, 403, unreachable), so no ntfy message per alert could be read: "unknown" there means not found, not
+missing. The per-alert receipts besides the cited issue comment are alert-investigations and `cluster-watchdog`
+(lenovo) reading the alert from Alertmanager's active alerts: that proves evaluation into Alertmanager, not a page.
+Alertmanager's webhook (ntfy) counters over the same 7 days: 202 notifications sent, 0 failed, the last at 26 Nov
+16:49; 4754 suppressed by the night mute and 1929 by inhibition.
+
+| Alert | Sev | Rule | Signal (producer) | Route | Fired in 7 d | Last receipt | Gap / owner |
+|---|---|---|---|---|---|---|---|
+| ScheduledGateRed | warning | `shipping.nix` | `homelab_scheduled_gate_red` (`scheduled-gate.nix`, acer) | ntfy, night mute | 24 Nov 15:02 to now, firing; 16 episodes, 48 h | Alertmanager: alert-investigations 26 Nov 16:36 (its cap of 3 a day reached, none started); ntfy unknown | noisy: 16 episodes; the red check behind it, #825 |
+| RetroDueStepFailsRepeat | warning | `shipping.nix` | `shipping_gate_step_failures` and the gate-green timestamps (`shipping-metrics.nix`, lenovo; `scheduled-gate.nix`) | ntfy, night mute | window start to 26 Nov 16:07; 2 episodes, 166 h | Alertmanager: alert-investigations 26 Nov 01:24 (not started, GitHub unreachable); ntfy unknown | never resolved for 166 of 168 h; #826 |
+| GateFailRateHigh | warning | `shipping.nix` | `shipping_gate_fail_ratio`, `shipping_gate_runs_counted` (`shipping-metrics.nix`) | ntfy, night mute | 25 Nov 18:38 to now, firing; 1 episode, 22 h | unknown | no receipt found; firing 22 h |
+| DeployRolledBack | warning | `shipping.nix` | `shipping_deploy_rollbacks_open` (`shipping-metrics.nix`) | ntfy, night mute | 23 Nov 09:08 to 26 Nov 07:37 (lenovo); 3 episodes, 43 h | unknown | no receipt found |
+| EscapeFound | warning | `shipping.nix` | `shipping_escapes` (`shipping-metrics.nix`) | ntfy, night mute | 24 Nov 21:08 to 25 Nov 05:37; 1 episode, 8 h | unknown | no receipt found |
+| HostBehindMain | warning | `shipping.nix` | `shipping_deploy_lag_hours` (`shipping-metrics.nix`), `up` | ntfy, night mute | 20 Nov 12:08 to 24 Nov 08:37 (lenovo); 2 episodes, 69 h | unknown | no receipt found |
+| ScheduledGateOverdue | warning | `shipping.nix` | `homelab_scheduled_gate_behind_since_timestamp_seconds` (`scheduled-gate.nix`) | ntfy, night mute | 24 Nov 14:50 to 14:56 | unknown | no receipt found |
+| OpenIssuesGrowing | warning | removed (63c239a3) | replaced by OpenIssuesUntouched | ntfy, night mute | 20 Nov 20:10 to 24 Nov 06:09; 4 episodes, 65 h | unknown | rule gone; none |
+| ExecPoolSlotMemoryKills | warning | `exec-pool.yaml` | `exec_pool_memory_kills_total` (`pkgs/exec-pool` runner; acer, msi) | ntfy | 25 Nov 12:56 to now, firing; 5 episodes, 12 h | Alertmanager: alert-investigations 26 Nov 17:02 (cap reached); ntfy unknown | firing on acer and msi; #827 |
+| ExecPoolPushesRefused | warning | `exec-pool.yaml` | `exec_pool_push_filter_pushes_total{result="refused"}` (`pkgs/exec-pool-push-filter`, acer) | ntfy | 26 Nov 03:50 to 04:49 (pool1 to pool3) | unknown | no receipt found; cause unknown |
+| ExecPoolParkPushFailing | warning | `exec-pool.yaml` | `exec_pool_park_push_failures_total` (`pkgs/exec-pool` runner, acer) | ntfy | 26 Nov 01:28 to 02:25 | unknown | upstream internet outage (#624 comment, 26 Nov); no receipt found |
+| ExecPoolNeedsReview | warning | `exec-pool.yaml` | `exec_pool_attempts{state="needs_review"}` (`pkgs/exec-pool` queue, acer) | ntfy | 25 Nov 19:54 to 21:57; 2 h | unknown | no receipt found |
+| ExecPoolSessionStalled | warning | `exec-pool.yaml` | `exec_pool_session_stalled` (`pkgs/exec-pool` queue, acer) | ntfy | 25 Nov 07:10 to 13:18; under 1 h firing | unknown | no receipt found |
+| NodeOOMKill | warning | `homelab.yaml` | `node_vmstat_oom_kill` (`node-exporter.nix`) | ntfy; inhibited by UnitOOMKilled on its node | window start to now, firing (acer, msi; also lenovo, asus); 31 episodes, 9 h | ntfy 24 Nov 03:28:48 firing, 03:53:48 resolved (acer; #624 comment, 24 Nov); later unknown | noisy: 31 episodes; UnitOOMKilled (Loki ruler) not readable here |
+| NodeSystemdUnitFailed | warning | `homelab.yaml` | `node_systemd_unit_state{state="failed"}` (`node-exporter.nix`) | ntfy | 22 Nov 23:16 to 26 Nov 13:04 (last msi `store-upload.path`); 6 episodes, 9 h | Alertmanager: alert-investigations reported on #879, 26 Nov 12:50; ntfy unknown | #879 |
+| NodeSystemSaturation | warning | `node-exporter.yaml` | `node_load1` over CPU count (`node-exporter.nix`) | ntfy | 23 Nov 12:07 to now, firing (acer); 3 episodes | unknown | no receipt found |
+| NodeFilesystemSpaceFillingUp | warning | `node-exporter.yaml` | `node_filesystem_avail_bytes` (`node-exporter.nix`) | ntfy | 26 Nov 12:05 to 14:32 (asus `/`, `/var/lib/workers`) | unknown | no receipt found |
+| NodeCpuThrottlingHigh | warning | `homelab.yaml` | `homelab:node:cpu_core_throttles:rate5m` from `node_cpu_core_throttles_total` (`node-exporter.nix`) | ntfy | 26 Nov 07:47 to 10:36 (acer); 2 episodes | unknown | no receipt found |
+| NodeTextFileCollectorScrapeError | warning | `node-exporter.yaml` | `node_textfile_scrape_error` (`node-exporter.nix`) | ntfy | 24 Nov 07:17 to 26 Nov 07:01; 4 episodes | unknown | the series names no file, so which textfile failed is unknown |
+| ShuntCollectorStale | warning | `shunt.yaml` | `shunt_collector_success_timestamp_seconds`, `shunt_collector_failed` (`shunt-metrics.nix`) | ntfy | 24 Nov 16:27 to 18:38 (acer `a1`, `herman`) | unknown | no receipt found |
+| AlertInvestigationFailed | warning | `alert-investigations.yaml` | `homelab_alert_investigations_total{outcome="failed"}`, `homelab_alert_investigations_up` (`alert-investigations.nix`, lenovo) | ntfy | 25 Nov 20:13 to 26 Nov 07:23; 3 episodes, 9 h | unknown | its rule failed to evaluate from 26 Nov 01:20 until the `investigated` label fix, now live; #624 comments of 25 and 26 Nov |
+| PrometheusRuleFailures | critical | `prometheus.yaml` | `prometheus_rule_evaluation_failures_total` (Prometheus itself) | ntfy | 26 Nov 01:40 to 02:55 | unknown | cause was AlertInvestigationFailed's labelset; no receipt found |
+| TargetDown | warning | `general.yaml` | `up` of every job (`prometheus.nix`) less `homelab:node:off_as_planned` | ntfy | window start to 25 Nov 02:02 (`node-exporter`, `nvidia-gpu`); 4 episodes, 87 h | unknown (24 Nov: suppressed by HostExpectedOff) | firing 87 h, mostly inhibited; no receipt found |
+| HostExpectedOff | none | `homelab.yaml` | `homelab:node:off_as_planned` (`up` and the power windows, `homelab.nix`) | null, by design | 7 episodes, 103 h | none expected; its inhibitions are the 1929 above (all sources) | none |
+| Watchdog | none | `general.yaml` | `vector(1)` | null; lenovo's `cluster-watchdog` reads it | always firing | `cluster-watchdog` "watchdog OK" on ntfy topic `homelab-watchdog`, 26 Nov 17:00 (Loki) | none |
+| NodeCPUHighUsage | info | removed (a3d60af0) | | null (info) | 23 Nov 09:43 to 12:32 | none expected | rule gone; none |
+| NodeSensorNearCritical | warning | removed (a3d60af0) | | ntfy | 23 Nov 12:07 to 12:33 | unknown | rule gone; none |
+
+Known signal, route and a last receipt of any kind: 7 of 27 (ScheduledGateRed, RetroDueStepFailsRepeat,
+ExecPoolSlotMemoryKills, NodeSystemdUnitFailed and Watchdog by a reader of Alertmanager, NodeOOMKill by an ntfy
+message, HostExpectedOff by design). A phone receipt per alert: 1 of 27 (NodeOOMKill, 24 Nov). Loki-ruler alerts
+(UnitOOMKilled, PoolCostPerMergedChangeHigh) do not enter `ALERTS`, so whether they fired is unknown.
+
+Queries, each over `$PROMETHEUS_URL` unless named:
+
+- Classes: `count by (alertname, severity) (max_over_time(ALERTS{alertstate="firing"}[7d]))`
+- First and last firing: `min by (alertname) (min_over_time(timestamp(ALERTS{alertstate="firing"})[7d:1m]))`, and
+  `max` of the same; per series with `max_over_time(timestamp(ALERTS{alertstate="firing",alertname="X"})[7d:5m])`
+- Episodes and hours: `query_range` of `count by (alertname) (ALERTS{alertstate="firing"})`, step 300 s, a gap over
+  one step starting a new episode (an episode under 5 min can be missed)
+- Rule, labels and health: `/api/v1/rules`
+- Delivery counters: `sum by (integration) (increase(alertmanager_notifications_total[7d]))`, the same for
+  `alertmanager_notifications_failed_total` and `alertmanager_notification_requests_failed_total`,
+  `sum by (reason) (increase(alertmanager_notifications_suppressed_total[7d]))`, and the last send
+  `max_over_time(timestamp(changes(alertmanager_notifications_total{integration="webhook"}[2m]) > 0)[7d:1m])`
+- Receipts in Loki (`$LOKI_ADDR`): `{unit="alert-investigations.service"}` and `{unit="cluster-watchdog.service"}`;
+  `{unit="ntfy-sh.service"}` carries only server stats, no alert name

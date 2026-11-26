@@ -222,8 +222,29 @@ fn an_agent_on_github_is_told_the_rest_calls_for_its_own_pull_request() {
     }
     assert!(prompt.ends_with("The task:\n\ngo"), "{prompt}");
     assert!(!prompt.contains("{repo}") && !prompt.contains("{branch}"));
+    for rule in [
+        "a subagent of this session that did not write the diff the pull request number and the full head sha",
+        "first line `Grade: N/10 (head <sha>)`, its findings below, last line `-- pool/t-655 reviewer`",
+        "post that text unchanged with the comment call above",
+        "until a 9 or more on the current head; after three rounds below 9, stop and report the open findings",
+        "odd input shapes for any parser or flag handling",
+        "docs, comments and the pull request body against the code",
+        "every sibling call site",
+        "Run the task's acceptance check and put its command and output in the body",
+    ] {
+        assert!(prompt.contains(rule), "{rule}: {prompt}");
+    }
+    assert!(
+        !prompt.contains("markdown"),
+        "every pull request gets the graded review, a markdown-only one too"
+    );
     let session = turn_input(&t, "go", Turn::Start).unwrap();
     assert!(session.contains("repos/sammasak/nixos-config/pulls") && session.contains("pool-wait"));
+    assert_eq!(
+        session.matches("The task:").count(),
+        1,
+        "the spliced rules hold no second \"The task:\": {session}"
+    );
     assert!(
         !argv(&task("claude", &["go"]))
             .unwrap()

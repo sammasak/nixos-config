@@ -2,13 +2,21 @@
 """scripts/pool_merge_check.py's choice of checks from changed paths, and its migration numbering, without Nix: a docs
 change runs nothing, a rule or dashboard change its own checks and no host, exec-pool its build and the pool's hosts,
 scripts/, modules/workers/ and metrics/records.json the guest-records test, modules/workers/ also execution-pool-vm's
-evaluation, flake.lock and any unmapped path every host, asus's host dir and the ollama and paddock modules the ollama-gpu test on
-its probe section (its drvPath under both locks, the build and the test under the heavy one alone, GATE_HEAVY from
-devenv.nix; seeded: a failed evaluation runs no test, a devenv.nix without gateHeavy fails that check alone), and a path that feeds a flake output the push hook's nix flake show of the merge (seeded: a merge whose flake show fails fails; a rule change beside an unmapped path still evaluates every
+evaluation, flake.lock and any unmapped path every host, asus's host dir, the ollama and paddock modules and flake.lock the
+ollama-gpu test on its probe section (its drvPath under both locks, the build and the test under the heavy one alone,
+GATE_HEAVY from devenv.nix; seeded: a failed evaluation runs no test, a devenv.nix without gateHeavy fails that check),
+and a path that feeds a flake output the push hook's nix flake show of the merge (seeded: a merge whose flake show fails fails; a rule change beside an unmapped path still evaluates every
 host; two migrations on one number, and a gap, fail). Every evaluation takes the heavy lock, then the light one the
-push hook's evaluation takes, and a build compiles under the heavy one alone. A slot's nix wrapper, from the module's
-text with flock and nix stubbed: build --expr, --file and flake attributes evaluate under light and build outside it,
-nix-build instantiates under light and builds outside it, and flake check runs under light. A slot's cargo has no lane and
+push hook's evaluation takes, and a build compiles under the heavy one alone; a step's record carries its wait for them
+apart from its run (seeded: a held light lock). A slot's nix wrapper, from the module's text with nix and the record
+stubbed: build --expr, --file and flake attributes evaluate under light and build outside it, nix-build instantiates
+under light and builds outside it, and flake check runs under light; the command never inherits the lock, and each hold
+is one lock record of its wait apart from its hold, in the spool the host ships whatever the caller's HOME (seeded: a
+held light lock); it waits out a running scheduled gate for as long as the gate's unit may run, then gives up with rc 75
+(seeded, the wait shortened). A slot's devenv warms its shell up under light only while no stamp matches what its cache
+keys on: the files its last evaluation read, the env vars it read and the db itself, the same before and after the
+warm-up (seeded: an unstamped checkout, a changed devenv.nix or imported file, a changed HOME or read env var, a
+recreated or deleted db, a file edited during the warm-up, a failed warm-up). A slot's cargo has no lane and
 CARGO_BUILD_JOBS from its reserve."""
 
 import importlib.util
@@ -19,6 +27,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 
 HERE = pathlib.Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("pool_merge_check", HERE / "pool_merge_check.py")
@@ -102,9 +111,9 @@ for path in ("docs/ollama.md", "hosts/acer-swift/configuration.nix", "modules/ho
 check(set(pmc.PROBE_SECTIONS) == {t for k, t in got(*pmc.OLLAMA_GPU) if k == "probe"} and all(
       f'gate_probe.section("{sec}")' in (HERE.parent / t).read_text() for t, sec in pmc.PROBE_SECTIONS.items()),
       f"each probe check names the section its test reads ({pmc.PROBE_SECTIONS})")
-heavy = pmc.gate_heavy(HERE.parent)
-check(re.search(heavy, "/nix/store/x-cuda_cudart-12.8") is not None and re.search(heavy, "/nix/store/x-python3-3.13") is None,
-      f"GATE_HEAVY is devenv.nix's gateHeavy ({heavy})")
+heavy_re = pmc.gate_heavy(HERE.parent) or "^$"
+check(re.search(heavy_re, "/nix/store/x-cuda_cudart-12.8") is not None and re.search(heavy_re, "/nix/store/x-python3-3.13") is None,
+      f"GATE_HEAVY is devenv.nix's gateHeavy ({heavy_re})")
 mixed = got("modules/homelab/monitoring/rules/homelab.yaml", "modules/core/fleet.nix")
 check(evals(mixed) == set(HOSTS) and ("check", "monitoring-rules-tests") in mixed,
       "seeded: a rule change beside an unmapped path still evaluates every host")
@@ -122,70 +131,98 @@ with tempfile.TemporaryDirectory() as t:
     p = pmc.migrations_problem(d)
     check(p is not None and "0003" in p, f"seeded: a gap at 0003 fails ({p})")
 tree = pathlib.Path("/t")
-for kind, target in (("eval", "msi-ms7758"), ("evalcheck", "execution-pool-vm"), ("build", "exec-pool"), ("check", "grafana-dashboards")):
-    argv = pmc.command(pmc.Check(kind, target), tree)
-    if kind in ("eval", "evalcheck"):
-        locks, evals_first = [argv[i + 2] for i, a in enumerate(argv) if a == "flock"], argv[argv.index("nix") + 1] == "eval"
-    else:
-        # bash -c BUILD $0 LIGHT ATTR: the light lock is the script's $1, taken inside the one heavy hold
-        locks = [argv[2], argv[-2]] if argv[3:5] == ["bash", "-c"] and argv[5] == pmc.BUILD else []
-        evals_first = pmc.BUILD.index('flock -o "$1" nix eval') < pmc.BUILD.index("nix build") and argv[-1].endswith(".drvPath")
-    check(locks == [str(pmc.LOCK), str(pmc.LIGHT)] and evals_first,
-          f"{kind} {target}: evaluated under the heavy lock, then the light one ({argv})")
 sh = pmc.command(pmc.Check("show", "nixos-push-eval"), tree) or []
-check([sh[i + 2] for i, a in enumerate(sh) if a == "flock"] == [str(pmc.LOCK), str(pmc.LIGHT)]
-      and sh[sh.index("nix"):] == ["nix", "flake", "show", "--json", "--all-systems", "--no-write-lock-file", "/t"]
+check(sh[sh.index("nix"):] == ["nix", "flake", "show", "--json", "--all-systems", "--no-write-lock-file", "/t"]
       and {"WORK_LOCKS_HELD=1", "GC_FREE_SPACE_DIVISOR=16"} <= set(sh[sh.index("env"):sh.index("nix")]),
-      f"show: the push hook's nix flake show of the merge, under the heavy lock, then the light one ({sh})")
+      f"show: the push hook's nix flake show of the merge ({sh})")
+a = (pmc.command(pmc.Check("evalcheck", "execution-pool-vm"), tree) or [""])[-1]
+check(a == "/t#checks.x86_64-linux.execution-pool-vm.drvPath", f"evalcheck: the check's drvPath, nothing built ({a})")
+check("WORK_LOCKS_HELD=1" in pmc.EVAL and "WORK_LOCKS_HELD=1" in pmc.BUILD,
+      "its nix runs marked as holding its locks, or a pool slot's nix waits on the light hold it is under")
+
+# each nix process with the locks it runs under: a stub nix that tries both (held, or free) and names an inherited one
 with tempfile.TemporaryDirectory() as tmp:
     d = pathlib.Path(tmp)
     (d / "bin").mkdir()
-    (d / "scripts").mkdir()
-    (d / "devenv.nix").write_text('{\n  gateHeavy = "-cuda-";\n}\n')
-    (d / "bin/flock").write_text('#!/usr/bin/env bash\nwhile [ "${1#-}" != "$1" ]; do shift; done\n'
-                                 'l=$1; shift; LOCKS="$LOCKS ${l##*/}" exec "$@"\n')
-    (d / "bin/nix").write_text(f'#!/usr/bin/env bash\necho "$* |$LOCKS" >>{d}/log\n[ "$1" != eval ] || [ -z "$EVAL_RC" ] || exit "$EVAL_RC"\n'
-                               '[ "$1" = eval ] && echo /nix/store/p.drv || echo /nix/store/p-out\n')
-    for f in ("flock", "nix"):
-        (d / "bin" / f).chmod(0o755)
-    (d / "scripts/test-ollama-gpu.py").write_text(
-        f"import os\nopen({str(d / 'log')!r}, 'a').write(' '.join(f'{{k}}={{os.environ.get(k)}}' for k in "
-        "('GATE_PROBE', 'GATE_HEAVY', 'WORK_LOCKS_HELD')) + ' |' + os.environ.get('LOCKS', '') + '\\n')\n")
-    argv = pmc.command(pmc.Check("probe", "scripts/test-ollama-gpu.py"), d)
-    rc = subprocess.run(argv, cwd=d, env=os.environ | {"PATH": f"{d / 'bin'}:{os.environ['PATH']}"}, check=False).returncode
-    log = (d / "log").read_text().splitlines()
-    lk, li = pmc.LOCK.name, pmc.LIGHT.name
-    check(rc == 0 and log == [
-        'eval --impure --raw --expr (import ./scripts/gate-probe.nix { only = [ "ollama-gpu" ]; }).json.drvPath | ' + f"{lk} {li}",
-        f"build --no-link -L --print-out-paths /nix/store/p.drv^* | {lk}",
-        f"GATE_PROBE=/nix/store/p-out GATE_HEAVY=-cuda- WORK_LOCKS_HELD=None | {lk}"],
-        f"probe: the section's drvPath under the heavy lock, then the light one; its build and the test under the heavy one alone, on that probe ({rc}, {log})")
-    (d / "log").write_text("")
-    rc = subprocess.run(argv, cwd=d, env=os.environ | {"PATH": f"{d / 'bin'}:{os.environ['PATH']}", "EVAL_RC": "3"}, check=False).returncode
-    log = (d / "log").read_text().splitlines()
-    check(rc != 0 and len(log) == 1 and log[0].startswith("eval "), f"seeded: a failed probe evaluation fails the check, nothing built or run ({rc}, {log})")
-    (d / "devenv.nix").write_text("{ }\n")
-    check(pmc.run(pmc.Check("probe", "scripts/test-ollama-gpu.py"), d) is False, "seeded: no gateHeavy in devenv.nix fails the probe check")
-a = (pmc.command(pmc.Check("evalcheck", "execution-pool-vm"), tree) or [""])[-1]
-check(a == "/t#checks.x86_64-linux.execution-pool-vm.drvPath", f"evalcheck: the check's drvPath, nothing built ({a})")
-check("WORK_LOCKS_HELD=1" in pmc.EVAL and pmc.BUILD.startswith("export WORK_LOCKS_HELD=1;"),
-      "its nix runs marked as holding its locks, or a pool slot's nix waits on the light hold it is under")
+    heavy, light = d / "heavy", d / "light"
+    heavy.touch(), light.touch()
+    (d / "bin/nix").write_text(
+        "#!/usr/bin/env bash\nst() { flock -n \"$1\" true && echo free || echo held; }\n"
+        f'inh=; for f in /proc/self/fd/*; do case $(readlink "$f") in {heavy} | {light}) inh=inherited ;; esac; done\n'
+        f'echo "$1 heavy=$(st {heavy}) light=$(st {light}) $WORK_LOCKS_HELD $inh" >>{d}/log\n'
+        '[ "$1" != eval ] || echo /nix/store/x.drv\n')
+    (d / "bin/nix").chmod(0o755)
+    saved = (os.environ["PATH"], pmc.LOCK, pmc.LIGHT)
+    os.environ["PATH"] = f"{d / 'bin'}:{os.environ['PATH']}"
+    pmc.LOCK, pmc.LIGHT = heavy, light
+    try:
+        for kind, target in (("eval", "msi-ms7758"), ("evalcheck", "execution-pool-vm"), ("show", "nixos-push-eval"),
+                             ("build", "exec-pool"), ("check", "grafana-dashboards")):
+            (d / "log").write_text("")
+            ok, waited = pmc.run(pmc.Check(kind, target), d)
+            r = (d / "log").read_text().splitlines()
+            first = "flake" if kind == "show" else "eval"
+            want = [f"{first} heavy=held light=held 1 "] + (["build heavy=held light=free 1 "] if kind in ("build", "check") else [])
+            check(ok and waited < 1 and r == want,
+                  f"{kind} {target}: evaluated under the heavy lock, then the light one, neither inherited"
+                  f"{', built under the heavy one alone' if len(want) > 1 else ''} ({r}, {waited:.1f} s waited)")
+        # a probe test: its section evaluated under both locks, built and the test run under the heavy one alone, on that probe
+        (d / "scripts").mkdir()
+        (d / "devenv.nix").write_text('{\n  gateHeavy = "-cuda-";\n}\n')
+        (d / "bin/nix").write_text(
+            "#!/usr/bin/env bash\nst() { flock -n \"$1\" true && echo free || echo held; }\n"
+            f'echo "$1 heavy=$(st {heavy}) light=$(st {light}) $WORK_LOCKS_HELD $GC_FREE_SPACE_DIVISOR" >>{d}/log\n'
+            '[ "$1" != eval ] || [ -z "$EVAL_RC" ] || exit "$EVAL_RC"\n'
+            '[ "$1" = eval ] && echo /nix/store/p.drv || echo /nix/store/p-out\n')
+        (d / "scripts/test-ollama-gpu.py").write_text(
+            "import os, subprocess\nst = lambda f: 'free' if subprocess.run(['flock', '-n', f, 'true']).returncode == 0 else 'held'\n"
+            f"open({str(d / 'log')!r}, 'a').write(f\"test heavy={{st({str(heavy)!r})}} light={{st({str(light)!r})}} \""
+            " + ' '.join(f'{k}={os.environ.get(k)}' for k in ('GATE_PROBE', 'GATE_HEAVY', 'WORK_LOCKS_HELD')) + '\\n')\n")
+        pc = pmc.Check("probe", "scripts/test-ollama-gpu.py")
+        (d / "log").write_text("")
+        ok, _ = pmc.run(pc, d)
+        r = (d / "log").read_text().splitlines()
+        check(ok and r == ["eval heavy=held light=held 1 16", "build heavy=held light=free 1 ",
+                           "test heavy=held light=free GATE_PROBE=/nix/store/p-out GATE_HEAVY=-cuda- WORK_LOCKS_HELD=None"],
+              f"probe: its section evaluated under the heavy lock, then the light one; built and the test run under the heavy one alone, on that probe ({r})")
+        check(pmc.command(pc, d)[-1] == '(import ./scripts/gate-probe.nix { only = [ "ollama-gpu" ]; }).json.drvPath',
+              f"probe: the test's own section, as gate_probe.py builds it alone ({pmc.command(pc, d)})")
+        (d / "log").write_text("")
+        os.environ["EVAL_RC"] = "3"
+        try:
+            ok, _ = pmc.run(pc, d)
+        finally:
+            del os.environ["EVAL_RC"]
+        r = (d / "log").read_text().splitlines()
+        check(not ok and len(r) == 1 and r[0].startswith("eval "), f"seeded: a failed probe evaluation fails the check, nothing built or run ({r})")
+        (d / "devenv.nix").write_text("{ }\n")
+        (d / "log").write_text("")
+        ok, _ = pmc.run(pc, d)
+        check(not ok and (d / "log").read_text() == "", "seeded: no gateHeavy in devenv.nix fails the probe check, nothing run")
+        holder = subprocess.Popen(["flock", str(light), "sleep", "2"])
+        while subprocess.run(["flock", "-n", str(light), "true"], check=False).returncode == 0:
+            time.sleep(0.05)
+        ok, waited = pmc.run(pmc.Check("eval", "lenovo"), d)
+        holder.wait()
+        check(ok and 1.2 <= waited < 5, f"seeded: a held light lock is measured as the step's wait ({waited:.1f} s)")
+    finally:
+        os.environ["PATH"], pmc.LOCK, pmc.LIGHT = saved
 check(pmc.LIGHT.name == "light-work.lock" and "light-work.lock" in (HERE.parent / "devenv.nix").read_text(),
       "the light lock is the one the push hook's nix flake show takes")
 
 
-def lane(name: str, real: str, d: pathlib.Path) -> pathlib.Path:
-    """A slot's `name` wrapper (modules/workers/execution-pool.nix) as bash, its flock, nix and lock file stubbed."""
+def lane(name: str, real: str, d: pathlib.Path, exe: str = "${nix}") -> pathlib.Path:
+    """A slot's `name` wrapper (modules/workers/execution-pool.nix) as bash, its nix, record and lock files stubbed."""
     src = (HERE.parent / "modules/workers/execution-pool.nix").read_text()
     template = src.split("pkgs.writeShellScriptBin name ''\n", 1)[1].split("\n              ''\n", 1)[0]
     head = f'(lane "{name}" {real} \'\'\n'
     check(head in src, f"the module has a {name} lane")
     body = src.split(head, 1)[1].split("\n            '')\n", 1)[0] if head in src else ""
-    text = template.replace("${text}", body).replace("${real}", "${nix}")
-    for k, v in {"${pkgs.util-linux}/bin/flock": f"{d}/stub/flock", "/run/work-locks/light-work.lock": f"{d}/light", "/run/work-locks/scheduled-gate.lock": f"{d}/gate",
+    text = template.replace("${text}", body).replace("${real}", exe)
+    for k, v in {"${pkgs.util-linux}/bin/flock": "flock", "${lib.getExe record}": f"{d}/stub/record", "${spool}": f"{d}/spool", "/run/work-locks/light-work.lock": f"{d}/light", "/run/work-locks/scheduled-gate.lock": f"{d}/gate",
                  "${config.nix.package}/bin/nix-instantiate": f"{d}/stub/nix-instantiate",
                  "${config.nix.package}/bin/nix-build": f"{d}/stub/nix-build", "${pkgs.coreutils}/bin/": "", "${pkgs.bash}/bin/bash": "bash",
-                 "${nix}": f"{d}/stub/nix", "${name}": name, "''$": "$"}.items():
+                 "${nix}": f"{d}/stub/nix", "${devenv}": f"{d}/stub/devenv", "${gateWait}": "3", "${name}": name, "''$": "$"}.items():
         text = text.replace(k, v)
     out = d / name
     out.write_text("#!/usr/bin/env bash\n" + text + "\n")
@@ -209,24 +246,28 @@ with tempfile.TemporaryDirectory() as tmp:
     d = pathlib.Path(tmp)
     (d / "light").touch()
     (d / "stub").mkdir()
-    # the scheduled gate's lock is a real one, its holder this test; the light lock always free
-    (d / "stub/flock").write_text(f'#!/usr/bin/env bash\nfor a; do [ "$a" != {d}/gate ] || exec flock "$@"; done\n'
-                                  'while [ "${1#-}" != "$1" ] || [[ $1 =~ ^[0-9]+$ ]]; do shift; done\n'
-                                  'shift; IN_LOCK=locked exec "$@"\n')
-    (d / "stub/nix").write_text(f'#!/usr/bin/env bash\necho "$* ${{IN_LOCK:-free}}" >>{d}/log\n'
-                                '[ "$1" != eval ] || [[ $* == *fn.nix* ]] || echo /nix/store/x.drv^out\n')
+    # both locks real ones, their holder this test or the wrapper: a stub reports the light one locked when it cannot take
+    # it, and inherited when it got the wrapper's descriptor
+    (d / "stub/state").write_text(f'#!/usr/bin/env bash\nfor f in /proc/self/fd/*; do [ "$(readlink "$f")" != {d}/light ] || {{ echo inherited; exit; }}; done\n'
+                                  f'flock -n {d}/light true && echo free || echo locked\n')
+    (d / "stub/nix").write_text(f'#!/usr/bin/env bash\necho "$* $({d}/stub/state)" >>{d}/log\n'
+                                '[ "$1" != eval ] || [[ $* == *fn.nix* ]] || echo /nix/store/x.drv^out\nexit "${NIX_RC:-0}"\n')
     # nix-instantiate --add-root R: two roots, the second one's output bin, as the real one prints them
     (d / "stub/nix-instantiate").write_text(
-        f'#!/usr/bin/env bash\necho "instantiate $* ${{IN_LOCK:-free}}" >>{d}/log\n'
+        f'#!/usr/bin/env bash\necho "instantiate $* $({d}/stub/state)" >>{d}/log\n'
         '[ "$1" = --add-root ] || exit 0\nln -s /nix/store/x.drv "$2"; ln -s /nix/store/y.drv "$2-2"; echo "$2"; echo "$2-2!bin"\n')
-    (d / "stub/nix-build").write_text(f'#!/usr/bin/env bash\necho "nix-build $* ${{IN_LOCK:-free}}" >>{d}/log\n'
+    (d / "stub/nix-build").write_text(f'#!/usr/bin/env bash\necho "nix-build $* $({d}/stub/state)" >>{d}/log\n'
                                       'echo /nix/store/x-out\nexit "${NB_RC:-0}"\n')
-    for f in ("flock", "nix", "nix-instantiate", "nix-build"):
+    # the spool the host ships, whatever HOME the caller has
+    (d / "stub/record").write_text(f'#!/usr/bin/env bash\n[ "$PLATFORM_RECORD_SPOOL" = {d}/spool ] || exit 0\n'
+                                   f'echo "$PLATFORM_RECORD_SHIPPER $*" >>{d}/records\n')
+    for f in ("state", "nix", "nix-instantiate", "nix-build", "record"):
         (d / "stub" / f).chmod(0o755)
     wrappers = {"nix": lane("nix", "nix", d), "nix-instantiate": lane("nix-instantiate", '"${config.nix.package}/bin/nix-instantiate"', d),
                 "nix-build": lane("nix-build", '"${config.nix.package}/bin/nix-build"', d)}
     (d / "tmp").mkdir()
-    env = {k: v for k, v in os.environ.items() if k != "WORK_LOCKS_HELD"} | {"TMPDIR": str(d / "tmp")}
+    # a runner step's HOME is its attempt's, not the guest user's
+    env = {k: v for k, v in os.environ.items() if k != "WORK_LOCKS_HELD"} | {"TMPDIR": str(d / "tmp"), "HOME": str(d / "tmp")}
 
     def runs(*argv: str, exe: str = "nix", **extra: str) -> list[str]:
         (d / "log").write_text("")
@@ -302,6 +343,152 @@ with tempfile.TemporaryDirectory() as tmp:
     holder.wait()
     check(waited >= 1.2 and "waiting for the scheduled gate" in w.stderr and (d / "log").read_text().splitlines() == ["eval --raw .#x locked"],
           f"while the scheduled gate holds its lock a slot's evaluation waits it out, saying so ({waited:.1f} s, {w.stderr.strip()!r})")
+    rec = (d / "records").read_text().splitlines()[-1:]
+    check(rec and re.fullmatch(r"host lock lane=light class=nix-eval wait_seconds=[123] seconds=[01] rc=0", rec[0]) is not None,
+          f"its lock record counts the gate's wait as the hold's, the host shipping it ({rec})")
+    holder = subprocess.Popen(["flock", str(d / "gate"), "sleep", "6"])
+    while subprocess.run(["flock", "-n", str(d / "gate"), "true"], check=False).returncode == 0:
+        time.sleep(0.05)
+    (d / "log").write_text(""), (d / "records").write_text("")
+    w = subprocess.run([str(wrappers["nix"]), "eval", "--raw", ".#x"], env=env, capture_output=True, text=True, check=False)
+    holder.kill(), holder.wait()
+    rec = (d / "records").read_text().splitlines()
+    check(w.returncode == 75 and "still holds" in w.stderr and "after 3 s" in w.stderr and (d / "log").read_text() == ""
+          and len(rec) == 1 and re.fullmatch(r"host lock lane=light class=nix-eval wait_seconds=[345] seconds=[01] rc=75", rec[0]) is not None,
+          f"seeded: a gate held past the wait (gateWait, 3 s here): rc 75, nothing run, the wait recorded ({w.returncode}, {w.stderr.strip()!r}, {rec})")
+    (d / "gate").unlink()
+    ep = (HERE.parent / "modules/workers/execution-pool.nix").read_text()
+    gw = re.search(r"gateWait = toString \((\d+) \* 3600\);", ep)
+    to = re.search(r'TimeoutStartSec = "(\d+)h";', (HERE.parent / "modules/homelab/scheduled-gate.nix").read_text())
+    check(gw is not None and to is not None and gw.group(1) == to.group(1) and ep.count("${gateWait}") == 2,
+          f"a slot waits out the scheduled gate for as long as the gate's unit may run ({gw and gw.group(0)}, {to and to.group(0)})")
+
+    def recorded(*argv: str, **extra: str) -> tuple[int, list[str], list[str]]:
+        (d / "records").write_text("")
+        r = runs(*argv, **extra)
+        rc = subprocess.run([str(wrappers["nix"]), *argv], env=env | extra, check=False, stdout=subprocess.DEVNULL).returncode
+        return rc, r, (d / "records").read_text().splitlines()
+
+    rc, r, rec = recorded("eval", "--raw", ".#x")
+    check(rc == 0 and r == ["eval --raw .#x locked"] and len(rec) == 2
+          and all(re.fullmatch(r"host lock lane=light class=nix-eval wait_seconds=[01] seconds=[01] rc=0", x) for x in rec),
+          f"a free light lock: the command under it, never inheriting it, and one lock record per hold, shipped by the host ({r}, {rec})")
+    rc, r, rec = recorded("flake", "show", "--json")
+    check(re.fullmatch(r"host lock lane=light class=nix-flake-show wait_seconds=[01] seconds=[01] rc=0", rec[0] if rec else "") is not None,
+          f"the class names the subcommand ({rec})")
+    rc, r, rec = recorded("eval", ".#x", NIX_RC="3")
+    check(rc == 3 and re.fullmatch(r"host lock lane=light class=nix-eval wait_seconds=[01] seconds=[01] rc=3", rec[0] if rec else "") is not None,
+          f"the command's exit status is the wrapper's and its record's ({rc}, {rec})")
+    rc, r, rec = recorded("build", "--no-link", ".#a")
+    check(rc == 0 and re.fullmatch(r"host lock lane=light class=nix-build-eval wait_seconds=[01] seconds=[01] rc=0", rec[0] if rec else "") is not None
+          and r[-1] == "build --no-link /nix/store/x.drv^out free",
+          f"nix build: its evaluation's hold recorded, the record kept out of the drvs it picked ({r}, {rec})")
+    holder = subprocess.Popen(["flock", str(d / "light"), "sleep", "2"])
+    while subprocess.run(["flock", "-n", str(d / "light"), "true"], check=False).returncode == 0:
+        time.sleep(0.05)
+    (d / "records").write_text("")
+    start = time.monotonic()
+    w = subprocess.run([str(wrappers["nix-instantiate"]), "-A", "x", "default.nix"], env=env, capture_output=True, text=True, check=False)
+    waited = time.monotonic() - start
+    holder.wait()
+    rec = (d / "records").read_text().splitlines()
+    check(w.returncode == 0 and waited >= 1.2 and len(rec) == 1
+          and re.fullmatch(r"host lock lane=light class=nix-instantiate wait_seconds=[123] seconds=[01] rc=0", rec[0]) is not None,
+          f"seeded: a held light lock is waited for and recorded as the wait, not the hold ({waited:.1f} s, {rec})")
+
+    # devenv's warm-up: the stub writes .devenv/input-paths.txt as devenv does, the files its evaluation read, and its
+    # cache db with the env var names it read (eval_env_input), unless one is there; EDIT changes a listed file during it
+    co = d / "checkout"
+    (co / "sub").mkdir(parents=True)
+    for f in ("devenv.nix", "devenv.lock", "devenv.yaml", "imported.nix"):
+        (co / f).write_text("v1\n")
+    reads = [co / f for f in ("devenv.nix", "devenv.lock", "devenv.yaml", "devenv.local.nix", "imported.nix")]
+    db = co / ".devenv/nix-eval-cache.db"
+    # the db as the stub sqlite3 reads it: the names of the env vars the evaluation read, one a line
+    mkdb = "MY_EVAL_VAR\n"
+    (d / "stub/names").write_text(mkdb)
+    (d / "stub/devenv").write_text(
+        f'#!/usr/bin/env bash\necho "devenv $* $({d}/stub/state)" >>{d}/log\n'
+        f'[ "$*" = "shell -- true" ] || exit 0\nmkdir -p {co}/.devenv\n'
+        f"printf '%s\\n' {' '.join(map(str, reads))} >{co}/.devenv/input-paths.txt\n"
+        f'[ -e {db} ] || cp {d}/stub/names {db}\n'
+        f'[ -z "${{EDIT:-}}" ] || echo edited >>{co}/imported.nix\n'
+        'exit "${WARM_RC:-0}"\n')
+    # sqlite3 -readonly DB QUERY: the names, as the CLI prints a one-column result (the query on a real db: acer, PR body)
+    (d / "stub/sqlite3").write_text('#!/usr/bin/env bash\n[ "$1 $3" = "-readonly SELECT DISTINCT name FROM eval_env_input" ] && cat "$2"\n')
+    for f in ("devenv", "sqlite3"):
+        (d / "stub" / f).chmod(0o755)
+    wrappers["devenv"] = lane("devenv", "devenv", d, f"{d}/stub/devenv")
+    text = wrappers["devenv"].read_text()
+    check("${pkgs.sqlite}/bin/sqlite3" in text, "the devenv lane reads devenv's db with sqlite3")
+    wrappers["devenv"].write_text(text.replace("${pkgs.sqlite}/bin/sqlite3", f"{d}/stub/sqlite3"))
+
+    def entered(cwd: pathlib.Path = co, **extra: str) -> tuple[list[str], bool]:
+        (d / "log").write_text("")
+        subprocess.run([str(wrappers["devenv"]), "shell", "--", "x"], cwd=cwd, env=env | extra, check=False, stdout=subprocess.DEVNULL)
+        return (d / "log").read_text().splitlines(), (co / ".devenv/light-warm").exists()
+
+    WARM, RUN = "devenv shell -- true locked", "devenv shell -- x free"
+    r, stamped = entered()
+    check(r == [WARM, RUN] and not stamped,
+          f"an unstamped checkout with no input list: the warm-up under the light lock, then the shell outside it; no key "
+          f"before it, so no stamp ({r})")
+    r, stamped = entered()
+    check(r == [WARM, RUN] and stamped, f"the next call: the same key before and after its warm-up, so a stamp ({r})")
+    r, _ = entered()
+    check(r == [RUN], f"a stamped checkout: no warm-up, no light hold ({r})")
+    r, _ = entered(co / "sub")
+    check(r == [RUN], f"from a subdirectory: devenv's root found, its stamp read ({r})")
+    for what, act in (("a changed devenv.nix", lambda: (co / "devenv.nix").write_text("v2\n")),
+                      ("a changed file devenv.nix imports (its input list)", lambda: (co / "imported.nix").write_text("v2\n")),
+                      ("a local override created where none was", lambda: (co / "devenv.local.nix").write_text("{ }\n"))):
+        act()
+        r, _ = entered()
+        r2, _ = entered()
+        check(r == [WARM, RUN] and r2 == [RUN], f"seeded: {what} warms up again, and is stamped ({r}, {r2})")
+    for what, extra in (("a HOME other than the last evaluation's", {"HOME": str(d)}),
+                        ("an env var devenv's db says it read (MY_EVAL_VAR)", {"MY_EVAL_VAR": "1"}),
+                        ("NIXPKGS_ALLOW_UNFREE, one this repo's cache holds", {"NIXPKGS_ALLOW_UNFREE": "1"})):
+        r, _ = entered(**extra)
+        r2, _ = entered(**extra)
+        r3, _ = entered()
+        check(r == [WARM, RUN] and r2 == [RUN] and r3 == [WARM, RUN], f"seeded: {what} warms up, and back again ({r}, {r2}, {r3})")
+    entered()
+    r, _ = entered(OTHER_VAR="1")
+    check(r == [RUN], f"an env var devenv did not read keys nothing ({r})")
+    fresh = co / ".devenv/new.db"
+    fresh.write_text(mkdb)
+    fresh.replace(db)
+    r, _ = entered()
+    check(r == [WARM, RUN], f"seeded: a recreated cache db (another inode) warms up again ({r})")
+    entered()
+    db.unlink()
+    r, stamped = entered()
+    check(r == [WARM, RUN], f"seeded: a deleted cache db warms up again ({r})")
+    entered()
+    (co / ".devenv/light-warm").unlink()
+    r, stamped = entered(EDIT="1")
+    check(r == [WARM, RUN] and not stamped, f"seeded: a listed file changed during the warm-up: no stamp ({r})")
+    r, stamped = entered()
+    check(r == [WARM, RUN] and stamped, f"so the next call warms up again, and stamps ({r})")
+    (co / "devenv.lock").write_text("v3\n")
+    (co / ".devenv/light-warm").unlink()
+    r, stamped = entered(WARM_RC="1")
+    check(r == [WARM, RUN] and not stamped, f"seeded: a failed warm-up writes no stamp ({r})")
+    r, stamped = entered()
+    check(r == [WARM, RUN] and stamped, f"so the next call warms up again, and stamps ({r})")
+    (co / ".devenv/input-paths.txt").unlink()
+    r, _ = entered()
+    check(r == [WARM, RUN], f"seeded: no input list (a .devenv devenv never wrote) warms up ({r})")
+    entered()
+    (d / "records").write_text("")
+    r, _ = entered()
+    check(r == [RUN] and (d / "records").read_text() == "", f"a skipped warm-up writes no lock record ({r})")
+    t0 = time.monotonic()
+    for _ in range(20):
+        subprocess.run([str(wrappers["devenv"]), "shell", "--", "x"], cwd=co, env=env, check=False, stdout=subprocess.DEVNULL)
+    per = (time.monotonic() - t0) / 20 * 1000
+    print(f"a stamped devenv call through the lane: {per:.0f} ms (sqlite3 stubbed)", flush=True)
 
 # seeded: two branches that each evaluate merge into a tree whose flake show fails (#793 and #796, a duplicate definition)
 with tempfile.TemporaryDirectory() as tmp:
@@ -332,10 +519,11 @@ with tempfile.TemporaryDirectory() as tmp:
     merge = subprocess.run([*g, "commit-tree", "-p", base, "-p", head, "-m", "merge", moved],
                            check=True, capture_output=True, text=True).stdout.strip()
     subprocess.run([*g, "reset", "--quiet", "--hard", head], check=True)
-    saved = (os.getcwd(), os.environ["PATH"], pmc.RECORD)
+    saved = (os.getcwd(), os.environ["PATH"], pmc.RECORD, pmc.LOCK, pmc.LIGHT)
     os.chdir(repo)
     os.environ["PATH"] = f"{d / 'bin'}:{os.environ['PATH']}"
-    pmc.RECORD = d / "record.py"
+    pmc.RECORD, pmc.LOCK, pmc.LIGHT = d / "record.py", d / "heavy", d / "light"
+    pmc.LOCK.touch(), pmc.LIGHT.touch()
     try:
         results = {}
         for rc in ("0", "1", "pushed", "moved"):
@@ -346,11 +534,24 @@ with tempfile.TemporaryDirectory() as tmp:
                 (d / f).write_text("")
             results[rc] = (pmc.check_tree(repo, "b", head, base, merge if rc == "moved" else head),
                            (d / "nix.log").read_text(), (d / "record.log").read_text())
+        # a step that took 32 s, 30 of them waiting for its locks: its record's seconds are its run alone
+        run_, time_ = pmc.run, pmc.time
+        clock = iter(range(0, 1000, 32))
+        pmc.run = lambda c, tree: (True, 30.0)
+        pmc.time = types.SimpleNamespace(monotonic=lambda: next(clock))
+        (d / "record.log").write_text("")
+        pmc.check_tree(repo, "b", head, base, merge)
+        waited = (d / "record.log").read_text()
+        pmc.run, pmc.time = run_, time_
     finally:
         os.chdir(saved[0])
         os.environ["PATH"] = saved[1]
         os.environ.pop("SHOW_RC", None)
-        pmc.RECORD = saved[2]
+        pmc.RECORD, pmc.LOCK, pmc.LIGHT = saved[2:]
+    steps = [l for l in waited.splitlines() if "result=pass" in l]
+    check(steps != [] and all(re.search(r" seconds=2 wait_seconds=30 ", l) for l in steps)
+          and all(" wait_seconds=0 " in l for l in waited.splitlines() if "result=skipped" in l),
+          f"a step's record has its lock wait apart from its run, a skipped one's 0 ({waited})")
     ok, bad = results["0"], results["1"]
 
     def shown(r: tuple[int, str, str], result: str) -> bool:
