@@ -465,13 +465,18 @@ def check_github_forward():
           f"msi's slots forward GitHub to acer's {l.get('url')}, and msi's proxy loads no GitHub token ({slots}, {msi.get('creds')})")
     site = next((b for b in acer.get("caddy", "").split("\nhttp://:")[1:] if b.startswith(f"{l.get('port')} {{")), "")
     repos = "(?i:" + "|".join(r.replace(".", "\\.") for r in acer.get("repos", [])) + ")"
-    check(f"@outside not remote_ip {acer.get('msiAddress')}\n" in site and f"path_regexp ^/{repos}(\\.git)?/" in site and "/graphql" not in site,
-          f"acer serves :{l.get('port')} to msi's address alone, for its own slots' repositories, no GraphQL ({site[:300]!r})")
-    # the site as a socket's would be: its first two lines a site header and a bind, as site_wrong drops them
+    graphql = "@graphql {\n  path /graphql\n  method POST\n}\nhandle @graphql {\n  reverse_proxy unix//run/exec-pool-push-filter/filter.sock {\n    header_up X-Pool-Slot .fleet\n"
+    check(f"@outside not remote_ip {acer.get('msiAddress')}\n" in site and f"path_regexp ^/{repos}(\\.git)?/" in site
+          and re.sub(r"\n\s*", "\n", site).count("/graphql") == 1 and re.sub(r"\n\s*", "\n", graphql).strip() in re.sub(r"\n\s*", "\n", site),
+          f"acer serves :{l.get('port')} to msi's address alone, for its own slots' repositories, GraphQL only through the filter ({site[:300]!r})")
+    # the site as a socket's would be: its first two lines a site header and a bind, as site_wrong drops them; the
+    # filter's socket a temp path nothing serves, so a GraphQL POST is a 502, never GitHub's
     body = "http:// {\n  bind x\n" + site.split("\n", 1)[1] if site else ""
+    body = body.replace("unix//run/exec-pool-push-filter/filter.sock", "unix//nonexistent/filter.sock")
     shut = site_wrong(body, r"https://(api\.)?github\.com", [("GET", "/sammasak/nixos-config/info/refs?service=git-receive-pack", False)])
     opened = site_wrong(body.replace(f"remote_ip {acer.get('msiAddress')}", "remote_ip 127.0.0.1").replace(repos, "(?i:o/r\\.s)"),
-                        r"https://(api\.)?github\.com", GITHUB_CASES)
+                        r"https://(api\.)?github\.com",
+                        [c for c in GITHUB_CASES if c[1] != "/graphql"] + [("POST", "/graphql", 502), ("GET", "/graphql", False)])
     check(shut == [] and opened == [], f"acer's listener refuses any other address, and from msi's lets through what a slot's own site does ({'no caddy on PATH' if shut is None else shut + (opened or [])})")
     check_push_filter(acer, msi, l.get("url"))
 
@@ -486,10 +491,12 @@ PULLS = ["/repos/sammasak/nixos-config/pulls", "/REPOS/sammasak/nixos-config/PUL
 def check_push_filter(acer, msi, forward):
     f = acer.get("filter", {})
     slots = f.get("slots", {})
-    check(slots and all(v == f"/run/exec-pool-runner/{n}/manifest.json" for n, v in slots.items())
+    fleet = slots.pop(".fleet", None)
+    check(slots and all(v == {"manifest": f"/run/exec-pool-runner/{n}/manifest.json", "repos": acer.get("repos")} for n, v in slots.items())
+          and fleet == {"manifest": None, "repos": acer.get("repos")}
           and f.get("User") == acer.get("egressUser") and f.get("PrivateNetwork") is True and f.get("RestrictAddressFamilies") == ["AF_UNIX"]
           and msi.get("filtered") is True,
-          f"acer's filter reads each slot's runner manifest, as the proxy's user with no network; msi runs one too ({f})")
+          f"acer's filter reads each slot's runner manifest and repositories, and the fleet's with none, as the proxy's user with no network; msi runs one too ({f})")
     d = "/run/exec-pool-push-filter-metrics"
     check(f.get("textfile") == f"{d}/push-filter.prom" and f.get("ReadWritePaths") == [f"-{d}"]
           and f"--collector.textfile.directory={d}" in f.get("exporter", []),
@@ -521,7 +528,7 @@ def filtered_slot(what, site, upstream_re):
         check(set(re.findall(r"unix/(\S+)", local.split("\n", 2)[2])) == {f"{t}/filter.sock"},
               f"{what} site under test proxies to no socket outside its temp dir")
         try:
-            wrong = site_wrong(local, upstream_re, [("POST", p, 502) for p in RECEIVE + PULLS]
+            wrong = site_wrong(local, upstream_re, [("POST", p, 502) for p in RECEIVE + PULLS + ["/graphql"]]
                                + [("GET", "/sammasak/nixos-config/info/refs?service=git-receive-pack", True),
                                   ("POST", "/repos/sammasak/nixos-config/issues/1/comments", True),
                                   ("PATCH", "/repos/sammasak/nixos-config/pulls/12", True),
@@ -529,9 +536,9 @@ def filtered_slot(what, site, upstream_re):
                                f"http://127.0.0.1:{upstream.server_port}")
         finally:
             upstream.shutdown()
-    check(wrong == [] and not any("receive-pack" in p.split("?")[0] or p.lower().rstrip("/").endswith("/pulls")
+    check(wrong == [] and not any("receive-pack" in p.split("?")[0] or p.lower().rstrip("/").endswith("/pulls") or p.startswith("/graphql")
                                   for p, _ in GitHubRecorder.seen),
-          f"{what} site lets no receive-pack or pull request creation past the filter, refuses another repository's, and still passes the ref listing and other API calls ({'no caddy on PATH' if wrong is None else wrong})")
+          f"{what} site lets no receive-pack, pull request creation or GraphQL past the filter, refuses another repository's, and still passes the ref listing and other API calls ({'no caddy on PATH' if wrong is None else wrong})")
 
 
 def push_site(host, push, upstream_re, signed):
@@ -546,11 +553,12 @@ def push_site(host, push, upstream_re, signed):
             ("POST", "/repos/x/pub/pulls", False), ("GET", "/repos/sammasak/skills/pulls", False),
             ("POST", "/repos/sammasak/skills/issues/1/comments", False), ("POST", "/repos/sammasak/skills/pulls/1/comments", False),
             ("POST", "/sammasak/skills/../x/git-receive-pack", False), ("POST", "/sammasak%2fskills/git-receive-pack", False),
+            ("POST", "/graphql", True), ("GET", "/graphql", False), ("POST", "/graphql/x", False),
         ], f"http://127.0.0.1:{upstream.server_port}") if push else ["no push site"]
     finally:
         upstream.shutdown()
     check(wrong == [] and GitHubRecorder.seen and all(bool(a) == signed for _, a in GitHubRecorder.seen),
-          f"{host}'s push site {'signs' if signed else 'forwards, unsigned,'} a listed repository's receive-pack and pull request creation alone ({'no caddy on PATH' if wrong is None else wrong})")
+          f"{host}'s push site {'signs' if signed else 'forwards, unsigned,'} a listed repository's receive-pack and pull request creation, and GraphQL, alone ({'no caddy on PATH' if wrong is None else wrong})")
 
 
 def check_github_proxy(site):
