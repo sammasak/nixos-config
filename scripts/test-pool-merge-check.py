@@ -10,9 +10,10 @@ apart from its run (seeded: a held light lock). A slot's nix wrapper, from the m
 stubbed: build --expr, --file and flake attributes evaluate under light and build outside it, nix-build instantiates
 under light and builds outside it, and flake check runs under light; the command never inherits the lock, and each hold
 is one lock record of its wait apart from its hold, in the spool the host ships whatever the caller's HOME (seeded: a
-held light lock). A slot's devenv warms its shell up under light only while no stamp matches the files its last
-evaluation read (seeded: an unstamped checkout, a changed devenv.nix or imported file, a failed warm-up). A slot's cargo
-has no lane and CARGO_BUILD_JOBS from its reserve."""
+held light lock). A slot's devenv warms its shell up under light only while no stamp matches what its cache keys on: the
+files its last evaluation read, the env vars it read and the db itself, the same before and after the warm-up (seeded:
+an unstamped checkout, a changed devenv.nix or imported file, a changed HOME or read env var, a recreated or deleted db,
+a file edited during the warm-up, a failed warm-up). A slot's cargo has no lane and CARGO_BUILD_JOBS from its reserve."""
 
 import importlib.util
 import os
