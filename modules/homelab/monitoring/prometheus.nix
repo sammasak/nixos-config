@@ -80,6 +80,28 @@ let
       }
     ];
   };
+  me = config.networking.hostName;
+  # every inside name black-pi may reach, ntfy's too, as adguardhome.nix answers them. Left out: a udp port, a host
+  # that sleeps (off by design; HostExpectedOff covers it), and a listener whose firewall admits other hosts only
+  insideNames = lib.filterAttrs (
+    _: e:
+    e.proto == "tcp"
+    && !hosts.${e.host}.sleeps
+    && (
+      e.host == me
+      || lib.elem me e.from
+      || lib.any (
+        p:
+        lib.elem p.host [
+          null
+          e.host
+        ]
+        && p.port == e.port
+        && p.proto == e.proto
+        && p.interface == null
+      ) config.sam.fleet.public
+    )
+  ) (config.sam.fleet.listeners // { inherit (config.sam.fleet) ntfy; });
   https = codes: {
     prober = "http";
     timeout = "10s";
@@ -132,6 +154,12 @@ in
               preferred_ip_protocol = "ip4";
               valid_rcodes = [ "NXDOMAIN" ];
             };
+          };
+          # through the host's resolver, lenovo's AdGuard, as an agent asks for the name
+          tcp_inside = {
+            prober = "tcp";
+            timeout = "5s";
+            tcp.preferred_ip_protocol = "ip4";
           };
           # otlp: Alloy refuses a request without a bearer token
           https_401_405 = https [
@@ -271,6 +299,15 @@ in
             labels.__param_module = "dns_inside_nxdomain";
           }
         ])
+        (probeJob "inside-names" (
+          lib.mapAttrsToList (name: e: {
+            targets = [ "${e.dnsName}:${toString e.port}" ];
+            labels = {
+              inherit name;
+              __param_module = "tcp_inside";
+            };
+          }) insideNames
+        ))
       ];
     };
   };

@@ -5,6 +5,7 @@
 # Each alert's query (docs/alert-runbooks.md) is a copy of its expr, TargetDown's aside: change both.
 # TargetDown leaves out the targets of a node off as planned (homelab:node:off_as_planned, homelab.yaml), which
 # upstream's does not: a sleeping host powered off at night is not a target down.
+# InsideNameDown is this repo's: black-pi's inside-names probe (prometheus.nix), one per listener it may reach.
 groups:
   - name: general.rules
     rules:
@@ -18,6 +19,17 @@ groups:
         for: 10m
         labels:
           severity: warning
+      - alert: InsideNameDown
+        annotations:
+          description: '{{ $labels.name }}.fleet.sammasak.dev, listener {{ $labels.name }}''s inside name, has not resolved or taken a TCP connection on its port from black-pi for 15 minutes. From a fleet host, dig +short {{ $labels.name }}.fleet.sammasak.dev asks lenovo''s AdGuard; http://prometheus.fleet.sammasak.dev:9090/targets?search=inside-names shows the probe''s error, and modules/core/fleet.nix names the listener''s host and port.'
+          query: max by (name) (probe_success{job="inside-names"}) == 0
+          runbook_url: https://github.com/sammasak/nixos-config/blob/main/docs/monitoring.md#inside-and-outside-names
+          summary: An inside fleet name does not answer.
+        expr: max by (name) (probe_success{job="inside-names"}) == 0
+        for: 15m
+        labels:
+          severity: warning
+          team: homelab
       - alert: Watchdog
         annotations:
           description: 'This is an alert meant to ensure that the entire alerting pipeline is functional.
