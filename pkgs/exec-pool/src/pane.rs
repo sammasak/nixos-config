@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 
 use serde_json::{Map, Value, json};
 
+use crate::task_result::{SUBAGENT_CALLS_MAX, SubagentCall};
 use crate::workspace::{SESSION_HOME, SESSION_WORK};
 
 /// The longest input prompted as it is; a longer one goes to [`INPUT_FILE`]. A paste is cut near 4000 characters.
@@ -272,10 +273,12 @@ pub fn count(transcript: &str) -> usize {
 ///
 /// The result is the last assistant message's text; it is an error unless the turn `ended` settled with one. Tokens
 /// are the assistant messages' usage, each message once; the cost is what Claude's `cost-state` grew by, when one
-/// was written, and unknown when it did not grow over a turn that used tokens.
+/// was written, and unknown when it did not grow over a turn that used tokens. `None`: the runner read no transcript,
+/// so its subagent calls are unknown (null), not none.
 #[must_use]
-pub fn verdict(transcript: &str, from: usize, ended: bool) -> (String, bool) {
+pub fn verdict(transcript: Option<&str>, from: usize, ended: bool) -> (String, bool) {
     let lines: Vec<Value> = transcript
+        .unwrap_or_default()
         .lines()
         .filter_map(|l| serde_json::from_str(l).ok())
         .collect();
@@ -308,6 +311,7 @@ pub fn verdict(transcript: &str, from: usize, ended: bool) -> (String, bool) {
             usage.insert(id, u);
         }
     }
+    let (calls, count) = transcript.map(|_| subagent_calls(&assistant)).unzip();
     let sum = |k: &str| {
         usage
             .values()
@@ -357,8 +361,44 @@ pub fn verdict(transcript: &str, from: usize, ended: bool) -> (String, bool) {
             "cache_creation_input_tokens": sum("cache_creation_input_tokens"),
         },
         "total_cost_usd": cost,
+        "subagent_calls": calls,
+        "subagent_call_count": count,
     });
     (line.to_string(), ran)
+}
+
+/// The Agent (formerly Task) tool calls in `assistant`, each tool use once: the first [`SUBAGENT_CALLS_MAX`] as their
+/// short description and subagent type, never their prompt, and how many there were.
+fn subagent_calls(assistant: &[&Value]) -> (Vec<SubagentCall>, usize) {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut calls = Vec::new();
+    for (i, v) in assistant.iter().enumerate() {
+        let Some(parts) = v.pointer("/message/content").and_then(Value::as_array) else {
+            continue;
+        };
+        for (j, c) in parts.iter().enumerate() {
+            let tool = c.get("name").and_then(Value::as_str);
+            if c.get("type").and_then(Value::as_str) != Some("tool_use")
+                || !matches!(tool, Some("Agent" | "Task"))
+            {
+                continue;
+            }
+            let id = c
+                .get("id")
+                .and_then(Value::as_str)
+                .map_or_else(|| format!("{i}.{j}"), str::to_owned);
+            if seen.insert(id) {
+                let field = |k: &str| c.pointer(&format!("/input/{k}")).and_then(Value::as_str);
+                calls.push(SubagentCall::new(
+                    field("description"),
+                    field("subagent_type"),
+                ));
+            }
+        }
+    }
+    let count = calls.len();
+    calls.truncate(SUBAGENT_CALLS_MAX);
+    (calls, count)
 }
 
 /// The session HOME's `~/.claude.json` with the startup dialogs a named worker's home has accepted.
@@ -648,7 +688,7 @@ mod tests {
 not json
 {"type":"cost-state","totalCostUSD":0.75,"startTime":2}"#,
         );
-        let (v, ran) = verdict(&t, 3, true);
+        let (v, ran) = verdict(Some(&t), 3, true);
         let v = line(&v);
         assert!(ran);
         assert_eq!(v["is_error"], false);
@@ -665,15 +705,73 @@ not json
     }
 
     #[test]
+    fn the_turn_s_subagent_calls_are_named_without_their_prompts() {
+        let t = transcript(
+            r#"{"type":"user","message":{"role":"user","content":"now"}}
+{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"t1","name":"Agent","input":{"description":"Review PR 9","subagent_type":"code-reviewer","prompt":"SECRET-PROMPT-1"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"SECRET-OUTPUT"}]}}
+{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"t1","name":"Agent","input":{"description":"Review PR 9","subagent_type":"code-reviewer","prompt":"SECRET-PROMPT-1"}}]}}
+{"type":"assistant","message":{"id":"m2","content":[{"type":"tool_use","id":"t2","name":"Bash","input":{"command":"ls","description":"List files"}}]}}
+{"type":"assistant","message":{"id":"m3","content":[{"type":"tool_use","id":"t3","name":"Task","input":{"description":"Find callers","prompt":"SECRET-PROMPT-2"}},{"type":"text","text":"done"}]}}"#,
+        );
+        let (v, _) = verdict(Some(&t), 3, true);
+        assert!(!v.contains("SECRET"), "{v}");
+        let r = crate::task_result::TaskResult::of(crate::Agent::Claude, None, &format!("{v}\n"));
+        assert_eq!(r.subagent_call_count, Some(2), "{v}");
+        assert_eq!(
+            r.subagent_calls.unwrap(),
+            [
+                SubagentCall::new(Some("Review PR 9"), Some("code-reviewer")),
+                SubagentCall::new(Some("Find callers"), None),
+            ]
+        );
+        let none = line(
+            &verdict(
+                Some(&transcript(r#"{"type":"user","message":{}}"#)),
+                3,
+                true,
+            )
+            .0,
+        );
+        assert_eq!(
+            (
+                none["subagent_calls"].clone(),
+                none["subagent_call_count"].clone()
+            ),
+            (json!([]), json!(0))
+        );
+        // a transcript the runner could not read tells nothing, not that no subagent was called
+        let unread = line(&verdict(None, 0, false).0);
+        assert!(unread["subagent_calls"].is_null() && unread["subagent_call_count"].is_null());
+        let many = (0..=SUBAGENT_CALLS_MAX)
+            .map(|i| format!(r#"{{"type":"assistant","message":{{"id":"m{i}","content":[{{"type":"tool_use","id":"t{i}","name":"Agent","input":{{"description":"d{i}"}}}}]}}}}"#))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let many = line(&verdict(Some(&transcript(&many)), 3, true).0);
+        assert_eq!(many["subagent_call_count"], SUBAGENT_CALLS_MAX + 1);
+        assert_eq!(
+            many["subagent_calls"].as_array().map(Vec::len),
+            Some(SUBAGENT_CALLS_MAX)
+        );
+    }
+
+    #[test]
     fn a_resumed_process_s_carried_cost_is_not_counted_again() {
         let t = transcript(
             r#"{"type":"user","message":{"role":"user","content":"now"}}
 {"type":"assistant","message":{"id":"m1","content":[{"type":"text","text":"done"}]}}
 {"type":"cost-state","totalCostUSD":0.75,"startTime":1}"#,
         );
-        let v = line(&verdict(&t, 3, true).0);
+        let v = line(&verdict(Some(&t), 3, true).0);
         assert_eq!(v["total_cost_usd"], 0.25);
-        let none = line(&verdict(&transcript(r#"{"type":"user","message":{}}"#), 3, true).0);
+        let none = line(
+            &verdict(
+                Some(&transcript(r#"{"type":"user","message":{}}"#)),
+                3,
+                true,
+            )
+            .0,
+        );
         assert_eq!(none["total_cost_usd"], Value::Null);
     }
 
@@ -681,20 +779,20 @@ not json
     fn a_turn_that_used_tokens_but_wrote_no_fresh_cost_is_unpriced_not_free() {
         let used = r#"{"type":"user","message":{"role":"user","content":"now"}}
 {"type":"assistant","message":{"id":"m1","content":[{"type":"text","text":"done"}],"usage":{"output_tokens":9,"cache_read_input_tokens":800}}}"#;
-        let none = line(&verdict(&transcript(used), 3, true).0);
+        let none = line(&verdict(Some(&transcript(used)), 3, true).0);
         assert_eq!(none["total_cost_usd"], Value::Null);
         // a resumed process that only restored its predecessor's state
         let restored =
             format!("{used}\n{{\"type\":\"cost-state\",\"totalCostUSD\":0.5,\"startTime\":1}}");
-        let v = line(&verdict(&transcript(&restored), 3, true).0);
+        let v = line(&verdict(Some(&transcript(&restored)), 3, true).0);
         assert_eq!(v["total_cost_usd"], Value::Null);
         let shrunk =
             format!("{used}\n{{\"type\":\"cost-state\",\"totalCostUSD\":0.3,\"startTime\":1}}");
-        let v = line(&verdict(&transcript(&shrunk), 3, true).0);
+        let v = line(&verdict(Some(&transcript(&shrunk)), 3, true).0);
         assert_eq!(v["total_cost_usd"], Value::Null);
         let grew =
             format!("{used}\n{{\"type\":\"cost-state\",\"totalCostUSD\":0.9,\"startTime\":1}}");
-        let v = line(&verdict(&transcript(&grew), 3, true).0);
+        let v = line(&verdict(Some(&transcript(&grew)), 3, true).0);
         assert!((v["total_cost_usd"].as_f64().unwrap() - 0.4).abs() < 1e-9);
         // no tokens and nothing grew reads 0 as before
         let idle = transcript(
@@ -702,7 +800,10 @@ not json
 {"type":"assistant","message":{"id":"m1","content":[{"type":"text","text":"done"}]}}
 {"type":"cost-state","totalCostUSD":0.5,"startTime":1}"#,
         );
-        assert_eq!(line(&verdict(&idle, 3, true).0)["total_cost_usd"], 0.0);
+        assert_eq!(
+            line(&verdict(Some(&idle), 3, true).0)["total_cost_usd"],
+            0.0
+        );
     }
 
     #[test]
@@ -711,12 +812,12 @@ not json
             r#"{"type":"user","message":{"role":"user","content":"now"}}
 {"type":"assistant","message":{"id":"m1","content":[{"type":"text","text":"half"}]}}"#,
         );
-        let (v, ran) = verdict(&said, 3, false);
+        let (v, ran) = verdict(Some(&said), 3, false);
         assert!(ran);
         assert_eq!(line(&v)["is_error"], true);
         assert_eq!(line(&v)["result"], "half");
         let silent = transcript(r#"{"type":"user","message":{"role":"user","content":"now"}}"#);
-        let v = line(&verdict(&silent, 3, true).0);
+        let v = line(&verdict(Some(&silent), 3, true).0);
         assert_eq!(v["is_error"], true);
         // the old turn's message is not this one's
         assert_ne!(v["result"], "old answer");
@@ -724,9 +825,9 @@ not json
 
     #[test]
     fn a_prompt_that_never_reached_the_agent_is_told_apart() {
-        let (_, ran) = verdict(&transcript(r#"{"type":"permission-mode"}"#), 3, true);
+        let (_, ran) = verdict(Some(&transcript(r#"{"type":"permission-mode"}"#)), 3, true);
         assert!(!ran);
-        let (_, ran) = verdict("", 0, false);
+        let (_, ran) = verdict(None, 0, false);
         assert!(!ran);
     }
 

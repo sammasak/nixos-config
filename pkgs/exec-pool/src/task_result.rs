@@ -32,6 +32,46 @@ pub struct TaskResult {
     /// tell.
     #[serde(default)]
     pub handed_back: Option<bool>,
+    /// The subagents the turn's agent called, read from its transcript ([`crate::pane::verdict`]): at most
+    /// [`SUBAGENT_CALLS_MAX`], no prompt or output. `None` when the runner read no transcript
+    /// (a one-shot or headless run, or one it could not read) or the verdict's fields had another shape.
+    #[serde(default)]
+    pub subagent_calls: Option<Vec<SubagentCall>>,
+    /// How many there were, `subagent_calls` bounded or not.
+    #[serde(default)]
+    pub subagent_call_count: Option<u32>,
+}
+
+/// The most subagent calls a result lists; its count goes on past it.
+pub const SUBAGENT_CALLS_MAX: usize = 100;
+/// The most bytes of a call's description or subagent type a result keeps.
+const SUBAGENT_FIELD_BYTES: usize = 200;
+
+/// One Agent tool call: its short description and the subagent type it named, as the agent wrote them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubagentCall {
+    pub description: Option<String>,
+    pub subagent_type: Option<String>,
+}
+
+impl SubagentCall {
+    /// A call of `description` and `subagent_type`, each cut to [`SUBAGENT_FIELD_BYTES`] at a character boundary,
+    /// with no NUL.
+    #[must_use]
+    pub fn new(description: Option<&str>, subagent_type: Option<&str>) -> Self {
+        let cut = |s: &str| {
+            let s = s.replace('\0', "");
+            let at = (0..=SUBAGENT_FIELD_BYTES.min(s.len()))
+                .rev()
+                .find(|&i| s.is_char_boundary(i))
+                .unwrap_or(0);
+            s.get(..at).unwrap_or_default().to_owned()
+        };
+        Self {
+            description: description.map(cut),
+            subagent_type: subagent_type.map(cut),
+        }
+    }
 }
 
 /// A run's tokens and cost as Claude reports them; no content.
@@ -52,6 +92,11 @@ struct ClaudeText {
     usage: Option<ClaudeUsage>,
     #[serde(default)]
     total_cost_usd: Option<f64>,
+    /// Values, not types: a result line whose fields are not the verdict's shape loses them alone, not its text.
+    #[serde(default)]
+    subagent_calls: Option<serde_json::Value>,
+    #[serde(default)]
+    subagent_call_count: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -79,6 +124,8 @@ impl TaskResult {
             head: None,
             usage: None,
             handed_back: None,
+            subagent_calls: None,
+            subagent_call_count: None,
         }
     }
 
@@ -93,7 +140,7 @@ impl TaskResult {
         // a run stopped for a cancel has no verdict, whatever its exit
         let ran = result.filter(|r| r.stage == Stage::Run && !r.cancelled);
         let exit_code = result.and_then(|r| r.exit_code);
-        let claude = (agent == Agent::Claude)
+        let mut claude = (agent == Agent::Claude)
             .then(|| stdout.lines().rev().find(|l| !l.trim().is_empty()))
             .flatten()
             .and_then(|l| serde_json::from_str::<ClaudeText>(l).ok());
@@ -105,6 +152,18 @@ impl TaskResult {
                 cache_creation_tokens: u.cache_creation_input_tokens,
                 cost_usd: c.total_cost_usd,
             })
+        });
+        let (subagent_calls, subagent_call_count) = claude.as_mut().map_or((None, None), |c| {
+            let calls = c
+                .subagent_calls
+                .take()
+                .and_then(|v| serde_json::from_value(v).ok());
+            let count = c
+                .subagent_call_count
+                .take()
+                .and_then(|v| serde_json::from_value(v).ok());
+            // one without the other is no record
+            calls.zip(count).unzip()
         });
         // a run that failed preparing printed nothing to stdout worth handing back: its step and stderr say why
         let failed = result.and_then(|r| r.failed_step.as_deref().map(|step| (step, r)));
@@ -131,6 +190,8 @@ impl TaskResult {
             head: result.and_then(|r| r.head.clone()),
             usage,
             handed_back: result.and_then(|r| r.handed_back),
+            subagent_calls,
+            subagent_call_count,
         }
     }
 }
@@ -209,6 +270,29 @@ mod tests {
         assert_eq!(
             (none.outcome, none.output.as_str()),
             (Some(Outcome::NeedsReview), "crash\n")
+        );
+    }
+
+    #[test]
+    fn subagent_calls_are_bounded_and_none_without_a_transcript() {
+        let long = SubagentCall::new(Some(&"é".repeat(SUBAGENT_FIELD_BYTES)), Some("a\0b"));
+        assert_eq!(
+            long.description.as_ref().map(String::len),
+            Some(SUBAGENT_FIELD_BYTES)
+        );
+        assert_eq!(long.subagent_type.as_deref(), Some("ab"));
+        let odd = r#"{"result":"kept","subagent_calls":"x","subagent_call_count":2}"#;
+        let r = TaskResult::of(Agent::Claude, Some(&exec(Stage::Run, Some(0))), odd);
+        assert_eq!(
+            (r.output(), r.subagent_calls.as_ref(), r.subagent_call_count),
+            ("kept", None, None)
+        );
+        let one_shot = r#"{"is_error":false,"result":"ok"}"#;
+        let r = TaskResult::of(Agent::Claude, Some(&exec(Stage::Run, Some(0))), one_shot);
+        assert_eq!(
+            (r.subagent_calls, r.subagent_call_count),
+            (None, None),
+            "not read is not zero"
         );
     }
 

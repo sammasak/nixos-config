@@ -22,7 +22,7 @@ use exec_pool::queue::{
     Arm, Logs, METRICS_UNAVAILABLE, Park, QueueError, Store, Submitted, TIMEOUTS_IN_A_ROW,
     TRANSCRIPT_BYTES, Transcript, Turn, TurnLog,
 };
-use exec_pool::task_result::{TaskResult, Usage};
+use exec_pool::task_result::{SubagentCall, TaskResult, Usage};
 use exec_pool::wake::Wake;
 use exec_pool::{
     Agent, CheckpointRef, Error, Event, Kind, Outcome, ParkReason, Pins, Receipt, Resolution,
@@ -239,12 +239,12 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
         .query_one("SELECT max(version) FROM schema_migrations", &[])
         .unwrap()
         .get(0);
-    assert_eq!(version, 28);
+    assert_eq!(version, 29);
     submit(&mut s, &task("t-1", 1));
     // a newer binary's additive migration keeps the floor: this one still serves the database, as after a rollback
     pg.sql()
         .execute(
-            "INSERT INTO schema_migrations (version, floor) VALUES (29, 28)",
+            "INSERT INTO schema_migrations (version, floor) VALUES (30, 29)",
             &[],
         )
         .unwrap();
@@ -252,17 +252,17 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
     assert!(s.claim(&slot("s0"), 60).unwrap().is_some());
     // one this binary would misread, or one that names no floor, is refused
     pg.sql()
-        .execute("INSERT INTO schema_migrations (version) VALUES (30)", &[])
+        .execute("INSERT INTO schema_migrations (version) VALUES (31)", &[])
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(30))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(31))));
     pg.sql()
         .execute(
-            "UPDATE schema_migrations SET floor = 30 WHERE version = 30",
+            "UPDATE schema_migrations SET floor = 31 WHERE version = 31",
             &[],
         )
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(30))));
-    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(30))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(31))));
+    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(31))));
 }
 
 #[test]
@@ -3236,6 +3236,78 @@ fn session_metrics_count_turns_wakes_and_tokens() {
 }
 
 #[test]
+fn a_turn_s_subagent_calls_show_in_its_result_and_count_in_the_metrics() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let mut runner = Store::open(
+        &pg.conninfo()
+            .replace("user=exec_pool ", "user=exec_pool_runner "),
+    )
+    .unwrap();
+    let (a, epoch, _) = started(&mut runner);
+    let mut reviewed = park(ParkReason::TurnEnd, 0);
+    reviewed.result.subagent_calls = Some(vec![
+        SubagentCall::new(Some("Review PR 9"), Some("code-reviewer")),
+        SubagentCall::new(Some("Find callers"), None),
+    ]);
+    reviewed.result.subagent_call_count = Some(2);
+    runner.park(&a, epoch, &reviewed).unwrap();
+    let r = &s.result(&id).unwrap().unwrap()["result"];
+    assert_eq!(r["subagent_call_count"], 2, "{r}");
+    assert_eq!(
+        r["subagent_calls"],
+        json!([
+            {"description": "Review PR 9", "subagent_type": "code-reviewer"},
+            {"description": "Find callers", "subagent_type": null}
+        ])
+    );
+    let m = owner.metrics().unwrap();
+    assert!(
+        m.lines().any(|l| l
+            == "exec_pool_session_subagent_calls_total{host=\"msi-ms7758\",variant=\"unknown\",shunt=\"unknown\",agent=\"claude\"} 2"),
+        "{m}"
+    );
+    assert!(!m.contains(&id), "no id in a label");
+    // the next turn's result is its own: one the runner read no transcript of shows none, not the last turn's
+    s.send(&id, "next").unwrap();
+    let (_, epoch, turn) = started(&mut runner);
+    runner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, turn.upto))
+        .unwrap();
+    let r = &s.result(&id).unwrap().unwrap()["result"];
+    assert!(
+        r["subagent_calls"].is_null() && r["subagent_call_count"].is_null(),
+        "{r}"
+    );
+    // of the two turns only the first was read: the unknown one adds no call and is no turn read
+    let m = owner.metrics().unwrap();
+    assert!(
+        m.lines().any(|l| l
+            == "exec_pool_session_subagent_turns_read_total{host=\"msi-ms7758\",variant=\"unknown\",shunt=\"unknown\",agent=\"claude\"} 1"),
+        "{m}"
+    );
+    // a runner before 29 moves the result's epoch and leaves the calls: they are not shown under its turn
+    pg.sql()
+        .batch_execute(
+            "UPDATE results SET subagent_calls = '[]', subagent_call_count = 0, subagent_epoch = lease_epoch",
+        )
+        .unwrap();
+    assert_eq!(
+        s.result(&id).unwrap().unwrap()["result"]["subagent_call_count"],
+        0
+    );
+    pg.sql()
+        .batch_execute("UPDATE results SET lease_epoch = lease_epoch + 1")
+        .unwrap();
+    let r = &s.result(&id).unwrap().unwrap()["result"];
+    assert!(
+        r["subagent_calls"].is_null() && r["subagent_call_count"].is_null(),
+        "{r}"
+    );
+}
+
+#[test]
 fn a_session_summary_splits_its_time_by_state_and_park_reason_and_sums_its_usage() {
     let pg = Pg::new();
     let mut owner = pg.migrated();
@@ -3797,6 +3869,37 @@ fn a_park_with_an_arm_lands_in_a_queue_not_yet_migrated_to_record_it() {
     let mut armed = park(ParkReason::TurnEnd, 0);
     armed.arm = Some(Arm::parse(r#"{"variant": "300000", "shunt": "off"}"#).unwrap());
     owner.park(&a, epoch, &armed).unwrap();
+    let turns: i64 = pg
+        .sql()
+        .query_one("SELECT count(*) FROM turns", &[])
+        .unwrap()
+        .get(0);
+    assert_eq!(turns, 1);
+}
+
+#[test]
+fn a_park_with_subagent_calls_lands_in_a_queue_not_yet_migrated_to_record_them() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    // as a remote runner's park into a queue host still at 28
+    pg.sql()
+        .batch_execute(
+            "ALTER TABLE results DROP COLUMN subagent_calls, DROP COLUMN subagent_call_count, DROP COLUMN subagent_epoch; \
+             ALTER TABLE turns DROP COLUMN subagent_calls",
+        )
+        .unwrap();
+    let (a, epoch, _) = started(&mut owner);
+    let mut reviewed = park(ParkReason::TurnEnd, 0);
+    reviewed.result.subagent_calls = Some(vec![SubagentCall::new(Some("Review"), None)]);
+    reviewed.result.subagent_call_count = Some(1);
+    owner.park(&a, epoch, &reviewed).unwrap();
+    let r = &s.result(&id).unwrap().unwrap()["result"];
+    assert_eq!(r["output"], "the turn's answer");
+    assert!(
+        r["subagent_calls"].is_null() && r["subagent_call_count"].is_null(),
+        "{r}"
+    );
     let turns: i64 = pg
         .sql()
         .query_one("SELECT count(*) FROM turns", &[])
