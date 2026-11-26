@@ -70,7 +70,7 @@ seeded = literals(files + [("modules/homelab/x.nix", f'  listen = ":{ports["ntfy
 check([(p, k) for p, _, k, _ in seeded] == [("modules/homelab/x.nix", "ntfy"), ("pkgs/platform-record/platform_record.py", "loki")],
       f"seeded: a module naming the ntfy port, and a second Loki literal in the allowlisted script, are found ({seeded})")
 
-# a listener's address:port in any tracked file, docs and goals.md too: it is named by its inside name (sam.fleet.zone)
+# a listener's address:port in any tracked file, docs too: it is named by its inside name (sam.fleet.zone)
 PAIRS = {p["literal"]: p["name"] for p in P["pairs"]}
 # path prefix -> why a literal there stays
 PAIR_ALLOWED = {
