@@ -132,7 +132,7 @@ After the clock/preflight/lock and owner readiness checks, run the prebuilt tool
 
 ```bash
 /nix/store/8a8drm4847xh7k26a0bddy1f5mr4qimb-llm-bench/bin/llm-bench capacity \
-  --base http://192.168.10.113:11434/v1 --host asus-b460m \
+  --base http://ollama-asus.fleet.sammasak.dev:11434/v1 --host asus-b460m \
   --model qwen2.5-coder:7b-instruct-q4_K_M --ctx 4096 --route direct \
   --max-agents 2 --per-level 20 --out ~/.local/state/asus-trial-2026-11-20
 ```

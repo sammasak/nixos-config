@@ -9,7 +9,7 @@ let
   endpointType =
     fleet:
     types.submodule (
-      { config, ... }:
+      { name, config, ... }:
       {
         options = {
           host = mkOption {
@@ -38,6 +38,18 @@ let
             readOnly = true;
             description = "http://<host's address>:<port>, without a trailing slash; derived, not set.";
             default = "http://${fleet.hosts.${config.host}.address}:${toString config.port}";
+          };
+          dnsName = mkOption {
+            type = types.str;
+            readOnly = true;
+            description = "<name>.<zone>: lenovo's AdGuard answers it with the host's address (adguardhome.nix), for agents, scripts and docs; derived, not set. A service keeps `url`, so it needs no DNS.";
+            default = "${lib.toLower name}.${fleet.zone}";
+          };
+          dnsUrl = mkOption {
+            type = types.str;
+            readOnly = true;
+            description = "http://<dnsName>:<port>; derived, not set.";
+            default = "http://${config.dnsName}:${toString config.port}";
           };
         };
       }
@@ -245,6 +257,10 @@ in
           type = types.str;
           description = "networking.hostName of the host whose user key deploys every host.";
         };
+        zone = mkOption {
+          type = types.strMatching "[a-z0-9-]+([.][a-z0-9-]+)+";
+          description = "The inside name space: each listener and ntfy as <name>.<zone>, answered only by lenovo's AdGuard with a LAN address, with no edge site and no public record (prometheus.nix probes that). The outside names, <site>.sammasak.dev through the edge and Authentik, are edge.nix's.";
+        };
         edge = mkOption {
           type = types.str;
           description = "networking.hostName of the host that serves *.sammasak.dev (edge.nix): the DNS rewrite and the OTLP relay.";
@@ -316,6 +332,7 @@ in
       loki
       edgeMetrics
       ;
+    zone = "fleet.sammasak.dev";
     gateway = "192.168.10.1";
     lanCidr = "192.168.10.0/24";
     deployer = "lenovo-21CB001PMX";

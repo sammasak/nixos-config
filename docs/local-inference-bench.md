@@ -60,7 +60,7 @@ is judged against `pkgs/llm-bench/thresholds.json` `capacity` (proposed). The mu
 
 ```
 for m in qwen2.5-coder:7b-instruct-q4_K_M gemma4:e4b-it-qat gemma4:e2b-it-qat; do
-  nix run .#llm-bench -- capacity --base http://192.168.10.113:11434/v1 --host asus-b460m --model "$m" \
+  nix run .#llm-bench -- capacity --base http://ollama-asus.fleet.sammasak.dev:11434/v1 --host asus-b460m --model "$m" \
     --ctx 4096 --route direct --out ~/capacity
 done
 ```
