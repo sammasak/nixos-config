@@ -182,7 +182,7 @@ def lane(name: str, real: str, d: pathlib.Path, exe: str = "${nix}") -> pathlib.
     for k, v in {"${pkgs.util-linux}/bin/flock": "flock", "${lib.getExe record}": f"{d}/stub/record", "${spool}": f"{d}/spool", "/run/work-locks/light-work.lock": f"{d}/light", "/run/work-locks/scheduled-gate.lock": f"{d}/gate",
                  "${config.nix.package}/bin/nix-instantiate": f"{d}/stub/nix-instantiate",
                  "${config.nix.package}/bin/nix-build": f"{d}/stub/nix-build", "${pkgs.coreutils}/bin/": "", "${pkgs.bash}/bin/bash": "bash",
-                 "${nix}": f"{d}/stub/nix", "${devenv}": f"{d}/stub/devenv", "${gateWait}": "3", "${name}": name, "''$": "$"}.items():
+                 "${nix}": f"{d}/stub/nix", "${devenv}": f"{d}/stub/devenv", "${gateWait}": "3", "${refusal name}": "", "${name}": name, "''$": "$"}.items():
         text = text.replace(k, v)
     out = d / name
     out.write_text("#!/usr/bin/env bash\n" + text + "\n")
@@ -518,16 +518,17 @@ def eval_record_cases(d: pathlib.Path, repo: pathlib.Path, head: str, base: str,
     (repo / "untracked.txt").unlink()
     out.append((rc == 0 and ran(log) == (True, True) and "toplevel" not in json.loads(rec.read_text()),
                 f"seeded: a dirty checkout (an untracked file) neither reads its tree's record nor writes it ({log})"))
-    # seventh-host-check's baselines run on its own (NIXOS_QA_TOPLEVELS unset), its own lines run here: this run's record
-    # holds lenovo alone, as a pool-merge-check of a dashboard or exec-pool change holds some hosts
+    # seventh-host-check's baselines when run on its own (NIXOS_QA_TOPLEVELS unset), its own two lines run here on a
+    # record holding lenovo alone, as a pool-merge-check of a dashboard or exec-pool change records some hosts
     seventh = (HERE / "seventh-host-check.py").read_text()
     pick = re.search(r'\n( *)(qa = os\.environ\.get\("NIXOS_QA_TOPLEVELS"\)\n *reused = [^\n]*)\n', seventh)
     out.append((pick is not None, "seventh-host-check picks its reused baselines in two lines (qa =, reused =)"))
     if pick:
         os.environ.pop("NIXOS_QA_TOPLEVELS", None)
+        seed(**full)
         ns: dict = {"os": os, "pathlib": pathlib, "eval_record": pmc.eval_record, "ROOT": repo, "toplevels": dict}
         for real, want in ((["lenovo", "naked-pi"], {}), (["lenovo"], {"lenovo": DRV})):
-            exec(textwrap.dedent(pick.group(2)), {**ns, "real": real}, got_ := {})
+            exec(textwrap.dedent(pick.group(1) + pick.group(2)), {**ns, "real": real}, got_ := {})
             out.append((got_.get("reused") == want,
                         f"seeded: seventh-host-check reuses the record's baselines only when it holds every real host "
                         f"({real}: {got_.get('reused')}); a partial one is not used, so its naked-pi check stays as before"))
