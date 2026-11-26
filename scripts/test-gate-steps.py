@@ -1,6 +1,7 @@
 """The gate's two step decisions (#502), taken from devenv.nix as written and run without Nix: nixos-flake-check's
 `decide` (which check is built, left as unchanged since main, or left to its own host's gate) and nixos-qa's
-`side_by_side` (steps run at once, each printed whole and recorded, the gate failing on any one of them)."""
+`side_by_side` (steps run at once, each printed whole and recorded, the gate failing on any one of them; a scheduled
+run collects the red ones and goes on), with the step outcomes nixos:qa defines before it (stepOutcomes)."""
 import json
 import os
 import pathlib
@@ -72,6 +73,11 @@ check("host = config.flake.nixosConfigurations.${name};" in deploy and "activate
       "deploy.nix builds node <name> from nixosConfigurations.<name>, whose toplevel the flake check evaluates only inside it")
 
 SIDE = function("side_by_side")
+# nixos:qa defines the step outcomes side_by_side records through (step_result, step_done) before any step
+outcomes = re.search(r"\n  stepOutcomes = ''\n(.*?)\n  '';\n", src, re.S)
+if not outcomes:
+    sys.exit("FAIL (scripts/test-gate-steps.py): stepOutcomes not found in devenv.nix")
+OUTCOMES = textwrap.dedent(outcomes.group(1)).replace("''${", "${") + "\n"
 with tempfile.TemporaryDirectory() as t:
     t = pathlib.Path(t)
     rec, times = t / "records", t / "times"
@@ -85,11 +91,11 @@ with tempfile.TemporaryDirectory() as t:
         f.chmod(0o755)
         steps += [name, str(f)]
     stub.chmod(0o755)
-    script = SIDE.replace("${lib.getExe record}", str(stub))
+    script = OUTCOMES + SIDE.replace("${lib.getExe record}", str(stub))
     left = re.findall(r"\$\{lib\.[^}]*\}", script)
     if left:
         sys.exit(f"FAIL (scripts/test-gate-steps.py): side_by_side has Nix interpolations the test does not stub: {left}")
-    r = subprocess.run(["bash", "-euo", "pipefail", "-c", script + '\nsha=abc\nside_by_side "$@"', "qa", *steps],
+    r = subprocess.run(["bash", "-euo", "pipefail", "-c", script + '\nsha=abc mode=manual\nside_by_side "$@"', "qa", *steps],
                        capture_output=True, text=True, env=dict(os.environ, NIXOS_QA_TIMES=str(times)))
     out = r.stdout
     check(r.returncode != 0 and "failed side by side: fails killed" in r.stderr,
@@ -107,6 +113,12 @@ with tempfile.TemporaryDirectory() as t:
           f"seeded: a step whose subshell died before writing its result still has its log printed and counts as failed ({recs[3]!r})")
     # all three ran at once: the slow one did not hold back the others' start
     check(int(lines[0].split()[3]) >= 1 and int(lines[2].split()[3]) <= 1, f"the steps ran side by side ({lines})")
+    rec.write_text("")
+    r = subprocess.run(["bash", "-euo", "pipefail", "-c", script + '\nsha=abc mode=scheduled\nside_by_side "$@"\nsteps_end',
+                        "qa", *steps], capture_output=True, text=True, env=dict(os.environ, NIXOS_QA_TIMES=str(times)))
+    recs = rec.read_text().splitlines()
+    check(r.returncode == 1 and "failed side by side" not in r.stderr and "2 red step(s): fails killed" in r.stderr and len(recs) == 4,
+          f"seeded: a scheduled run records every step side by side and ends red naming both red ones ({r.returncode}, {r.stderr.strip()!r})")
 
 # nixos-flake-check's own body on a fake flake, acer-swift: asus's deploy-schema check would compile against CUDA
 fc = re.search(r"\n  flakeCheck =\s+gate\s+\"nixos-flake-check\".*?''\n(.*?)\n *'';\n", src, re.S)
@@ -166,7 +178,7 @@ for mode, dryrun in dryruns.items():
         for f in ("nix", "nix-store", "uname", "record"):
             (t / f).chmod(0o755)
         body = textwrap.dedent(fc.group(1)).replace("${pkgs.coreutils}/bin/uname", str(t / "uname"))
-        body = body.replace("${lib.getExe record}", str(t / "record")).replace("${gateHeavy}", gate_heavy.group(1)).replace("${flakeKinds}", KINDS).replace("''$", "$")
+        body = body.replace("${lib.getExe record}", str(t / "record")).replace("${lib.getExe evalRecord}", "false").replace("${gateHeavy}", gate_heavy.group(1)).replace("${flakeKinds}", KINDS).replace("''$", "$")
         r = subprocess.run(["bash", "-euo", "pipefail", "-c", body], capture_output=True, text=True, cwd=t,
                            env={**os.environ, "PATH": f"{t}:{os.environ['PATH']}", "NIXOS_QA_DEFERRED": str(deferred),
                                 "NIXOS_QA_TOPLEVELS": str(t / "toplevels"), "NIXOS_QA_HEAD": "0123abc", **({"NIXOS_FLAKE_CHECK_DRY": "1"} if mode == "ownerdry" else {})})
@@ -300,7 +312,7 @@ for mode, (dryrun, build_rc) in plain_runs.items():
         for f in ("nix", "nix-store", "uname", "record"):
             (t / f).chmod(0o755)
         body = textwrap.dedent(fc.group(1)).replace("${pkgs.coreutils}/bin/uname", str(t / "uname"))
-        body = body.replace("${lib.getExe record}", str(t / "record")).replace("${gateHeavy}", gate_heavy.group(1)).replace("${flakeKinds}", KINDS).replace("''$", "$")
+        body = body.replace("${lib.getExe record}", str(t / "record")).replace("${lib.getExe evalRecord}", "false").replace("${gateHeavy}", gate_heavy.group(1)).replace("${flakeKinds}", KINDS).replace("''$", "$")
         r = subprocess.run(["bash", "-euo", "pipefail", "-c", body], capture_output=True, text=True, cwd=t,
                            env={**os.environ, "PATH": f"{t}:{os.environ['PATH']}", "NIXOS_QA_HEAD": "0123abc"})
         lines = rec.read_text().splitlines() if rec.exists() else []
@@ -333,7 +345,7 @@ for want, fail in {"vm-list": "any('? driver' in x for x in a)", "flake-output-k
         for f in ("nix", "nix-store", "uname", "record"):
             (t / f).chmod(0o755)
         body = textwrap.dedent(fc.group(1)).replace("${pkgs.coreutils}/bin/uname", str(t / "uname"))
-        body = body.replace("${lib.getExe record}", str(t / "record")).replace("${gateHeavy}", gate_heavy.group(1)).replace("${flakeKinds}", KINDS).replace("''$", "$")
+        body = body.replace("${lib.getExe record}", str(t / "record")).replace("${lib.getExe evalRecord}", "false").replace("${gateHeavy}", gate_heavy.group(1)).replace("${flakeKinds}", KINDS).replace("''$", "$")
         r = subprocess.run(["bash", "-euo", "pipefail", "-c", body], capture_output=True, text=True, cwd=t,
                            env={**os.environ, "PATH": f"{t}:{os.environ['PATH']}", "NIXOS_QA_HEAD": "0123abc"})
         lines = rec.read_text().splitlines() if rec.exists() else []
@@ -365,7 +377,7 @@ for kind in ("packages", "packages.x86_64-linux", "checks", "checks.x86_64-linux
         for f in ("nix", "nix-store", "uname", "record"):
             (t / f).chmod(0o755)
         body = textwrap.dedent(fc.group(1)).replace("${pkgs.coreutils}/bin/uname", str(t / "uname"))
-        body = body.replace("${lib.getExe record}", str(t / "record")).replace("${gateHeavy}", gate_heavy.group(1)).replace("${flakeKinds}", KINDS).replace("''$", "$")
+        body = body.replace("${lib.getExe record}", str(t / "record")).replace("${lib.getExe evalRecord}", "false").replace("${gateHeavy}", gate_heavy.group(1)).replace("${flakeKinds}", KINDS).replace("''$", "$")
         r = subprocess.run(["bash", "-euo", "pipefail", "-c", body], capture_output=True, text=True, cwd=t,
                            env={**os.environ, "PATH": f"{t}:{os.environ['PATH']}", "NIXOS_QA_HEAD": "0123abc"})
         lines = [l for l in (rec.read_text().splitlines() if rec.exists() else []) if "result=fail" in l]

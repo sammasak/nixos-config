@@ -2,7 +2,7 @@
 
 The direction this queue serves: [vision.md](vision.md). Realigned on 26 Nov 2026, 11:10 UTC, against vision.md and
 every open issue and pull request in the nine repositories (pi-harness answers 403 over REST, so its issues are
-unread); the queue updated to the state of 26 Nov 16:00 UTC. What shipped is in git history and the closed issues.
+unread); the queue updated to the state of 26 Nov 18:00 UTC. What shipped is in git history and the closed issues.
 
 ## How we work (owner, 23 to 26 Nov)
 
@@ -47,19 +47,19 @@ answers nothing through the pool's proxy, so 26 Nov is not read here).
 
 ## Queue, in pick-up order
 
-State of 26 Nov 16:00 UTC, in the coordinator's order. Readings are from black-pi's Prometheus and Loki (a slot
-reads them at `$PROMETHEUS_URL` and `$LOKI_ADDR`) between 10:00 and 11:00 UTC and gh at 16:00 UTC, unless the cell
+State of 26 Nov 18:00 UTC, in the coordinator's order. Readings are from black-pi's Prometheus and Loki (a slot
+reads them at `$PROMETHEUS_URL` and `$LOKI_ADDR`) between 10:00 and 11:00 UTC and gh at 18:00 UTC, unless the cell
 says otherwise. The order follows what each serves: slots that finish first, then the comparisons, then the gate.
 
 | # | Item | Serves (vision.md) | Metric, reading | Narrow check |
 |---|------|--------------------|-----------------|--------------|
-| 1 | Paddock on asus, tracked by [#874](https://github.com/sammasak/nixos-config/issues/874). A measure: done (#838 ladder). B model fit: the 35B pinned at config C (max_batch 4). C real use, started 26 Nov: config C at max_ctx 16384 serves up to four Pi agents at once (9 slots, 12 guaranteed checkpoints; single-turn 22.1 tok/s at 16384, 23.6 at 8192, 24.2 at 4096); four real Pi agents ran at once with no starvation and no call cut by length, at 13.4 tok/s total and 2.8 to 4.1 tok/s a call with 3 to 4 decoding (19.4 alone). C's target: 20 local-lane tasks served through llm-gateway, local share at least 50 percent, 7 days of tok/s, TTFT, gate passes, failures, GPU watts and restarts. D harden: the served head passes the CPU gate and strict GPU gates with no `PADDOCK_*` pins. E upstream: per-piece evidence in #874, proposing only; weekly upstream sync (brief 82). Open from phase C: PR 9's first-token metric measures the SSE header, and the expert slot hit and miss counters are absent on a pinned serve (pool brief 105) | "a large model can run on modest hardware" | total tok/s at 4 and 8 sessions (#838, 26 Nov): 35B Q4 pinned 15.8 / 16.4, 35B disk-backed 22.6 / 22.6 (serial), 122B Q2 disk-backed 3.1 / 3.7 (serial). Best single session: 35B 26.6, 122B 3.9; at 16 sessions 35B about 26 total, 122B no failures. paddock PRs 4, 6, 8, 9, 10 and 11 merged into asus/biggest-moe; 79 ahead, 1 behind upstream main before PRs 6 to 11 (26 Nov) | the same ladder rows on asus, sessions 4 and 8; four Pi agents at once at config C, max_ctx 16384: tests pass, no call cut by length |
-| 2 | herman [#62](https://github.com/sammasak/herman/issues/62): an unmarked amendment no longer resolves on its marked sibling's citation, herman PR 90 open | "Only safety, or \"does not fix the problem\", blocks a change": a gate with a hole nobody pinned | unmarked sections of that shape in herman's docs: 3 (PR 90 fixes them); herman #57's control shipped as herman 89 | `cargo test -p herman-app --test changelog_records_every_post_tag_amendment`, 4 tests to 5 |
-| 3 | A PR head bound to its task's branch ([#653](https://github.com/sammasak/nixos-config/issues/653), pool finding 9) | "Agents run in disposable sandboxes that hold no credentials" | pull requests whose head is not the task's branch: unread; the push filter is live on both slot hosts | the push filter's own test with a push to another branch |
-| 4 | The flake check as one evaluation run: its per-output `nix eval` processes as one `nix-eval-jobs` run ([#835](https://github.com/sammasak/nixos-config/issues/835)), in flight (brief 78) | "No dedicated benchmarks, no long test rituals" | per-output evaluation 840 s in the 26 Nov 07:07 UTC flake check, 1102 s at 03:20 | the flake check's gate-step records: the same checks listed, `eval_seconds` summed lower |
+| 1 | Paddock on asus, tracked by [#874](https://github.com/sammasak/nixos-config/issues/874). A measure: done (#838 ladder). B model fit: the 35B Q4 pinned at config C (max_batch 4, context 16384), the setting Pi uses. C real use, started 26 Nov: config C serves up to four Pi agents at once (9 slots, 12 guaranteed checkpoints; single-turn 22.1 tok/s at 16384, 23.6 at 8192, 24.2 at 4096); four real Pi agents ran at once with no starvation and no call cut by length, at 13.4 tok/s total and 2.8 to 4.1 tok/s a call with 3 to 4 decoding (19.4 alone). C's target: 20 local-lane tasks served through llm-gateway, local share at least 50 percent, 7 days of tok/s, TTFT, gate passes, failures, GPU watts and restarts. D harden: the served head passes the CPU gate and strict GPU gates with no `PADDOCK_*` pins; the standalone flake (PR 10) built on asus, the runner in 48.8 min and bit-identical on `--rebuild`, the sm_86 CUDA pack in 12.3 min (#874, 17:37 UTC); serving from the flake build and a build on acer are open. E upstream: per-piece evidence in #874, proposing only; weekly upstream sync (brief 82). | "a large model can run on modest hardware" | total tok/s at 4 and 8 sessions (#838, 26 Nov): 35B Q4 pinned 15.8 / 16.4, 35B disk-backed 22.6 / 22.6 (serial), 122B Q2 disk-backed 3.1 / 3.7 (serial). Best single session: 35B 26.6, 122B 3.9; at 16 sessions 35B about 26 total, 122B no failures. paddock PRs 4 to 14 merged into asus/biggest-moe, 15 in re-review at 18:00 UTC; ahead and behind upstream main unread | the same ladder rows on asus, sessions 4 and 8; four Pi agents at once at config C, max_ctx 16384: tests pass, no call cut by length |
+| 2 | herman [#62](https://github.com/sammasak/herman/issues/62): an unmarked amendment no longer resolves on its marked sibling's citation. herman PR 90 reviewed at 7/10 and sent back (17:01 UTC): it fixes the same-family, same-date shape only; cross-date and cross-family siblings still resolve, and two sections pinned before (0089, 0092) drop out of the pin. The review's smallest fix: count a bare-keyed section as residual when its record has any other post-tag section (`RECORD_LEVEL` 7 rows to 13) and add a red control for the cross-date shape | "Only safety, or \"does not fix the problem\", blocks a change": a gate with a hole nobody pinned | bare-keyed sections beside a marked post-tag sibling and pinned nowhere: 6 at PR 90's head (the review); herman #57's control shipped as herman 89 | `cargo test -p herman-app --test changelog_records_every_post_tag_amendment`, 4 tests to 5 |
+| 3 | A session may mark only its own PR ready ([#653](https://github.com/sammasak/nixos-config/issues/653), pool finding 9); PR creation is held to the task's branch since #914 (deployed acer and msi) | "Agents run in disposable sandboxes that hold no credentials" | refused PR creations per day, 0 expected (`exec_pool_push_filter_pulls_total{result}`): unread; one passed and one refused PR creation on a host after #914's deploy: not yet run | the `exec-pool-push-filter` check with a ready-mark of another task's PR |
+| 4 | The flake check as one evaluation run: its per-output `nix eval` processes as one `nix-eval-jobs` run ([#835](https://github.com/sammasak/nixos-config/issues/835)). PR 918 is a draft: nix-eval-jobs refused acer's and msi's deploy-activate and deploy-schema checks at every budget up to 6 GiB (as separate processes they peak at 4.2 GiB), so it does not fit acer's memory budget; next is the deploy pairs in their own processes and the rest through nix-eval-jobs, or drop the follow-up | "No dedicated benchmarks, no long test rituals" | per-output evaluation 840 s in the 26 Nov 07:07 UTC flake check, 1102 s at 03:20; PR 918 on msi: 1208 s the old way, 809 s with nix-eval-jobs at 2 x 2048 MiB but 5 checks failed | the flake check's gate-step records: the same checks listed, `eval_seconds` summed lower |
 | 5 | Shunt ([#625](https://github.com/sammasak/nixos-config/issues/625)) by 2 Dec | "Every change ships behind a switch ... judged on the running system" | 25 Nov 17:00 UTC: pool1 Shunt 8 turns, 0.89 USD a turn, Shunt acted on none | none to run: read the Shunt per-arm series and decide by 2 Dec |
 
-Next after the queue, in order: alert investigations with a cause ([#624](https://github.com/sammasak/nixos-config/issues/624),
+Next after the queue, in order: alert investigations with a cause ([#624](https://github.com/sammasak/nixos-config/issues/624), its inventory shipped in #915,
 [#825](https://github.com/sammasak/nixos-config/issues/825), [#826](https://github.com/sammasak/nixos-config/issues/826)),
 and #835's shared host evaluation and the gate alone on acer (Check tuning's follow-ups).
 
@@ -69,12 +69,15 @@ Anti-starvation: [#14](https://github.com/sammasak/nixos-config/issues/14) (open
 llm-gateway#69 (23 Oct) is blocked; skills#104 (13 Nov) has its change merged (skills #172), and
 devenv-platform#129 (13 Nov 00:18) its step A (PR 167).
 
-In flight as pool sessions (not next): the flake check as one nix-eval-jobs run (#835, brief 78); the
-devenv-platform tracked-hooks installer (devenv-platform PR 170 merged; a nixos-config pin bump follows);
-StoreUploadStale for a long-off sender (brief 107); the #825 gate-red reads (seventh-host-test); a session may mark
-only its own PR ready (#653, after the PR-head binding).
+Worked by the efficiency-plan session, not by the pool: nixos-config issues 896, 897, 899, 900, 901, 902 and 903
+and skills 177 (PRs 906, 907, 909, 912 and 916, merged 17:59 to 18:06 UTC, and #911 for 902; 900 and 903 still open).
 
-Shipped on 26 Nov, 10:00 to 16:00 UTC:
+In flight (not next): PR 918, a draft (item 4); PR 913, a turn with tokens and no cost growth is unpriced (deploy
+acer, msi); slot memory kills (#827): `increase(exec_pool_memory_kills_total[18h])` at 18:00 UTC reads acer 55 and
+msi 35 for 26 Nov, msi's all between 16:45 and 17:40 UTC (#827's 18:12 UTC comment reads msi at 0, which the counter
+does not bear out), PR 922 open at 18:00 (merged at 18:17); herman PR 90 sent back at 7/10 (item 2).
+
+Shipped on 26 Nov, 10:00 to 18:00 UTC:
 - Main green again: #864 (grafana-dashboards) and #869 (`scripts/test-deploy-recipes.py` answers the drain probe from
   its fixture, #863).
 - Cargo under the lock: #876, a slot's cargo capped to one job per GiB of slot memory; deployed acer and msi.
@@ -109,6 +112,22 @@ Shipped on 26 Nov, 10:00 to 16:00 UTC:
   slot hits, queue depth and fresh/resumed TTFT (9), a standalone flake for the runner and CUDA pack (10), the eg2
   picture tests skip without reference media (11).
 - herman 89: #57's executed negative control for `no_source_paths`.
+- Check tuning rows from the gate-step records: #908 (`scripts/check-tuning.py`, #837; not yet run by nixos:qa).
+- A pool reset keeps the slot's nix-cache and eval-cache: #910 (#898's reset part; the clone mirror was dropped,
+  #917 closed); deployed acer and msi.
+- Shipping phases: #911 (#902): a PR's gate is its first passing full gate, fast push or pool merge check, and
+  merge-to-deploy is per host; its live run read `shipping_pr_phase_unmatched{reason="no_gate"}` 6, where the issue
+  counted 221, and 89 PRs with a gate phase; deployed lenovo.
+- A slot's pull request only from its own task branch: #914 (#653); deployed acer and msi.
+- The alert inventory, #624's first slice: #915 (`docs/monitoring.md`, 27 alert names, 7 with a known signal, route
+  and receipt).
+- NodeSystemdCollectorFailed: #919; deployed black-pi.
+- skills 178 (`requires` on `pool:start` and `pool:submit`, #859 point 3) and 179 (the coordinator's in-session graded
+  review); the nixos-config pin bump #921 and then #906 merged at 18:06 UTC.
+- paddock PRs 5, 7 (a sync of truespar/paddock main 977372b), 12, 13 and 14, merged into asus/biggest-moe: TTFT ends
+  at the first token and the pinned MoE slot counters are exported (12), also for a chat stream cut by a stop string
+  (13), checkpoints shared across sequences are held against steals (14). PR 15 was in re-review at 18:00 UTC (9/10
+  and merged at 18:14).
 
 Pool cost: `increase()` over `exec_pool_session_cost_usd_total` over-reads (float8 sums read as resets); read cost
 from `exec-pool sessions` until the numeric sum (#814) is confirmed live on acer.
@@ -173,8 +192,9 @@ With no local model up every command exits 3 with "no local model up" and submit
    signal is a finished session whose branch has no PR.
 8. A task can be dispatched to a slot that lacks what it needs (#859). Fixed by #886 (`--requires`) and #892
    (`host-<hostName>`); the skills side is in Later.
-9. A pull request's head is not held to the task's branch ([#653](https://github.com/sammasak/nixos-config/issues/653)), item 3.
-   The push filter is live on both hosts, and acer's slots run with `slot.privateUsers` (hosts/acer-swift/configuration.nix).
+9. A pull request's head was not held to the task's branch ([#653](https://github.com/sammasak/nixos-config/issues/653)).
+   Fixed for PR creation by #914 (deployed acer and msi); the ready-mark is item 3. The push filter is live on both
+   hosts, and acer's slots run with `slot.privateUsers` (hosts/acer-swift/configuration.nix).
 10. pi-harness is not in the pool's repository list, so a slot cannot clone it (and its issues answer 403 over REST);
     fix in flight, the pi-harness #26 bump waits on it.
 11. The v0.1 acceptance script in a VM (PASS, FAIL or UNTESTED per criterion) is not written.
@@ -195,8 +215,10 @@ Owner, 26 Nov: a pull request ships on its session's narrow check on its own hea
 re-runs a merge check on current main, and the scheduled gate, eight hours apart, is the backstop for two that merge
 cleanly but break each other. `just pool-merge-check` stays for a session that wants it; it picks its checks from
 the changed paths (`scripts/pool_merge_check.py`; docs: nothing) and
-writes one gate-step record per check. The last full run (26 Nov 07:07 to 08:10 UTC, head `0e525a45`, 3784 s) was red
-on `ollama-gpu-test` alone, fixed by #855; the steps after it did not run. Next full run: the 19:20 scheduled gate.
+writes one gate-step record per check. The last full run (26 Nov 12:49 to 13:59 UTC, head `36ccc813`, 4216 s) was red
+on `seventh-host-test` alone (519 s): the AdGuard anchor that 0d097762 moved, fixed by #885 after that head; the
+steps after it did not run. Its gate probe took 244 s, the flake check 2357 s and workers-eval-test 816 s. Next full
+run: the 19:20 scheduled gate.
 
 Under the ship rule (26 Nov, 11:00 to 15:00 UTC): 14 pull requests merged with no bounce for a moved main. Sessions
 returned without the review line four times; the brief footer was reworded at 13:55 UTC.
@@ -222,9 +244,20 @@ meant); factum 65 `devenv shell -- true` 1.4 min and `sdlc:done` (sketch 2.6, mo
 
 Total stated: about 101 minutes (6045 s) over 10 bodies; #886, #889, #891 and #893 state no time.
 
+Checks recorded in the merged pull request bodies, 26 Nov 16:00 to 18:00 UTC: #908 `python3
+scripts/test-check-tuning.py` (12 PASS) and ruff, not stated, caught nothing; #910 `dev-env-reset-vm` 137 s and its
+negative control 128 s (failing, as meant), caught nothing; #911 `python3 scripts/test-shipping-metrics.py` about 1 s
+and a live run about 3.5 min, caught nothing; #914 the `exec-pool-push-filter` check about 1 min,
+`scripts/test-workers-eval.py` 20 min in full and 3.5 min on the touched part after a full run was OOM-killed in the
+slot, and `just pool-merge-check` 10 min; the full workers-eval run caught the catch-all 403 ordered first in the
+slot site (fixed in 1f5672fa); #915 pre-commit and the pre-push docs set, not stated, caught nothing; #919
+`monitoring-rules-tests` 6.3 min and `promtool test rules` 2.3 min, caught nothing (the new cases fail on main's
+rules, as meant). Total stated: about 51 minutes over 4 bodies; #908 and #915 state no time. No body names a
+failure that no check caught, so no escape row is added.
+
 | Check or step | Typical minutes | Real defects caught (commit or PR) | Depends on |
 |---|---|---|---|
-| Whole scheduled gate | 26.0 mean over 7 runs to 26 Nov 03:20, 90.1 worst (03:20); 63.1 on 26 Nov 07:07 UTC, red; "40 min build time is crazy" | 5 reds: `shunt-metrics-test` (#759), `execution-pool-vm` evaluation (#795), `grafana-dashboards` (#814), `legacyPackages` output kind (#828), `ollama-gpu-test` (#855) | everything |
+| Whole scheduled gate | 26.0 mean over 7 runs to 26 Nov 03:20, 90.1 worst (03:20); 63.1 on 26 Nov 07:07 UTC, red; 70.3 on 26 Nov 12:49 UTC, red; "40 min build time is crazy" | 6 reds: `shunt-metrics-test` (#759), `execution-pool-vm` evaluation (#795), `grafana-dashboards` (#814), `legacyPackages` output kind (#828), `ollama-gpu-test` (#855), `seventh-host-test` on the AdGuard anchor (#885) | everything |
 | lint-comments, lint-shell, deploy-rs-pins | seconds (5, 3 and 1 s on 26 Nov) | lint-comments 9d7cec2a (#800); shellcheck d947c2a2 (#795) | `.nix`, `.sh`, `.py`; `scripts/*.sh`; devenv and flake locks |
 | fmt-check | 8 s on 26 Nov | 747a1f71 (#684) | every `.nix` |
 | secrets-verify | 0 s in records | none traced | `secrets/` |
@@ -326,7 +359,6 @@ a row above and a narrow check, not a longer gate.
 - [#14](https://github.com/sammasak/nixos-config/issues/14): a query from the tailnet and a refusal check from outside, after #878.
 - pi-harness [#26](https://github.com/sammasak/pi-harness/issues/26) can close: its pin is already devenv-platform main 358f2c28.
 - devenv-platform [#155](https://github.com/sammasak/devenv-platform/issues/155): its change merged as PR 168; close it after a Loki reading shows no text fields.
-- skills `requires` on `pool:start` and `pool:submit` (#859 point 3): a separate skills PR.
 
 ## Horizon (direction only, no work scheduled)
 
@@ -353,9 +385,9 @@ take work.
 
 | Host | Slots | Note |
 |------|-------|------|
-| acer-swift | `pool1` to `pool4` | Shunt on `pool1`; `pool4` light (1G reserve, CPUWeight 100 against 200, CPUQuota 200%), the slice 9G; offers claude and pi, and codex on the owner's ChatGPT login; deployed 26 Nov with #861 |
-| msi-ms7758 | `pool1` to `pool4` | offers claude; off 21:00 to 08:30; deployed 26 Nov with #861 |
-| asus-b460m | none | ollama (one resident model, 130 W cap), `paddock.service` (Qwen3.6 35B, #817, #822), agent `paddock`; off 21:00 to 08:30. 26 Nov: `paddock.service` stopped and the GPU at 270 W for the ladder (#838); it owes the deploys of #850 and the merges after #858 on purpose, no asus deploy on 26 Nov (pool finding 5) |
+| acer-swift | `pool1` to `pool4` | Shunt on `pool1`; `pool4` light (1G reserve, CPUWeight 100 against 200, CPUQuota 200%), the slice 9G; offers claude and pi, and codex on the owner's ChatGPT login; last deploy 26 Nov 17:40 UTC at `e91e252e` (#914) |
+| msi-ms7758 | `pool1` to `pool4` | offers claude; off 21:00 to 08:30; deployed main's head `e43b7dcb` (#906) at 18:16 UTC, so it owes no deploy tonight (the deploy records in Loki against origin/main's merges) |
+| asus-b460m | none | ollama (one resident model, 130 W cap), `paddock.service` (Qwen3.6 35B, #817, #822), agent `paddock`; off 21:00 to 08:30. 26 Nov: `paddock.service` stopped and the GPU at 270 W for the ladder (#838); it owes the deploys of #850 and the merges after #858 on purpose, no asus deploy on 26 Nov (pool finding 5). Its deploys are owed on 27 Nov: at 18:15 UTC `shipping_pr_not_deployed` reads 35 PRs and `shipping_deploy_lag_commits` 158 |
 
 Heat, the extra slot's price (owner, 25 Nov 23:50). Before, 25 Nov 23:50 with three acer slots busy: acer 8 cores, load
 5.0, 11.3 GiB available of 15.6, environments.slice 2.5 of 7 GiB, package 66 C now and 94 C peak in 6 h,

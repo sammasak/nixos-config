@@ -190,6 +190,21 @@ groups:
           query: 'exec_pool_session_stalled{job="node-exporter",host="{{ $labels.host }}",reason="{{ $labels.reason }}",task="{{ $labels.task }}"} > 0'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolsessionstalled"
 
+      - alert: ExecPoolReplyUnread
+        # 900 s and 5m: a reply nobody has shipped, sent on or cancelled pages about 20 minutes after its turn ended.
+        # A shipped session is cancelled, a message re-queues it and a timer is unread input, so none counts; by host only, no session id
+        expr: |
+          max by (host) (exec_pool_waiting_oldest_seconds{job="node-exporter",reason="turn_end"}) > 900
+        for: 5m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "An execution pool session last run on {{ $labels.host }} has waited over 15 minutes with its reply unread"
+          description: "The oldest session on {{ $labels.host }} whose last turn parked as turn_end, with nothing unread in its inbox, has waited {{ $value | humanizeDuration }}: its final reply, often an open pull request, sits unshipped. Run exec-pool list --limit 200 on acer for the sessions waiting on turn_end, read each with exec-pool status ID, then ship it and close it with exec-pool cancel ID, or send it on with exec-pool send ID --prompt TEXT (runbook)."
+          query: 'exec_pool_waiting_oldest_seconds{job="node-exporter",host="{{ $labels.host }}",reason="turn_end"}'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/nspawn-workers.md#execpoolreplyunread"
+
       - alert: ExecPoolCompactionWindowCostlier
         # 1.5x and 10 turns a side: a day's task mix alone moves cost per turn by less than half; the Shunt side is
         # left out, so only the window differs

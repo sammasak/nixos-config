@@ -30,7 +30,7 @@ sam.workers.instances = {
 | `prompt` | `null` | sent once the agent is idle, only on a start with no earlier Claude session |
 | `credentials` | `null` | which of the host's credentials it gets (`id_ed25519`, `gh-hosts.yml`); `null` is all. `[ ]` is an agent that cannot push |
 | `egress.github.repos` | `[ ]` | `owner/repo` the instance reaches through the host's proxy (git and REST); non-empty, it gets neither credential; a repo whose devenv imports a private input needs that input listed too (factum and herman need `sammasak/devenv-platform`), else no `devenv shell` works; git and nix fetch it through the proxy rewrite without an SSH key. Any other repository: a git fetch alone, sent without the token, so only a public one answers |
-| `egress.github.graphql` | `false` | also pass GraphQL, which no repository list bounds; nearly every `gh pr`/`gh issue` command needs it. Without it a pull request is opened and commented on with `gh api` over REST (`repos/<repo>/pulls`, `repos/<repo>/issues/<n>/comments`), as a pool task is told |
+| `egress.github.graphql` | `false` | also pass GraphQL, which no repository list bounds; nearly every `gh pr`/`gh issue` command needs it. Without it a pull request is opened and commented on with `gh api` over REST (`repos/<repo>/pulls`, `repos/<repo>/issues/<n>/comments`), as a pool task is told. With `egress.github.ownRefs` (which refuses `graphql`) one GraphQL call still passes, through exec-pool-push-filter: `markPullRequestReadyForReview` of the task's own `pool/<id>` pull request (`gh api graphql`, its id from the REST `node_id`), at most 20 pull request reads per slot in 10 min; msi's reach it through acer's sidecar as its filter's slot `.fleet` (160 reads), which needs an `ownRefs` slot on acer too |
 | `telemetry` | the host's `nativeOtel` | on by default on a `nativeOtel` host, so every environment's work can be reviewed later; `false` opts one out. The guest's Claude exports OTLP metrics and events (no content), and its Codex metrics, as `host.name=<host>,worker.name=<name>` to its `127.0.0.1:4319`, which `otlp.sock` passes (`POST` to exactly `/v1/metrics` or `/v1/logs`, bodies up to 1MiB, stamped `X-Otel-Worker: <name>` over whatever the guest sent; the stamp names the worker on logs and on metric points as `worker`) to the host's `native-otel-relay`; the relay adds the token, which never enters the guest, and limits each environment to 20 requests/s (burst 50) apart from the host's own clients. Setting it `true` on a host without `sam.profile.nativeOtel` fails evaluation; setting `sam.claude.telemetry` in a guest module instead fails too. acer, msi and asus are `nativeOtel` hosts (lenovo too, which runs no environments). Details in [native-otel-canary.md](native-otel-canary.md) |
 | `memory.reserved` | `"2G"` | `MemoryMin`: never reclaimed for a neighbour; above it, whatever the pool has idle |
 | `cpu.reserved` | `2` | cores: `CPUWeight` 100 per core, its share under contention; idle cores are all usable |
@@ -200,6 +200,18 @@ rose), within 2 minutes; and when the state directory or `/nix` has under 10G
 free, within 2 minutes and then at most hourly per directory. A send that fails
 is retried at the next 2 minute run. `sam.workers.ntfyUrl = null` turns all of
 it off (`services.devEnvironments.alert` is the program they call).
+
+### ExecPoolReplyUnread
+
+A session's last turn parked as `turn_end` (its final reply written, often a pull request open) over 15 minutes ago,
+for 5 minutes, with nothing unread in its inbox (no message, no `send --at` timer): `exec_pool_waiting_oldest_seconds{reason="turn_end"}`,
+which acer's queue renders per host and park reason, from the park's event. A shipped session is cancelled and a
+sent message re-queues it, so neither counts.
+
+1. On acer, `exec-pool list --limit 200`: the sessions waiting on `turn_end` (the list is newest first).
+2. `exec-pool status ID` for each: its reply and pull request.
+3. Ship it (review, merge) and close it with `exec-pool cancel ID`, or send it on with
+   `exec-pool send ID --prompt TEXT`. The alert clears at the next scrape after the last one is closed or sent.
 
 
 ## Pause and resume

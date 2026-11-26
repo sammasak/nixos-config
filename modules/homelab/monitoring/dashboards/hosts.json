@@ -522,11 +522,11 @@
               }
             ]
           },
-          "noValue": "no systemd data"
+          "noValue": "no systemd data (systemd collector failed?)"
         },
         "overrides": []
       },
-      "description": "Failed service, socket, timer, target and path units; the exporter leaves out mounts, devices, scopes, slices and automounts."
+      "description": "Failed service, socket, timer, target and path units; the exporter leaves out mounts, devices, scopes, slices and automounts. No value while the host is up means its systemd collector failed (NodeSystemdCollectorFailed)."
     },
     {
       "id": 14,
@@ -614,7 +614,7 @@
       },
       "targets": [
         {
-          "expr": "max by (name) (node_systemd_unit_state{state=\"failed\",node=\"$node\"} == 1)",
+          "expr": "max by (name) (node_systemd_unit_state{state=\"failed\",node=\"$node\"} == 1) or label_replace(max(node_scrape_collector_success{collector=\"systemd\",node=\"$node\"} == 0), \"name\", \"systemd collector failed\", \"\", \"\")",
           "legendFormat": "{{node}}",
           "format": "table",
           "instant": true,
@@ -627,6 +627,7 @@
         },
         "overrides": []
       },
+      "description": "The row \"systemd collector failed\" is added while this host's systemd collector fails; its units cannot all be read then, but real failed units it still reported can appear with that row (NodeSystemdCollectorFailed).",
       "transformations": [
         {
           "id": "organize",
@@ -664,11 +665,12 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "s"
+          "unit": "s",
+          "noValue": "no timer data (systemd collector failed?)"
         },
         "overrides": []
       },
-      "description": "Every systemd timer on the host: the power schedule, backups, the gate records. A timer that never ran is left out.",
+      "description": "Every systemd timer on the host: the power schedule, backups, the gate records. A timer that never ran is left out. No value while the host is up means its systemd collector failed (NodeSystemdCollectorFailed).",
       "transformations": [
         {
           "id": "organize",

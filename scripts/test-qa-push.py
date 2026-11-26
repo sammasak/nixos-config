@@ -6,7 +6,11 @@ missing or unreadable record included, gets the fast set (the push lints, the pu
 result=owed mode=fast gate record, and records no green tree. Through a real git push, a linked worktree is judged on
 the pushed commit, not on its own HEAD. The push eval runs under the light-work lock, its record's wait apart from
 its run (seeded: a held lock). nixos:qa's step runner, seeded with two red steps: a manual run ends at the first, a
-scheduled one runs every step and ends red naming each; a step that reads a red probe is skipped, not red."""
+scheduled one runs every step and ends red naming each; a step that reads a red probe is skipped, not red. The eval
+record (scripts/eval_record.py): a pushed tree whose flake show passed before under this nix skips the push eval (a
+cached step record, still owed); the push eval and the flake check record a pass on a clean tree, the flake check reads
+it for its flake show (seeded: NIXOS_EVAL_RECORD=0, another nix, another tree, corrupt, dirty, failed). A docs push's
+doc tests build no whole probe, a section alone is built under the light lock."""
 import json
 import os
 import pathlib
@@ -19,6 +23,9 @@ import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 failed = 0
+# a nix that only says its version, for the eval record's key (scripts/eval_record.py)
+NIX_STUB = '#!/usr/bin/env bash\n[ "$1" = --version ] && echo "${NIX_STUB_VERSION:-nix (Nix) 2.0-test}"\n'
+NIXV = "nix (Nix) 2.0-test"
 
 
 def check(ok, what):
@@ -39,7 +46,7 @@ if not lh:
 LIGHT_HELD = textwrap.dedent(lh.group(1)).replace("''${", "\0d").replace("${pkgs.util-linux}/bin/flock", "flock")
 
 
-def render(qa, lints, gen, docs, fresh, push_lints, ev, record, light):
+def render(qa, lints, gen, docs, fresh, push_lints, ev, record, light, evrec):
     """The hook as writeShellApplication would build it, with qa (its store path keys a green), the lints, the push's
     lints and eval, the record helper, the doc readers' tests, the devenv-fresh guard and /run/current-system replaced."""
     if re.search(r"\bdate\b", BODY):
@@ -47,7 +54,7 @@ def render(qa, lints, gen, docs, fresh, push_lints, ev, record, light):
     text = (BODY.replace("${lib.getExe qa}", str(qa)).replace("${run lints}", str(lints)).replace("${lib.getExe docTests}", str(docs))
             .replace("${lib.getExe devenvFresh}", str(fresh)).replace("${run pushLints}", str(push_lints))
             .replace("${lib.getExe pushEval}", str(ev)).replace("${pushEval.name}", "nixos-push-eval")
-            .replace("${lib.getExe record}", str(record))
+            .replace("${lib.getExe record}", str(record)).replace("${lib.getExe evalRecord}", str(evrec))
             .replace("${lightHeld}", LIGHT_HELD.replace("/run/work-locks/light-work.lock", str(light))))
     left = re.findall(r"\$\{[^}]*\}", text)
     if left:
@@ -80,6 +87,12 @@ with tempfile.TemporaryDirectory() as t:
     records = t / "records"
     record = t / "record"
     record.write_text(f'#!/usr/bin/env bash\necho "$PLATFORM_RECORD_STRICT $*" >> "{records}"\n')
+    # scripts/eval_record.py as the gate builds it, under a stub nix whose version NIX_STUB_VERSION sets
+    (t / "nixbin").mkdir()
+    (t / "nixbin/nix").write_text(NIX_STUB)
+    (t / "nixbin/nix").chmod(0o755)
+    evrec = t / "eval-record"
+    evrec.write_text(f'#!/usr/bin/env bash\nPATH="{t}/nixbin:$PATH" exec python3 {ROOT}/scripts/eval_record.py "$@"\n')
     fresh = t / "devenv-fresh"
     fresh.write_text('#!/usr/bin/env bash\n[ -z "${DEVENV_STALE:-}" ] || { echo "nixos-qa: refused: stub stale devenv" >&2; exit 1; }\n')
     gates = {}
@@ -88,13 +101,15 @@ with tempfile.TemporaryDirectory() as t:
         # the hook never runs the full gate: FULL in the log is a failure of every case
         qa.write_text(f'#!/usr/bin/env bash\necho FULL >> "{log}"\n')
         gates[name] = t / f"gate-{name}.sh"
-        gates[name].write_text(render(qa, lints, gen, docs, fresh, push_lints, ev, record, light))
-    for f in (lints, docs, fresh, push_lints, ev, record, t / "qa", t / "qa-other", *gates.values()):
+        gates[name].write_text(render(qa, lints, gen, docs, fresh, push_lints, ev, record, light, evrec))
+    for f in (lints, docs, fresh, push_lints, ev, record, evrec, t / "qa", t / "qa-other", *gates.values()):
         f.chmod(0o755)
 
+    # nor what nixos:qa exports to its steps (PLATFORM_RECORD_STRICT=1, NIXOS_QA_MODE, ...): the hook sets its own
     env = {k: v for k, v in os.environ.items()
-           if not k.startswith(("GIT_", "PRE_COMMIT_")) and k not in ("NIXOS_QA_TIMES", "GATE_PROBE", "WORK_LOCKS_HELD")}
-    env.update(HOME=str(t), GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null", GIT_AUTHOR_NAME="t",
+           if not k.startswith(("GIT_", "PRE_COMMIT_", "NIXOS_QA_", "PLATFORM_RECORD_", "HEAVY_LOCK_"))
+           and k not in ("GATE_PROBE", "WORK_LOCKS_HELD", "NIXOS_EVAL_RECORD", "NIX_STUB_VERSION")}
+    env.update(HOME=str(t), XDG_STATE_HOME=str(t / "state"), GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null", GIT_AUTHOR_NAME="t",
                GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
     repo, bare = t / "repo", t / "bare.git"
 
@@ -364,6 +379,36 @@ with tempfile.TemporaryDirectory() as t:
     check(" wait_seconds=0 result=pass" in step, f"LN no lock file: the eval unlocked, no wait ({step!r})")
     light.touch()
 
+    # the eval record (scripts/eval_record.py): a tree whose flake show passed before under this nix skips the push eval
+    state = t / "state/nixos-eval-records"
+    rq = commit({"flake.nix": "recorded\n"}, "recorded")
+    tree_rq = git("rev-parse", "HEAD^{tree}")
+
+    def seed(name, **fields):
+        state.mkdir(parents=True, exist_ok=True)
+        (state / f"{name}.json").write_text(json.dumps({"tree": name, "nix": NIXV, "flake_show": "ok", "flake_kinds": "[]", **fields}))
+
+    records.write_text("")
+    case("RM no record of the pushed tree: the push eval runs", rq, "FAST")
+    seed(tree_rq)
+    records.write_text(""), times.write_text("")
+    got, _ = gate(rq)
+    step, _, rest = records.read_text().partition("\n")
+    check(got == "PUSHLINTS" and re.fullmatch(rf" gate-step gate=nixos-qa-push step=nixos-push-eval seconds=0 wait_seconds=0 result=cached sha={rq[:7]}", step)
+          and re.match(rf"1 gate gate=nixos-qa-push .*result=owed .*head={rq} ", rest)
+          and f"nixos-push-eval skipped: tree {tree_rq[:12]} passed it before under this nix" in times.read_text()
+          and f"full QA not run for {rq}, owed" in times.read_text(),
+          f"RH the pushed tree's flake show recorded under this nix: no push eval, a cached step record, still owed ({got}, {step!r}, {rest!r})")
+    case("RS NIXOS_EVAL_RECORD=0: the record is not read", rq, "FAST", NIXOS_EVAL_RECORD="0")
+    case("RV a record of another nix is not used", rq, "FAST", NIX_STUB_VERSION="nix (Nix) 9.9")
+    (state / f"{tree_rq}.json").write_text(json.dumps({"tree": "c" * 40, "nix": NIXV, "flake_show": "ok", "flake_kinds": "[]"}))
+    seed("c" * 40)
+    case("RO another tree's records, one under this tree's name, are not used", rq, "FAST")
+    for bad in ("{", json.dumps({"tree": tree_rq, "nix": NIXV, "flake_show": "ok"}), "\0\xff",
+                json.dumps({"tree": tree_rq, "nix": NIXV, "flake_show": "ok", "flake_kinds": "{"})):
+        (state / f"{tree_rq}.json").write_text(bad)
+        case(f"RC a corrupt record ({bad[:20]!r}) is a miss", rq, "FAST")
+
     # a hook built before the pushed tree's devenv files changed (a shell entered before a merge) is refused before
     # any gate, lints-only and green paths included; it records nothing
     stale = commit({"devenv.nix": "changed after entry\n"}, "stale")
@@ -528,8 +573,9 @@ if fc:
             body = textwrap.dedent(fc.group(1)).replace("${pkgs.coreutils}/bin/uname", str(t / "uname"))
             heavy = re.search(r'\n *gateHeavy = "([^"]*)";\n', src)
             body = body.replace("${gateHeavy}", heavy.group(1) if heavy else "").replace("''$", "$")
-            # every built check writes a gate-step record; this test reads only what is built
-            body = body.replace("${lib.getExe record}", "true")
+            # every built check writes a gate-step record; this test reads only what is built. No eval record: the cwd
+            # is this checkout (its own cases are below)
+            body = body.replace("${lib.getExe record}", "true").replace("${lib.getExe evalRecord}", "false")
             body = body.replace("${flakeKinds}", json.dumps(kinds, separators=(",", ":")))
             run = subprocess.run(["bash", "-euo", "pipefail", "-c", body], capture_output=True, text=True,
                                  env={**os.environ, "PATH": f"{t}:{os.environ['PATH']}"})
@@ -543,6 +589,161 @@ if fc:
             else:
                 check(run.returncode == 0 and vm_built and "refused" not in run.stderr,
                       f"on msi the VM check is booted ({run.stderr[-300:]!r})")
+
+
+# the push eval (pushEval) and the flake check (flakeCheck) as writers and readers of the eval record
+# (scripts/eval_record.py), each on a throwaway repository with nix stubbed: a pass on a clean tree is recorded with
+# its output kinds (and the flake check's host toplevels); a failure or a dirty checkout records nothing; the flake
+# check's flake show is not run for a recorded tree, unless NIXOS_EVAL_RECORD=0, the checkout is dirty, or the record is
+# another tree's; recorded kinds that differ from flakeKinds still fail the step
+pe = re.search(r"\n  pushEval =\s+gate\s+\"nixos-push-eval\".*?''\n(.*?)\n *'';\n", src, re.DOTALL)
+check(pe is not None and fc is not None, "pushEval and flakeCheck found in devenv.nix")
+if pe and fc:
+    with tempfile.TemporaryDirectory() as t:
+        t = pathlib.Path(t)
+        kinds = json.loads((ROOT / "scripts/flake-output-kinds.json").read_text())
+        flake_kinds = json.dumps(sorted(kinds), separators=(",", ":"))
+        calls, recs = t / "calls", t / "records"
+        drv = "/nix/store/" + "d" * 32 + "-nixos-system-h1.drv"
+        (t / "bin").mkdir()
+        (t / "bin/nix").write_text(
+            "#!/usr/bin/env python3\nimport json, os, sys\na = sys.argv[1:]\n"
+            f"if a == ['--version']: print(os.environ.get('NIX_STUB_VERSION', {NIXV!r})); sys.exit()\n"
+            f"open({str(calls)!r}, 'a').write(' '.join(a) + '\\n')\n"
+            f"names = {{'nixosConfigurations': ['h1'], 'formatter': [], 'packages': [], 'checks': ['x86_64-linux'], 'checks.x86_64-linux': ['plain']}}\n"
+            "attr = next((x[2:] for x in a if x.startswith('.#')), '')\n"
+            f"if a[:2] == ['flake', 'show']: print(json.dumps({{k: 0 for k in os.environ.get('KINDS', ' '.join({kinds!r})).split()}})); sys.exit(int(os.environ.get('SHOW_RC', 0)))\n"
+            "if a[:1] == ['build'] and '--dry-run' not in a: sys.exit(int(os.environ.get('BUILD_RC', 0)))\n"
+            "if '--expr' in a: print('x86_64-linux', end='')\n"
+            "elif any('? driver' in x for x in a): print('[]')\n"
+            "elif 'builtins.attrNames' in a: print(json.dumps(names.get(attr, [])))\n"
+            f"elif a[:2] == ['eval', '--raw'] and attr.endswith('toplevel.drvPath'): print({drv!r}, end='')\n"
+            "elif a[:2] == ['eval', '--raw'] and attr.endswith('.drvPath'): print('/nix/store/' + 'e' * 32 + '-c.drv', end='')\n")
+        (t / "bin/nix-store").write_text("#!/usr/bin/env bash\nexit 0\n")
+        (t / "bin/uname").write_text("#!/usr/bin/env bash\necho msi-ms7758\n")
+        (t / "record").write_text(f'#!/usr/bin/env bash\necho "$*" >> "{recs}"\n')
+        evr = t / "eval-record"
+        evr.write_text(f'#!/usr/bin/env bash\nexec python3 {ROOT}/scripts/eval_record.py "$@"\n')
+        for f in (t / "bin/nix", t / "bin/nix-store", t / "bin/uname", t / "record", evr):
+            f.chmod(0o755)
+        heavy = re.search(r'\n *gateHeavy = "([^"]*)";\n', src)
+
+        def body_of(m):
+            return (textwrap.dedent(m.group(1)).replace("${pkgs.coreutils}/bin/uname", str(t / "bin/uname"))
+                    .replace("${gateHeavy}", heavy.group(1) if heavy else "").replace("${lib.getExe record}", str(t / "record"))
+                    .replace("${lib.getExe evalRecord}", str(evr)).replace("${flakeKinds}", json.dumps(kinds, separators=(",", ":")))
+                    .replace("''$", "$"))
+        bodies = {"push": body_of(pe), "flake": body_of(fc)}
+        left = {k: re.findall(r"\$\{(?:lib|pkgs|flakeKinds|gateHeavy)[^}]*\}", b) for k, b in bodies.items()}
+        check(not any(left.values()), f"pushEval and flakeCheck have no Nix interpolation this test does not stub ({left})")
+        pr = t / "repo"
+        pr.mkdir()
+        genv = {k: v for k, v in os.environ.items() if not k.startswith("GIT_") and k not in ("NIXOS_EVAL_RECORD", "NIXOS_QA_TOPLEVELS", "WORK_LOCKS_HELD")}
+        (t / "tmp").mkdir()
+        genv.update(PATH=f"{t / 'bin'}:{os.environ['PATH']}", XDG_STATE_HOME=str(t / "state"), HOME=str(t), TMPDIR=str(t / "tmp"), GIT_CONFIG_NOSYSTEM="1",
+                    GIT_CONFIG_GLOBAL="/dev/null", GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+        for a in (["init", "-q"], ["commit", "-q", "--allow-empty", "-m", "x"]):
+            subprocess.run(["git", *a], cwd=pr, env=genv, check=True)
+        (pr / "flake.nix").write_text("{ }\n")
+        subprocess.run(["git", "add", "."], cwd=pr, env=genv, check=True)
+        subprocess.run(["git", "commit", "-qm", "f"], cwd=pr, env=genv, check=True)
+        ptree = subprocess.run(["git", "rev-parse", "HEAD^{tree}"], cwd=pr, env=genv, check=True, capture_output=True, text=True).stdout.strip()
+        rfile = t / "state/nixos-eval-records" / f"{ptree}.json"
+
+        def run_(which, **extra):
+            calls.write_text(""), recs.write_text("")
+            r = subprocess.run(["bash", "-euo", "pipefail", "-c", bodies[which]], cwd=pr, env={**genv, **extra}, capture_output=True, text=True, check=False)
+            showed = any(c.startswith("flake show") for c in calls.read_text().splitlines())
+            return r.returncode, showed, json.loads(rfile.read_text()) if rfile.exists() else None, r.stderr, recs.read_text()
+
+        rc, showed, rec, err, _ = run_("push")
+        check(rc == 0 and showed and rec == {"tree": ptree, "nix": NIXV, "flake_show": "ok", "flake_kinds": flake_kinds},
+              f"PE a passing push eval on a clean tree records its flake show and output kinds ({rc}, {rec}, {err[-300:]!r})")
+        rfile.unlink()
+        rc, showed, rec, err, _ = run_("push", SHOW_RC="1")
+        check(rc != 0 and showed and rec is None, f"PE seeded: a failed push eval records nothing ({rc}, {rec})")
+        (pr / "untracked").write_text("x\n")
+        rc, showed, rec, err, _ = run_("push")
+        (pr / "untracked").unlink()
+        check(rc == 0 and rec is None, f"PE seeded: a dirty checkout (an untracked file) records nothing ({rc}, {rec})")
+        rc, showed, rec, err, rr = run_("flake")
+        check(rc == 0 and showed and rec == {"tree": ptree, "nix": NIXV, "flake_show": "ok", "flake_kinds": flake_kinds, "toplevel": {"h1": drv}}
+              and "result=cached" not in rr,
+              f"FC a miss: the flake check runs its flake show and records it with each host's toplevel ({rc}, {rec}, {err[-300:]!r})")
+        rc, showed, rec, err, rr = run_("flake")
+        check(rc == 0 and not showed and "flake show skipped: tree" in err and "(eval record; NIXOS_EVAL_RECORD=0 runs it)" in err
+              and re.search(r"^gate-step gate=nixos-qa step=nixos-flake-check check=flake-output-kinds owner=msi-ms7758 seconds=0 result=cached ", rr, re.MULTILINE),
+              f"FC a hit: no flake show, said so, and a cached gate-step record for it ({rc}, {err[-300:]!r}, {rr!r})")
+        rc, showed, rec, err, rr = run_("flake", NIXOS_EVAL_RECORD="0")
+        check(rc == 0 and showed, f"FC NIXOS_EVAL_RECORD=0: the flake show runs ({rc})")
+        rc, showed, rec, err, rr = run_("flake", NIX_STUB_VERSION="nix (Nix) 9.9")
+        check(rc == 0 and showed and rec["nix"] == "nix (Nix) 9.9", f"FC another nix's record is not used, and is replaced ({rc}, {rec})")
+        rfile.write_text(json.dumps({**rec, "nix": NIXV, "flake_kinds": '["checks"]'}))
+        rc, showed, rec, err, rr = run_("flake")
+        check(rc == 1 and not showed and "flake outputs are [\"checks\"]: add the new kind" in err and "result=cached" not in rr,
+              f"FC seeded: recorded kinds that differ from the step's still fail it, with no cached record ({rc}, {err[-300:]!r}, {rr!r})")
+        rfile.write_text(json.dumps({"tree": ptree, "nix": NIXV, "flake_show": "ok", "flake_kinds": flake_kinds}))
+        (pr / "flake.nix").write_text("{ dirty = 1; }\n")
+        rc, showed, rec, err, rr = run_("flake")
+        subprocess.run(["git", "checkout", "-q", "--", "flake.nix"], cwd=pr, env=genv, check=True)
+        check(rc == 0 and showed and "toplevel" not in rec,
+              f"FC seeded: a modified tracked file: the record is neither read nor written ({rc}, {rec})")
+        other = t / "state/nixos-eval-records" / f"{'f' * 40}.json"
+        rfile.rename(other)
+        rc, showed, rec, err, rr = run_("flake")
+        check(rc == 0 and showed, f"FC seeded: another tree's record is not used ({rc})")
+        rfile.unlink()
+        rc, showed, rec, err, rr = run_("flake", BUILD_RC="1")
+        check(rc != 0 and rec is None, f"FC seeded: a failed flake check records nothing ({rc}, {rec})")
+        check(list((t / "tmp").iterdir()) == [], f"the flake check leaves no temporary toplevels file ({list((t / 'tmp').iterdir())})")
+
+# a docs push's doc tests (docTests) build no whole probe: each test builds only its section, under the light lane
+dt = re.search(r"\n  docTests =\s+gate\s+\"nixos-doc-tests\".*?''\n(.*?)\n *'';\n", src, re.DOTALL)
+check(dt is not None and "getExe probe" not in dt.group(1) and "unset GATE_PROBE" in dt.group(1),
+      "docTests builds no whole probe and leaves each test to build its own section")
+sys.path.insert(0, str(ROOT / "scripts"))
+import gate_probe
+
+with tempfile.TemporaryDirectory() as t:
+    t = pathlib.Path(t)
+    lock = t / "light"
+    lock.touch()
+    (t / "bin").mkdir()
+    (t / "out.json").write_text('{"s": 1}')
+    (t / "bin/nix").write_text(
+        f'#!/usr/bin/env bash\ninh=; for f in /proc/self/fd/*; do [ "$(readlink "$f")" != {lock} ] || inh=inherited; done\n'
+        f'{{ flock -n {lock} true && echo free || echo held; echo "${{WORK_LOCKS_HELD:-}} $inh"; }} | paste -sd" " > {t}/state\n'
+        f'echo "$*" > {t}/argv\necho {t}/out.json\n')
+    (t / "bin/nix").chmod(0o755)
+    saved = (os.environ.get("PATH", ""), gate_probe.LIGHT, os.environ.pop("GATE_PROBE", None), os.environ.pop("WORK_LOCKS_HELD", None))
+    os.environ["PATH"], gate_probe.LIGHT = f"{t / 'bin'}:{saved[0]}", str(lock)
+    try:
+        got = gate_probe.section("s")
+        check(got == 1 and (t / "state").read_text().split() == ["held", "1"] and 'only = [ "s" ]' in (t / "argv").read_text(),
+              f"a section built alone is built under the light lock, marked as held, the lock not inherited ({(t / 'state').read_text()!r})")
+        os.environ["WORK_LOCKS_HELD"] = "1"
+        gate_probe.section("s")
+        check((t / "state").read_text().split() == ["free", "1"], "under a caller's light hold the section does not take it again")
+        os.environ.pop("WORK_LOCKS_HELD", None)
+        holder = subprocess.Popen(["flock", str(lock), "sleep", "4"])
+        while subprocess.run(["flock", "-n", str(lock), "true"], check=False).returncode == 0:
+            time.sleep(0.05)
+        (t / "argv").write_text("")
+        gate_probe.LIGHT_WAIT = 1
+        try:
+            gate_probe.section("s")
+            gave_up = ""
+        except SystemExit as e:
+            gave_up = str(e)
+        holder.kill(), holder.wait()
+        check("still held after 1 s" in gave_up and (t / "argv").read_text() == "",
+              f"seeded: a light lock held past the wait gives up, saying so, and builds nothing ({gave_up!r})")
+    finally:
+        os.environ["PATH"], gate_probe.LIGHT = saved[0], saved[1]
+        os.environ.pop("WORK_LOCKS_HELD", None)
+        for k, v in (("GATE_PROBE", saved[2]), ("WORK_LOCKS_HELD", saved[3])):
+            if v is not None:
+                os.environ[k] = v
 
 print(f"{failed} failed" if failed else "all passed")
 sys.exit(1 if failed else 0)

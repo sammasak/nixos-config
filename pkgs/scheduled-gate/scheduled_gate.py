@@ -225,7 +225,8 @@ def run(repo: str, state_dir: pathlib.Path, metrics: pathlib.Path) -> int:
     write_metrics(metrics, st, time.time(), main)
     red = ", ".join(step + (f" (check {check})" if check else "") for step, _, check in
                     (u.partition("\t") for u in st.failed))
-    say(f"{st.result} on {main[:12]} in {st.seconds:g} s" + (f", {len(st.failed)} failed step(s): {red}" if red else ""))
+    suffix = f", {len(st.failed)} failed step(s): {red}" if red else ""
+    say(f"{st.result} on {main[:12]} in {st.seconds:g} s" + suffix)
     # a red gate is ScheduledGateRed's to report; a failed unit means the scheduler itself broke
     return 0
 

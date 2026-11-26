@@ -514,7 +514,7 @@
           }
         ]
       },
-      "description": "One row per host: status, uptime, CPU %, memory %, root filesystem %, hottest sensor, alerts firing on it, failed units, NixOS generation, version and toplevel hash (the deploy log below carries the commit).",
+      "description": "One row per host: status, uptime, CPU %, memory %, root filesystem %, hottest sensor, alerts firing on it, failed units, NixOS generation, version and toplevel hash (the deploy log below carries the commit). A blank failed-units cell on an up host means its systemd collector failed (NodeSystemdCollectorFailed).",
       "transformations": [
         {
           "id": "merge",
@@ -561,7 +561,7 @@
       },
       "targets": [
         {
-          "expr": "max by (node, name) (node_systemd_unit_state{state=\"failed\",node=~\"$node\"} == 1)",
+          "expr": "max by (node, name) (node_systemd_unit_state{state=\"failed\",node=~\"$node\"} == 1) or label_replace(max by (node) (node_scrape_collector_success{collector=\"systemd\",node=~\"$node\"} == 0), \"name\", \"systemd collector failed\", \"\", \"\")",
           "legendFormat": "{{node}}",
           "format": "table",
           "instant": true,
@@ -574,7 +574,7 @@
         },
         "overrides": []
       },
-      "description": "Every failed service, socket, timer, target or path unit now, on every awake host (a sleeping host has no current series). The exporter leaves out mounts, devices, scopes, slices and automounts.",
+      "description": "Every failed service, socket, timer, target or path unit now, on every awake host (a sleeping host has no current series). The exporter leaves out mounts, devices, scopes, slices and automounts. A host whose systemd collector fails gets the row \"systemd collector failed\" added to the table; its units cannot all be read then, but real failed units it still reported can appear with that row (NodeSystemdCollectorFailed).",
       "transformations": [
         {
           "id": "organize",

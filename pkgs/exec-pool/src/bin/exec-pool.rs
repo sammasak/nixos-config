@@ -62,7 +62,9 @@ const USAGE: &str = "usage: exec-pool COMMAND
                     GitHub as gh finds it ({number, state open|closed|merged, merged_at, url, head}; null with none,
                     and pr_error when gh could not tell), and rescued: true when it merged at another commit than
                     the one the task pushed (head), null when either is not known. --merged: only those whose pull request merged. --report FILE:
-                    only those merged, out of a slot and the queue, that FILE does not list yet, each then added to it
+                    of those out of a slot and the queue, one line per merged pull request of the branch that FILE
+                    does not list yet, each then added to it; a session's later lines carry only the cost added since
+                    its line before (cost_usd) and the pull requests reported before them (cost_shared_with)
   cancel ID         cancels a task you submitted: a queued one, or one in needs_review, at once; a running one is
                     stopped by its runner within seconds and settles cancelled (follow it with wait). Prints the
                     attempt and its status after";
@@ -412,39 +414,161 @@ fn sessions(store: &mut Store, args: &Args) -> Result<(), Fail> {
             .ok_or_else(|| Fail::Usage("--limit must be a positive number".to_owned()))
     })?;
     let report = args.opt("report").map(std::path::Path::new);
-    let reported: BTreeSet<String> = match report {
-        None => BTreeSet::new(),
+    let reported = match report {
+        None => BTreeMap::new(),
         Some(f) => match std::fs::read_to_string(f) {
-            Ok(s) => s.lines().map(str::to_owned).collect(),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => BTreeSet::new(),
+            Ok(s) => read_reported(&s),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => BTreeMap::new(),
             Err(e) => return Err(Fail::Usage(format!("--report {}: {e}", f.display()))),
         },
     };
     for summary in store.session_summaries(args.positional.first().map(String::as_str), limit)? {
+        let Some(f) = report else {
+            let summary = with_pull(summary);
+            if args.opt("merged").is_some() && !merged(&summary) {
+                continue;
+            }
+            println!("{summary}");
+            continue;
+        };
+        if !out_of_the_pool(&summary) {
+            continue;
+        }
+        // a reported session is asked again: it may since have merged another pull request from its branch
+        let pulls = match pulls(&summary) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!(
+                    "exec-pool: {}: {e}",
+                    summary.get("task").unwrap_or(&Value::Null)
+                );
+                continue;
+            }
+        };
         let task = summary
             .get("task")
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_owned();
-        if report.is_some() && (reported.contains(&task) || !out_of_the_pool(&summary)) {
-            continue;
-        }
-        let summary = with_pull(summary);
-        if (args.opt("merged").is_some() || report.is_some()) && !merged(&summary) {
-            continue;
-        }
-        println!("{summary}");
-        if let Some(f) = report {
+        for (line, records) in report_lines(&summary, &pulls, reported.get(&task)) {
             use std::io::Write as _;
             std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(f)
-                .and_then(|mut f| writeln!(f, "{task}"))
+                .and_then(|mut f| records.iter().try_for_each(|r| writeln!(f, "{r}")))
                 .map_err(|e| Fail::Usage(format!("--report {}: {e}", f.display())))?;
+            // recorded before it is logged: a lost line, not one counted twice
+            println!("{line}");
         }
     }
     Ok(())
+}
+
+/// What a report file records of one session: a bare `task` line (all a binary from before per-PR lines wrote), and
+/// a `task NUMBER COST` line per pull request reported, COST the `cost_usd` its line logged (`-` for none).
+#[derive(Debug, Default, PartialEq)]
+struct Reported {
+    bare: bool,
+    prs: BTreeSet<u64>,
+    cost_usd: f64,
+    unpriced: bool,
+}
+
+fn read_reported(text: &str) -> BTreeMap<String, Reported> {
+    let mut all: BTreeMap<String, Reported> = BTreeMap::new();
+    for line in text.lines() {
+        let mut words = line.split_whitespace();
+        let Some(task) = words.next() else { continue };
+        let r = all.entry(task.to_owned()).or_default();
+        match (words.next().and_then(|n| n.parse().ok()), words.next()) {
+            (Some(n), Some(cost)) => {
+                r.prs.insert(n);
+                match cost.parse::<f64>() {
+                    Ok(c) => r.cost_usd += c,
+                    Err(_) => r.unpriced = true,
+                }
+            }
+            _ => r.bare = true,
+        }
+    }
+    all
+}
+
+/// The report's lines for a session out of the pool, one per merged pull request of `pulls` (its branch's, oldest
+/// first) that `prior` has not recorded, each with the records to append for it. The first line of a session is
+/// today's summary with `pr` and `rescued`.
+fn report_lines(
+    summary: &Value,
+    pulls: &[Value],
+    prior: Option<&Reported>,
+) -> Vec<(Value, Vec<String>)> {
+    let task = summary["task"].as_str().unwrap_or_default();
+    let newest = pulls.last().map(|p| &p["number"]);
+    let mut merged_prs = pulls.iter().filter(|p| p["state"] == "merged");
+    let mut earlier: Vec<u64> = prior
+        .map(|r| r.prs.iter().copied().collect())
+        .unwrap_or_default();
+    // a bare line alone is from a binary before per-PR lines: taken as the oldest merged one, its cost not kept
+    let legacy = prior.is_some_and(|r| r.bare && r.prs.is_empty());
+    let mut assumed = None;
+    if legacy {
+        assumed = merged_prs.next().and_then(|p| p["number"].as_u64());
+        earlier.extend(assumed);
+    }
+    let mut logged = prior.map_or(0.0, |r| r.cost_usd);
+    let mut unpriced = legacy || prior.is_some_and(|r| r.unpriced);
+    let mut lines = Vec::new();
+    for pr in merged_prs {
+        let Some(number) = pr["number"].as_u64() else {
+            continue;
+        };
+        if earlier.contains(&number) {
+            continue;
+        }
+        let mut line = summary.clone();
+        let rescued = if Some(&pr["number"]) == newest {
+            rescued(pr, summary.get("head").unwrap_or(&Value::Null))
+        } else {
+            Value::Null
+        };
+        let mut records = Vec::new();
+        if let Some(fields) = line.as_object_mut() {
+            fields.insert("pr".to_owned(), pr.clone());
+            fields.insert("rescued".to_owned(), rescued);
+            // cost: a session's first line carries all of it so far, each later one only what was added since
+            if !earlier.is_empty() {
+                let cost = fields.get("cost_usd").and_then(Value::as_f64);
+                match cost {
+                    Some(c) if !unpriced => {
+                        let added = ((c - logged) * 1e6).round().max(0.0) / 1e6 + 0.0;
+                        fields.insert("cost_usd".to_owned(), json!(added));
+                    }
+                    Some(_) => {
+                        fields.remove("cost_usd");
+                    }
+                    None => {}
+                }
+                fields.insert("cost_shared_with".to_owned(), json!(earlier));
+            }
+        }
+        if prior.is_none() && earlier.is_empty() {
+            records.push(task.to_owned());
+        }
+        if let Some(n) = assumed.take() {
+            records.push(format!("{task} {n} -"));
+        }
+        if let Some(c) = line.get("cost_usd").and_then(Value::as_f64) {
+            logged += c;
+            records.push(format!("{task} {number} {c}"));
+        } else {
+            unpriced = true;
+            records.push(format!("{task} {number} -"));
+        }
+        earlier.push(number);
+        lines.push((line, records));
+    }
+    lines
 }
 
 /// Whether a session's summary shows it neither in a slot nor queued for one: what it cost is what it will have
@@ -498,16 +622,18 @@ fn listed(repo: &str, list: &str) -> Result<(), String> {
         .ok_or_else(refused)
 }
 
-/// The newest pull request of a GitHub `pulls?head=…&state=all` listing: its number, state (merged once it has a
-/// merge time), merge time and head commit; null when the branch has none.
-fn pull_of(listing: &Value) -> Result<Value, String> {
-    let pulls = listing
+/// The pull requests of a GitHub `pulls?head=…&state=all` listing, oldest first: each one's number, state (merged
+/// once it has a merge time), merge time and head commit.
+fn pulls_of(listing: &Value) -> Result<Vec<Value>, String> {
+    let mut pulls: Vec<&Value> = listing
         .as_array()
-        .ok_or_else(|| format!("GitHub answered {listing}"))?;
-    Ok(pulls
+        .ok_or_else(|| format!("GitHub answered {listing}"))?
         .iter()
-        .max_by_key(|p| p["number"].as_u64())
-        .map_or(Value::Null, |p| {
+        .collect();
+    pulls.sort_by_key(|p| p["number"].as_u64());
+    Ok(pulls
+        .into_iter()
+        .map(|p| {
             let merged_at = &p["merged_at"];
             json!({
                 "number": p["number"],
@@ -516,19 +642,20 @@ fn pull_of(listing: &Value) -> Result<Value, String> {
                 "url": p["html_url"],
                 "head": p.pointer("/head/sha").cloned().unwrap_or(Value::Null),
             })
-        }))
+        })
+        .collect())
 }
 
-/// `summary` with `pr`, its branch `pool/<task>`'s pull request as `gh api` on this host finds it, and `pr_error` when it could
-/// not be told: no GitHub repository, no gh, or a refused call.
-fn with_pull(mut summary: Value) -> Value {
+/// The pull requests of a summary's branch `pool/<task>` as `gh api` on this host finds them, oldest first; the error
+/// says why they could not be told: no GitHub repository, no gh, or a refused call.
+fn pulls(summary: &Value) -> Result<Vec<Value>, String> {
     let task = summary
         .get("task")
         .and_then(Value::as_str)
         .unwrap_or_default();
     // never the branch the session reported: one naming another's would take that pull request
     let branch = format!("pool/{task}");
-    let found = summary
+    summary
         .get("repo")
         .and_then(Value::as_str)
         .and_then(github_repo)
@@ -546,8 +673,13 @@ fn with_pull(mut summary: Value) -> Value {
             }
             serde_json::from_slice(&out.stdout)
                 .map_err(|e| format!("gh api: {e}"))
-                .and_then(|v| pull_of(&v))
-        });
+                .and_then(|v| pulls_of(&v))
+        })
+}
+
+/// `summary` with `pr`, its branch's newest pull request, and `pr_error` when [`pulls`] could not tell.
+fn with_pull(mut summary: Value) -> Value {
+    let found = pulls(&summary).map(|mut p| p.pop().unwrap_or(Value::Null));
     if let Some(fields) = summary.as_object_mut() {
         match found {
             Ok(pr) => {
@@ -929,6 +1061,11 @@ mod tests {
         }
     }
 
+    /// The newest pull request of a listing, as `with_pull` takes it.
+    fn pull_of(listing: &Value) -> Result<Value, String> {
+        Ok(pulls_of(listing)?.pop().unwrap_or(Value::Null))
+    }
+
     #[test]
     fn a_session_s_repository_and_pull_request_are_read_from_what_github_lists() {
         for url in [
@@ -1002,6 +1139,113 @@ mod tests {
             json!({"number": 1, "state": "open"})
         )));
         assert!(!merged(&at("waiting", Value::Null)));
+    }
+
+    /// The report run as `sessions --report` runs it, on `file`'s text: the lines it logs and the text after.
+    fn report(file: &str, summary: &Value, pulls: &[Value]) -> (Vec<Value>, String) {
+        let reported = read_reported(file);
+        let task = summary["task"].as_str().unwrap();
+        let mut text = file.to_owned();
+        let lines = report_lines(summary, pulls, reported.get(task))
+            .into_iter()
+            .map(|(line, records)| {
+                for r in records {
+                    text.push_str(&r);
+                    text.push('\n');
+                }
+                line
+            })
+            .collect();
+        (lines, text)
+    }
+
+    fn merged_pull(number: u64, head: &str) -> Value {
+        json!({"number": number, "state": "merged", "merged_at": "2026-11-26T00:31:00Z", "url": "u", "head": head})
+    }
+
+    fn total(lines: &[Value]) -> f64 {
+        lines.iter().filter_map(|l| l["cost_usd"].as_f64()).sum()
+    }
+
+    #[test]
+    fn a_one_pr_session_logs_today_s_line_once() {
+        let summary = json!({"task": "cli-1", "state": "waiting", "cost_usd": 2.0, "head": "aa"});
+        let pr = merged_pull(839, "aa");
+        let (lines, file) = report("", &summary, std::slice::from_ref(&pr));
+        let mut want = summary.clone();
+        want["pr"] = pr.clone();
+        want["rescued"] = json!(false);
+        assert_eq!(lines, [want]);
+        assert_eq!(
+            lines[0].to_string(),
+            r#"{"cost_usd":2.0,"head":"aa","pr":{"head":"aa","merged_at":"2026-11-26T00:31:00Z","number":839,"state":"merged","url":"u"},"rescued":false,"state":"waiting","task":"cli-1"}"#
+        );
+        assert_eq!(file, "cli-1\ncli-1 839 2\n");
+        let (old, same) = report("cli-1\n", &summary, std::slice::from_ref(&pr));
+        assert!(old.is_empty(), "reported by a binary before per-PR lines");
+        assert_eq!(same, "cli-1\n");
+        let (again, same) = report(&file, &summary, &[pr]);
+        assert!(again.is_empty(), "{again:?}");
+        assert_eq!(same, file);
+    }
+
+    #[test]
+    fn a_session_s_second_merged_pr_logs_a_line_counting_its_cost_once() {
+        let summary = json!({"task": "cli-7", "state": "waiting", "cost_usd": 4.51, "head": "bb"});
+        let pulls = [
+            merged_pull(839, "aa"),
+            json!({"number": 840, "state": "closed", "merged_at": null}),
+            merged_pull(847, "bb"),
+        ];
+        let (lines, file) = report("", &summary, &pulls);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0]["pr"]["number"], 839);
+        assert_eq!(lines[0]["cost_usd"], 4.51);
+        assert_eq!(lines[0]["rescued"], Value::Null, "not the branch's newest");
+        assert_eq!(lines[0].get("cost_shared_with"), None);
+        assert_eq!(lines[1]["pr"]["number"], 847);
+        assert_eq!(lines[1]["cost_shared_with"], json!([839]));
+        assert_eq!(lines[1]["rescued"], json!(false));
+        assert!((total(&lines) - 4.51).abs() < 1e-9);
+        let (again, _) = report(&file, &summary, &pulls);
+        assert!(again.is_empty(), "{again:?}");
+
+        let later = json!({"task": "cli-7", "state": "waiting", "cost_usd": 6.01, "head": "cc"});
+        let mut more = pulls.to_vec();
+        more.push(merged_pull(861, "cc"));
+        let (third, file) = report(&file, &later, &more);
+        assert_eq!(third.len(), 1);
+        assert_eq!(third[0]["pr"]["number"], 861);
+        assert_eq!(third[0]["cost_usd"], 1.5, "only what it added since");
+        assert_eq!(third[0]["cost_shared_with"], json!([839, 847]));
+        assert!(report(&file, &later, &more).0.is_empty());
+    }
+
+    #[test]
+    fn a_session_reported_before_per_pr_lines_logs_its_next_pr_unpriced() {
+        let summary = json!({"task": "cli-7", "state": "waiting", "cost_usd": 4.51, "head": "bb"});
+        let pulls = [merged_pull(839, "aa"), merged_pull(847, "bb")];
+        let (lines, file) = report("cli-7\n", &summary, &pulls);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0]["pr"]["number"], 847);
+        assert_eq!(
+            lines[0].get("cost_usd"),
+            None,
+            "its first line's cost went unrecorded"
+        );
+        assert_eq!(lines[0]["cost_shared_with"], json!([839]));
+        assert_eq!(file, "cli-7\ncli-7 839 -\ncli-7 847 -\n");
+        assert!(report(&file, &summary, &pulls).0.is_empty());
+    }
+
+    #[test]
+    fn an_unpriced_one_shot_s_pull_requests_stay_unpriced() {
+        let summary = json!({"task": "cli-9", "state": "succeeded", "cost_usd": null});
+        let pulls = [merged_pull(5, "aa"), merged_pull(6, "bb")];
+        let (lines, file) = report("", &summary, &pulls);
+        assert_eq!(lines.len(), 2);
+        assert!(lines.iter().all(|l| l["cost_usd"].is_null()));
+        assert_eq!(file, "cli-9\ncli-9 5 -\ncli-9 6 -\n");
     }
 
     #[test]
