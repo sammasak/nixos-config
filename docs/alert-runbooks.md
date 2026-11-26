@@ -532,7 +532,7 @@ First: the "Compaction window on versus off" table in the Agent harnesses dashbo
 per session, turns per session and auto compactions per session per variant. One long session on the on side can carry a
 day; `exec-pool list` names the sessions.
 Rollback: set that slot's `sam.claude.autoCompactWindow` back to null in its host's guest module
-(`hosts/acer-swift/configuration.nix` for acer's `pool2`) and deploy the host; the slot's next turn starts with Claude's
+(`services.devEnvironments.guestModules` in `hosts/<host>/configuration.nix`) and deploy the host; the slot's next turn starts with Claude's
 default. The alert clears when the day's ratio falls under 1.5.
 
 ## PoolCostPerMergedChangeHigh
