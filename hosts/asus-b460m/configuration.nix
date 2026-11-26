@@ -115,6 +115,27 @@ in
     exit 0
   '';
 
+  # In S5 the board's Aura controller keeps +5VSB and its last colour, so the lights stay on once asus stays off
+  # (the xhci unbind above is what lets it). Ordered After nvidia-persistenced, so the stop runs while the GPU's I2C
+  # bus is still up; bounded and non-fatal so it never holds the poweroff. Revisit if the lights still stay on: set
+  # the BIOS "LED lighting" soft-off option to off instead.
+  hardware.i2c.enable = true;
+  services.udev.packages = [ pkgs.openrgb ];
+  systemd.services.rgb-off = {
+    description = "Lights off before poweroff";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "nvidia-persistenced.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      ExecStart = "${pkgs.coreutils}/bin/true";
+      ExecStop = "-${pkgs.openrgb}/bin/openrgb --noautoconnect --mode static --color 000000";
+      TimeoutStopSec = 20;
+      StateDirectory = "rgb-off";
+      Environment = "HOME=/var/lib/rgb-off";
+    };
+  };
+
   services.ollama = {
     enable = true;
     inherit (config.sam.fleet.listeners.ollama-asus) port;
