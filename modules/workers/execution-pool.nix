@@ -141,44 +141,98 @@ in
               m=$((n + 1))
               case ''${!n:-} in
                 eval | path-info | derivation) light ${nix} "$@"; exit ;;
-                flake) case ''${!m:-} in show | metadata | info) light ${nix} "$@"; exit ;; esac ;;
+                # check builds as it evaluates: wholly under the lock
+                flake) case ''${!m:-} in show | metadata | info | check) light ${nix} "$@"; exit ;; esac ;;
                 build)
                   all=("$@")
-                  # each flake attribute's or --expr's drvPath under the lock, its build outside; another form runs unlocked
-                  flags=("''${@:1:n-1}") evalflags=("''${@:1:n-1}") drvs=() exprs=() whole=
+                  # each flake attribute's drvPath, or each attribute's of one --expr or --file, under the lock, its build
+                  # outside; another form runs unlocked
+                  flags=("''${@:1:n-1}") evalflags=("''${@:1:n-1}") attrs=() src=() whole=
                   shift "$n"
                   while [ $# -gt 0 ]; do
                     case $1 in
+                      # a value missing: nix's own refusal
+                      -o | --out-link | --expr | -f | --file | --arg | --argstr) [ $# -ge 2 ] || whole=1 ;;&
+                      --arg | --argstr) [ $# -ge 3 ] || whole=1 ;;&
                       -o | --out-link) flags+=("$1" "''${2:-}"); shift ;;
-                      --expr) exprs+=("''${2:-}"); shift ;;
+                      # the newline ends a trailing comment in E, which nix build reads but --apply would extend
+                      --expr) [ ''${#src[@]} -eq 0 ] || whole=1; src=(--expr "''${2:-}"$'\n'); shift ;;
+                      -f | --file) [ ''${#src[@]} -eq 0 ] || whole=1; src=(--file "''${2:-}"); shift ;;
+                      --arg | --argstr) evalflags+=("$1" "''${2:-}" "''${3:-}"); shift; shift ;;
                       --impure | --show-trace | --no-write-lock-file) flags+=("$1"); evalflags+=("$1") ;;
                       --no-link | -L | --print-build-logs | --print-out-paths | --keep-going | -k | --json | --rebuild | --dry-run) flags+=("$1") ;;
                       -*) whole=1 ;;
                       *^* | *'#') whole=1 ;;
-                      *'#'*) drvs+=("$1") ;;
-                      *) whole=1 ;;
+                      *) attrs+=("$1") ;;
                     esac
                     shift
                   done
-                  # with --expr a positional is an attribute of it, not a flake reference
-                  [ ''${#exprs[@]} -eq 0 ] || { [ ''${#exprs[@]} -eq 1 ] && [ ''${#drvs[@]} -eq 0 ]; } || whole=1
-                  [ -z "$whole" ] && [ $((''${#drvs[@]} + ''${#exprs[@]})) -gt 0 ] || exec ${nix} "''${all[@]}"
-                  # drv^ its default outputs, as nix build would pick them, not ^* (every output)
-                  apply='d: d.drvPath + "^" + builtins.concatStringsSep "," (d.meta.outputsToInstall or [ d.outputName ])'
-                  set -- build "''${flags[@]}"
-                  for e in "''${exprs[@]}"; do
-                    drv=$(light ${nix} eval "''${evalflags[@]}" --raw --expr "$e"$'\n' --apply "$apply") || exit
-                    set -- "$@" "$drv"
+                  # with --expr or --file a positional is an attribute of it, without one a flake reference
+                  for a in "''${attrs[@]}"; do
+                    case $a in *'#'*) [ ''${#src[@]} -eq 0 ] || whole=1 ;; *) [ ''${#src[@]} -gt 0 ] || whole=1 ;; esac
                   done
-                  for i in "''${drvs[@]}"; do
-                    drv=$(light ${nix} eval "''${evalflags[@]}" --raw "$i" --apply "$apply") || exit
-                    set -- "$@" "$drv"
-                  done
-                  exec ${nix} "$@" ;;
+                  [ -z "$whole" ] && [ $((''${#attrs[@]} + ''${#src[@]})) -gt 0 ] || exec ${nix} "''${all[@]}"
+                  # drv^ the outputs nix build would pick (outputSpecified, then meta.outputsToInstall), not ^* (every
+                  # output); with neither, a flake attribute's out and a file's or expression's every output. Anything but
+                  # one derivation (a function to call, a set or list of them) prints nothing: nix build runs it whole.
+                  fallback='[ "out" ]'
+                  [ ''${#src[@]} -eq 0 ] || fallback='d.outputs or [ d.outputName ]'
+                  apply="d: if builtins.isAttrs d && d.type or null == \"derivation\" then d.drvPath + \"^\" + builtins.concatStringsSep \",\" (if d.outputSpecified or false then [ d.outputName ] else d.meta.outputsToInstall or $fallback) else \"\""
+                  [ ''${#attrs[@]} -gt 0 ] || attrs=("")
+                  # every evaluation in one hold, not a wait on the lock per attribute. A drv is unrooted from its
+                  # evaluation to the build (a guest's roots dangle on the host): a host collection between them fails it.
+                  picks=$(light ${pkgs.bash}/bin/bash -c '
+                    nix=$1 apply=$2 k=$3; shift 3; flags=("''${@:1:k}"); shift "$k"; s=$1; shift; src=("''${@:1:s}"); shift "$s"
+                    for a; do
+                      d=$("$nix" eval "''${flags[@]}" --raw "''${src[@]}" "$a" --apply "$apply") || exit
+                      [ -n "$d" ] || exit 64
+                      echo "$d"
+                    done
+                  ' pick ${nix} "$apply" ''${#evalflags[@]} "''${evalflags[@]}" ''${#src[@]} "''${src[@]}" "''${attrs[@]}")
+                  rc=$?
+                  [ "$rc" -ne 64 ] || exec ${nix} "''${all[@]}"
+                  [ "$rc" -eq 0 ] || exit "$rc"
+                  readarray -t drvs <<<"$picks"
+                  exec ${nix} build "''${flags[@]}" "''${drvs[@]}" ;;
               esac
             '')
             (lane "nix-instantiate" "${config.nix.package}/bin/nix-instantiate" ''
               light ${config.nix.package}/bin/nix-instantiate "$@"; exit
+            '')
+            # its drvs instantiated under the lock, then nix-build on them: the same out-links and output paths. --add-root
+            # only silences nix-instantiate's warning (a guest's roots dangle on the host); it prints the roots, a
+            # drv!output for an output not out
+            (lane "nix-build" "${config.nix.package}/bin/nix-build" ''
+              inst=() flags=()
+              for ((i = 1; i <= $#; i++)); do
+                j=$((i + 1)) k=$((i + 2))
+                # a value missing: nix-build's own refusal
+                case ''${!i} in
+                  -A | --attr | -I | --include | -o | --out-link | -j | --max-jobs | --cores) [ "$j" -le $# ] || exec ${config.nix.package}/bin/nix-build "$@" ;;&
+                  --arg | --argstr | --option) [ "$k" -le $# ] || exec ${config.nix.package}/bin/nix-build "$@" ;;&
+                  -A | --attr | -I | --include) inst+=("''${!i}" "''${!j:-}"); i=$j ;;
+                  --arg | --argstr) inst+=("''${!i}" "''${!j:-}" "''${!k:-}"); i=$k ;;
+                  --option) inst+=("''${!i}" "''${!j:-}" "''${!k:-}"); flags+=("''${!i}" "''${!j:-}" "''${!k:-}"); i=$k ;;
+                  -o | --out-link | -j | --max-jobs | --cores) flags+=("''${!i}" "''${!j:-}"); i=$j ;;
+                  -E | --expr | --show-trace | --impure) inst+=("''${!i}") ;;
+                  --no-out-link | -Q | --no-build-output | -K | --keep-failed | -k | --keep-going | -L | --print-build-logs | --dry-run) flags+=("''${!i}") ;;
+                  # a drv, or a link to one, nix-build builds as it is
+                  -* | *.drv | *.drv!*) exec ${config.nix.package}/bin/nix-build "$@" ;;
+                  *) [[ $(${pkgs.coreutils}/bin/readlink -f -- "''${!i}") != /nix/store/*.drv ]] || exec ${config.nix.package}/bin/nix-build "$@"; inst+=("''${!i}") ;;
+                esac
+              done
+              roots=$(${pkgs.coreutils}/bin/mktemp -d) || exit
+              trap '${pkgs.coreutils}/bin/rm -rf "$roots"' EXIT
+              out=$(light ${config.nix.package}/bin/nix-instantiate --add-root "$roots/drv" "''${inst[@]}") || exit
+              [ -n "$out" ] || exit 0
+              drvs=()
+              while IFS= read -r p; do
+                o=
+                case $p in *!*) o=!''${p##*!} p=''${p%!*} ;; esac
+                drvs+=("$(${pkgs.coreutils}/bin/readlink -f "$p")$o")
+              done <<<"$out"
+              ${config.nix.package}/bin/nix-build "''${flags[@]}" "''${drvs[@]}"
+              exit
             '')
             # devenv evaluates in-process and caches it: under the lock its eval, or a warm `shell -- true` for a
             # command that runs a task or a shell, which then evaluates from that cache
