@@ -149,6 +149,14 @@ for host, fw in sorted(FW.items()):
     trusted = [i for i in fw["trustedInterfaces"] if i != "lo" and not any(p["port"] is None and p["interface"] == i for p in mine(host))]
     check(stray == [] and trusted == [], f"{host} opens and trusts only public entries ({opened}, {fw['trustedInterfaces']})")
 
+# AdGuard answers the LAN and the tailnet (tailscale0, trusted) only: its ports are lan entries, rendered from lanCidr
+dns = {(p["port"], p["proto"]): p["lan"] for p in mine("lenovo-21CB001PMX") if p["port"] in (53, 853)}
+dnsRules = [f"iptables -w -A nixos-fw -s {P['lanCidr']} -p {proto} --dport {port} -j nixos-fw-accept" for port, proto in dns]
+check(dns == {(53, "udp"): True, (853, "tcp"): True}
+      and all(r in FW["lenovo-21CB001PMX"]["extraCommands"] for r in dnsRules)
+      and "tailscale0" in FW["lenovo-21CB001PMX"]["trustedInterfaces"],
+      f"lenovo's AdGuard ports admit {P['lanCidr']} and tailscale0 only, no source else ({dns})")
+
 # Each serving module takes its port from its listener (or asserts it: store-cache, loki, the gateway's
 # toml), so a new listener is one edit in modules/core/fleet.nix. scripts/gate-probe.nix `bound` reads the ports it
 # can as a drift check: an override off the listener's port (mkForce) fails here; a listener it does not read is fine.
@@ -168,9 +176,11 @@ for seed, host, marker, what in [("openPort", "acer-swift", '"port":9999', "allo
                                  ("upstreamOpen", "msi-ms7758", "--dport 9100", "the node exporter's upstream openFirewall on msi"),
                                  ("strayRule", "lenovo-21CB001PMX", "192.168.10.50", "a hand-written accept rule on lenovo"),
                                  ("trusted", "black-pi", "eth0", "trustedInterfaces = [ eth0 ] on black-pi"),
+                                 ("dnsAnySource", "lenovo-21CB001PMX", '"port":53', "AdGuard's 53/udp and 853/tcp to any source on lenovo"),
                                  ("lokiAnySource", "black-pi", f'"port":{ports["loki"]}', "Loki in black-pi's allowedTCPPorts"),
                                  ("ntfyElsewhere", "msi-ms7758", f'"port":{ports["ntfy"]}', "ntfy on msi, off its public entry's host")]:
     check(any(f"{host}'s {OPENS}" in m and marker in m for m in F[seed]), f"seeded: {what} fails ({F[seed]})")
+check(any('"port":853' in m for m in F["dnsAnySource"]), f"seeded: lenovo's 853/tcp to any source is named too ({F['dnsAnySource']})")
 check(any("sam.fleet.loki is served here" in m and "loopback" in m for m in F["lokiLoopback"]),
       f"seeded: black-pi's Loki on loopback fails ({F['lokiLoopback']})")
 check(any("naked-pi has no sam.fleet listener node-exporter-naked-pi" in m for m in F["exporterOffFleet"]),
