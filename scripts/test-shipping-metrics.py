@@ -108,6 +108,8 @@ class Fake(http.server.BaseHTTPRequestHandler):
         q = urllib.parse.parse_qs(u.query)
         if u.path.startswith("/loki/"):
             query = q["query"][0]
+            # the pass lookup must name the scheduled run's head, or main's passes are never read
+            assert '|= "result=fail"' in query or 'kind="gate-step"' not in query or "5c4ed00" in query, query
             lines = (GATES if 'kind="gate"' in query else DEPLOYS if 'kind="deploy"' in query
                      else ["gate=nixos-qa step=lint result=fail"] if '|= "result=fail"' in query
                      else STEP_PASSES if 'kind="gate-step"' in query else [])

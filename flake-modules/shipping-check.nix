@@ -266,7 +266,7 @@ let
                     rule = lib.findFirst (r: r.alert or "" == "RetroDueStepFailsRepeat") null (
                       lib.concatMap (g: g.rules) (builtins.fromJSON (builtins.readFile rules)).groups
                     );
-                    summary = "Gate step shunt-metrics-test (check=\"step\": the step's own record, no inner check named on those heads) failed on ${n minFails} heads in 7 d: a retro is due (Shipping dashboard: failed gate steps; Platform health for the runs). Rerun it alone on main: NIXOS_STEP=shunt-metrics-test devenv tasks run nixos:step; a scheduled full gate on main that passes after the last failure clears this, as does ${n newFailFor} h with no new one.";
+                    summary = "Gate step shunt-metrics-test (check=\"step\": the step's own record, no inner check named on those heads) failed on ${n minFails} heads in 7 d: a retro is due (Shipping dashboard: failed gate steps; Platform health for the runs). Rerun it alone on main: NIXOS_STEP=shunt-metrics-test devenv tasks run nixos:step; a scheduled full gate on main that passes, or passes this step or check, after the last failure clears this, as does ${n newFailFor} h with no new one.";
                   in
                   {
                     inherit summary;
