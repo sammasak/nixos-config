@@ -5,6 +5,7 @@ generation, as scripts/qa-green.sh writes it), or it plus documentation, gets th
 missing or unreadable record included, gets the fast set (the push lints, the push eval and its gate-step) and a
 result=owed mode=fast gate record, and records no green tree. Through a real git push, a linked worktree is judged on
 the pushed commit, not on its own HEAD."""
+import json
 import os
 import pathlib
 import re
@@ -412,13 +413,15 @@ if fc:
     with tempfile.TemporaryDirectory() as t:
         t = pathlib.Path(t)
         calls = t / "calls"
+        # the kinds the step expects, so a kind added to the flake does not fail this test
+        kinds = json.loads((ROOT / "scripts/flake-output-kinds.json").read_text())
         names = {"nixosConfigurations": ["h1"], "formatter": [], "packages": [], "checks": ["x86_64-linux"],
                  "checks.x86_64-linux": ["rebind", "plain"]}
         (t / "nix").write_text("#!/usr/bin/env python3\nimport json, sys\na = sys.argv[1:]\n"
                                f"open({str(calls)!r}, 'a').write(' '.join(a) + '\\n')\n"
                                f"names = {names!r}\n"
                                "attr = next((x[2:] for x in a if x.startswith('.#')), '')\n"
-                               "if a[:2] == ['flake', 'show']: print(json.dumps({k: 0 for k in ['checks','deploy','formatter','nixosConfigurations','overlays','packages','templates']}))\n"
+                               f"if a[:2] == ['flake', 'show']: print(json.dumps({{k: 0 for k in {kinds!r}}}))\n"
                                "elif '--expr' in a: print('x86_64-linux', end='')\n"
                                "elif any('? driver' in x for x in a): print(json.dumps(['rebind']))\n"
                                "elif 'builtins.attrNames' in a: print(json.dumps(names.get(attr, [])))\n"
@@ -433,6 +436,7 @@ if fc:
             body = body.replace("${gateHeavy}", heavy.group(1) if heavy else "").replace("''$", "$")
             # every built check writes a gate-step record; this test reads only what is built
             body = body.replace("${lib.getExe record}", "true")
+            body = body.replace("${flakeKinds}", json.dumps(kinds, separators=(",", ":")))
             run = subprocess.run(["bash", "-euo", "pipefail", "-c", body], capture_output=True, text=True,
                                  env={**os.environ, "PATH": f"{t}:{os.environ['PATH']}"})
             built = [c for c in calls.read_text().splitlines() if c.startswith("build ") and "--dry-run" not in c]
