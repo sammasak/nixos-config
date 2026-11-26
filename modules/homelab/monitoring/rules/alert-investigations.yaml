@@ -6,15 +6,18 @@ groups:
       - alert: AlertInvestigationFailed
         # a counter that rose in 6 h: every failure pages once and clears 6 h later; up 0 for 15 minutes is a trigger
         # that cannot read Alertmanager, so nothing is investigated
+        # the name moves to investigated: the rule overwrites alertname, so two names on one node would collide
         expr: |
-          sum by (node, alertname) (increase(homelab_alert_investigations_total{job="node-exporter",outcome="failed"}[6h])) > 0
+          sum by (node, investigated) (
+            label_replace(increase(homelab_alert_investigations_total{job="node-exporter",outcome="failed"}[6h]), "investigated", "$1", "alertname", "(.*)")
+          ) > 0
           or max by (node) (homelab_alert_investigations_up{job="node-exporter"} == 0)
         for: 15m
         labels:
           severity: warning
           team: homelab
         annotations:
-          summary: "Alert investigations on {{ $labels.node }} are failing{{ with $labels.alertname }} for {{ . }}{{ end }}"
+          summary: "Alert investigations on {{ $labels.node }} are failing{{ with $labels.investigated }} for {{ . }}{{ end }}"
           description: "An investigation pool session started by alert-investigations on {{ $labels.node }} failed in the last 6 h (its start was refused, the session failed, timed out, ended without a report or pushed a branch), or the trigger has not read Alertmanager for 15 minutes, so a firing alert goes uninvestigated. Run journalctl -u alert-investigations.service there; the reason is in homelab_alert_investigation_failures_total and on the alert's issue."
           query: 'increase(homelab_alert_investigation_failures_total{job="node-exporter",node="{{ $labels.node }}"}[6h]) > 0 or homelab_alert_investigations_up{job="node-exporter",node="{{ $labels.node }}"}'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#alertinvestigationfailed"
