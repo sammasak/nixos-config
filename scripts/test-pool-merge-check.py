@@ -116,7 +116,7 @@ def lane(name: str, real: str, d: pathlib.Path) -> pathlib.Path:
     text = template.replace("${text}", body).replace("${real}", "${nix}")
     for k, v in {"${pkgs.util-linux}/bin/flock": f"{d}/stub/flock", "/run/work-locks/light-work.lock": f"{d}/light",
                  "${config.nix.package}/bin/nix-instantiate": f"{d}/stub/nix-instantiate",
-                 "${config.nix.package}/bin/nix-build": f"{d}/stub/nix-build", "${pkgs.coreutils}/bin/": "",
+                 "${config.nix.package}/bin/nix-build": f"{d}/stub/nix-build", "${pkgs.coreutils}/bin/": "", "${pkgs.bash}/bin/bash": "bash",
                  "${nix}": f"{d}/stub/nix", "${name}": name, "''$": "$"}.items():
         text = text.replace(k, v)
     out = d / name
@@ -133,7 +133,7 @@ with tempfile.TemporaryDirectory() as tmp:
     (d / "stub/flock").write_text('#!/usr/bin/env bash\nwhile [ "${1#-}" != "$1" ] || [ "$1" = 900 ] || [ "$1" = 75 ]; do shift; done\n'
                              'shift; IN_LOCK=locked exec "$@"\n')
     (d / "stub/nix").write_text(f'#!/usr/bin/env bash\necho "$* ${{IN_LOCK:-free}}" >>{d}/log\n'
-                                '[ "$1" != eval ] || echo /nix/store/x.drv^out\n')
+                                '[ "$1" != eval ] || [[ $* == *fn.nix* ]] || echo /nix/store/x.drv^out\n')
     # nix-instantiate --add-root R: two roots, the second one's output bin, as the real one prints them
     (d / "stub/nix-instantiate").write_text(
         f'#!/usr/bin/env bash\necho "instantiate $* ${{IN_LOCK:-free}}" >>{d}/log\n'
@@ -153,10 +153,11 @@ with tempfile.TemporaryDirectory() as tmp:
         return [re.sub(rf"{re.escape(str(d / 'tmp'))}/[^ ]+/drv", "ROOT", line) for line in (d / "log").read_text().splitlines()]
 
     probe = "(import ./scripts/gate-probe.nix { }).json"
-    PICK = 'd: d.drvPath + "^" + builtins.concatStringsSep "," (if d.outputSpecified or false then [ d.outputName ] else d.meta.outputsToInstall or '
-    APPLY, FILE = PICK + '[ "out" ])', PICK + "d.outputs or [ d.outputName ])"
+    PICK = ('d: if builtins.isAttrs d && d.type or null == "derivation" then d.drvPath + "^" + builtins.concatStringsSep "," '
+            '(if d.outputSpecified or false then [ d.outputName ] else d.meta.outputsToInstall or ')
+    APPLY, FILE = PICK + '[ "out" ]) else ""', PICK + 'd.outputs or [ d.outputName ]) else ""'
     r = runs("build", "--impure", "--no-link", "--print-out-paths", "--expr", probe)
-    check(r == [f"eval --impure --raw --expr {probe}", f" --apply {FILE} locked", "build --impure --no-link --print-out-paths /nix/store/x.drv^out free"],
+    check(r == [f"eval --impure --raw --expr {probe}", f"  --apply {FILE} locked", "build --impure --no-link --print-out-paths /nix/store/x.drv^out free"],
           f"a slot's nix build --expr evaluates its drvPath under the light lock and builds outside it ({r})")
     r = runs("build", "--no-link", ".#a", ".#b")
     check(r == [f"eval --raw .#a --apply {APPLY} locked", f"eval --raw .#b --apply {APPLY} locked", "build --no-link /nix/store/x.drv^out /nix/store/x.drv^out free"],
@@ -169,8 +170,13 @@ with tempfile.TemporaryDirectory() as tmp:
     check(r == [f"eval --arg x 1 --raw --file default.nix hello --apply {FILE} locked", "build --no-link /nix/store/x.drv^out free"],
           f"an attribute of a --file likewise, its --arg on the evaluation only ({r})")
     r = runs("build", "--file", "default.nix")
-    check(r == [f"eval --raw --file default.nix --apply {FILE} locked", "build /nix/store/x.drv^out free"],
+    check(r == [f"eval --raw --file default.nix  --apply {FILE} locked", "build /nix/store/x.drv^out free"],
           f"a --file without an attribute: the file's value ({r})")
+    r = runs("build", "-f", "fn.nix", "--arg", "x", "1")
+    check(r == [f"eval --arg x 1 --raw --file fn.nix  --apply {FILE} locked", "build -f fn.nix --arg x 1 free"],
+          f"a value that is no one derivation (a function to call) is built whole, as nix build would ({r})")
+    r = runs("build", "--no-link", "-o")
+    check(r == ["build --no-link -o free"], f"a flag missing its value is passed through whole, for nix to refuse ({r})")
     r = runs("build", "--file", "default.nix", ".#x")
     check(r == ["build --file default.nix .#x free"], f"a flake reference with --file is passed through whole ({r})")
     r = runs("flake", "check", "--no-build")
@@ -181,6 +187,9 @@ with tempfile.TemporaryDirectory() as tmp:
     check(list((d / "tmp").iterdir()) == [], "nix-build removes its roots once built")
     b = subprocess.run([str(wrappers["nix-build"]), "default.nix"], env=env | {"NB_RC": "3"}, capture_output=True, text=True, check=False)
     check(b.returncode == 3 and b.stdout == "/nix/store/x-out\n", f"nix-build's exit status and stdout are the build's ({b.returncode}, {b.stdout!r})")
+    (d / "x.drv").symlink_to("/nix/store/x.drv")
+    r = runs(str(d / "x.drv"), exe="nix-build")
+    check(r == [f"nix-build {d}/x.drv free"], f"nix-build of a drv is passed through whole ({r})")
     r = runs("--check", "default.nix", exe="nix-build")
     check(r == ["nix-build --check default.nix free"], f"nix-build with another flag is passed through whole ({r})")
     r = runs("--option", "cores", "1", "eval", "--raw", ".#x")
