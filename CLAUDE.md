@@ -16,7 +16,7 @@ devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks,
 # Hooks: the shims in .githooks/ (core.hooksPath) run prek on the checkout's .pre-commit-config.yaml,
 # which entering the devenv generates (.envrc does it on cd); without one, the main checkout's:
 #   pre-commit: lint-comments + lint-shell; commit-msg: subject <= 72 chars, a body needs a `Why:` line;
-#   pre-push:   no-force guard, one ref with new commits per push, + the fast set on the PUSHED commit in a temp
+#   pre-push:   no-force guard, one ref with new commits per push, the commit-msg rules on each origin/main..pushed commit, + the fast set on the PUSHED commit in a temp
 #               worktree, at any hour: the lints, secrets-verify and nixos-push-eval (the flake check's
 #               `nix flake show --all-systems`, import-from-derivation off, ~90 s: no check's derivation, no build;
 #               its own gate-step record). It prints `full QA not run for <sha>, owed to the scheduled gate on main`
@@ -83,7 +83,8 @@ just deploy HOST              # HOST: a deploy-rs node, any other name is refuse
 #   non-zero if any fails: a host left degraded, looping, off that generation or with a shadowed user unit (deploy-rs rolls back a failed activation itself; naked-pi not until #474).
 #   A failed check rolls nothing back, and a host degraded for an unrelated, pre-existing reason
 #   fails every deploy: read `systemctl --failed` on the target.
-#   A deploy of a HOST already being deployed is refused at once (result=locked, naming the holder); other hosts run concurrently.
+#   A deploy of a HOST already being deployed is refused at once (result=locked, naming the holder); one of another host waits
+#   while one runs its checks, drain and deploy-rs (a Pi's build on a cache miss included), up to DEPLOY_LOCK_WAIT s (default 1800; result=waited, or result=lock-timeout).
 #   lenovo      loopback self-push, proves the deploy-rs path
 #   acer-swift  builds on acer (remoteBuild)
 #   msi-ms7758  builds on msi; only in its Mon-Fri ~08:30-21:00 power window

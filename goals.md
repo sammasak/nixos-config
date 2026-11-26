@@ -29,6 +29,7 @@ unread). What shipped is in git history and the closed issues.
 - 26 Nov: pull requests ship on the session's narrow check on its own head, the in-session independent review and a
   textually clean merge; nobody re-runs a merge check on current main. The scheduled gate on acer, three runs a day,
   is the backstop, and a clash between two clean merges costs one fix-forward pull request.
+- Paddock (26 Nov, #874): "Ensure that we track this work and that we harden and fix the implementation once we are happy with it and start using this for real in our setup. Once we have find the right model fit and run pi-agents to get real feedback and metrics we can then continue to harden it and eventually do a upstream contribution. Also since we are doing this we need to keep in mind that other contributions are going to the main thing and not to our fork so we need to keep our branches up to date. Also some of work might already be fit for upstream (nix? - what metrics do we need here before we are happy with upstreaming it?)"
 
 ## What "more work done" means
 
@@ -61,7 +62,7 @@ the gate, then the comparisons.
 | 6 | herman [#57](https://github.com/sammasak/herman/issues/57): an executed negative control for `no_source_paths` (anti-starvation, 13 Nov) | "Only safety, or \"does not fix the problem\", blocks a change": a guard nobody has seen fail | executed controls for `no_source_paths` in `tools/perf-metrics/gate-tests.sh`: 0; the lane task above holds the exact change | `tools/perf-metrics/gate-tests.sh`, `EXPECTED_CHECKS` raised by 2 |
 | 7 | Gate speed: `nix flake show` on the merge in pool-merge-check ([#835](https://github.com/sammasak/nixos-config/issues/835); the #793 and #796 escape) | "No dedicated benchmarks, no long test rituals" | escapes of main's evaluation past pool-merge-check: 2 (#793, #796); nixos-push-eval 1.5 to 5.5 min on 26 Nov | `scripts/test-pool-merge-check.py` with a case that breaks evaluation only on the merge |
 | 8 | One deploy from lenovo at a time: a second deploy evaluation waits instead of both being killed (pool finding 6) | "A piece of work can stop for a review, a deploy ... and continue" | concurrent deploy evaluations killed on lenovo (exit 137): 2 on 26 Nov | `scripts/test-deploy-recipes.py` with a second deploy started while one holds the lock |
-| 9 | Paddock expert tier, plan steps 3 to 5 ([#838](https://github.com/sammasak/nixos-config/issues/838); owner, 26 Nov: "serve stronger and stronger MoE models using a more primitive setup ... to see where the limit is"); the agent `paddock` on asus | "a large model can run on modest hardware" | total tok/s at 4 and 8 sessions (#838, 26 Nov): 35B Q4 pinned 15.8 / 16.4, 35B disk-backed 22.6 / 22.6 (serial), 122B Q2 disk-backed 3.1 / 3.7 (serial). Best single session: 35B 26.6, 122B 3.9; at 16 sessions 35B about 26 total, 122B no failures. 397B rung next; paddock PR 4 (plan step 1) merged into asus/biggest-moe | the same ladder rows on asus, sessions 4 and 8 |
+| 9 | Paddock on asus, tracked by [#874](https://github.com/sammasak/nixos-config/issues/874). A measure: done (#838 ladder). B model fit: the default plan does at least 26 tok/s single session on the 35B with no env switches, and a named model passes at least as many local-lane gate tasks as the 35B. C real use: 20 local-lane tasks served through llm-gateway, local share at least 50 percent, 7 days of tok/s, TTFT, gate passes, failures, GPU watts and restarts. D harden: the served head passes the CPU gate and strict GPU gates with no `PADDOCK_*` pins. E upstream: per-piece evidence in #874, proposing only; weekly upstream sync (brief 82) | "a large model can run on modest hardware" | total tok/s at 4 and 8 sessions (#838, 26 Nov): 35B Q4 pinned 15.8 / 16.4, 35B disk-backed 22.6 / 22.6 (serial), 122B Q2 disk-backed 3.1 / 3.7 (serial). Best single session: 35B 26.6, 122B 3.9; at 16 sessions 35B about 26 total, 122B no failures. 397B rung next; paddock PR 4 (plan step 1) merged into asus/biggest-moe; 79 ahead, 1 behind upstream main (26 Nov) | the same ladder rows on asus, sessions 4 and 8 |
 | 10 | The 300K window decision ([#626](https://github.com/sammasak/nixos-config/issues/626)); Shunt ([#625](https://github.com/sammasak/nixos-config/issues/625)) by 2 Dec | "Every change ships behind a switch ... judged on the running system" | 25 Nov 17:00 UTC: pool3 default 13 turns, 0.19 USD a turn; pool2 300K 12 turns, 0.15 USD; pool1 Shunt 8 turns, 0.89 USD, Shunt acted on none. The read date (26 Nov 10:10 UTC) has passed | none to run: read the per-arm series and decide |
 
 Next after the ten, in order: acer's build jobs and cores (2 and 2) against the memory budget; the flake check's
@@ -152,9 +153,9 @@ With no local model up every command exits 3 with "no local model up" and submit
 11. The v0.1 acceptance script in a VM (PASS, FAIL or UNTESTED per criterion) is not written.
 12. Turn errors per arm (`exec_pool_session_turn_errors_total{host,variant,shunt,agent}`, #851) are counted; the row in
     the Agent harnesses comparison table is PR #860, in flight.
-
 13. A pool session's push from a fresh clone ran no hooks because no hooks path was set (seen on PR #867), so
     pre-push checks may be skipped in slots; needs a brief.
+
 ## Check tuning
 
 Owner, 25 Nov: "keep count of how we can fine tune testing so that we can have some small and fast checks applied and
@@ -165,8 +166,8 @@ commit or pull request names the check as what failed.
 The full gate runs only as the scheduled gate (acer, 03:20, 11:20 and 19:20, when main moved) or `just full-gate`.
 Owner, 26 Nov: a pull request ships on its session's narrow check on its own head and a textually clean merge; nobody
 re-runs a merge check on current main, and the scheduled gate, eight hours apart, is the backstop for two that merge
-cleanly but break each other. `just pool-merge-check` stays for a session that wants it.
-`just pool-merge-check` picks its checks from the changed paths (`scripts/pool_merge_check.py`; docs: nothing) and
+cleanly but break each other. `just pool-merge-check` stays for a session that wants it; it picks its checks from
+the changed paths (`scripts/pool_merge_check.py`; docs: nothing) and
 writes one gate-step record per check. The last full run (26 Nov 07:07 to 08:10 UTC, head `0e525a45`, 3784 s) was red
 on `ollama-gpu-test` alone, fixed by #855; the steps after it did not run. Next full run: the 15:20 scheduled gate.
 

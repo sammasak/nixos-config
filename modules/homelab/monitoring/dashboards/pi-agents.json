@@ -45,8 +45,8 @@
       "datasource": {"type": "loki", "uid": "loki"},
       "options": {"sortBy": [{"displayName": "run_id", "desc": true}]},
       "transformations": [{"id": "organize", "options": {"excludeByName": {"Time": true, "Value": true},
-        "indexByName": {"run_id": 0, "reason": 1, "status": 2, "repo": 3, "requested_by": 4, "via": 5, "issue": 6, "note": 7}}}],
-      "targets": [{"expr": "sum by (run_id, reason, status, repo, requested_by, via, issue, note) (count_over_time({job=\"pi-agent\"} | json | event=\"attention\" [$__range]))", "queryType": "instant", "format": "table"}]
+        "indexByName": {"run_id": 0, "reason": 1, "status": 2, "repo": 3, "requested_by": 4, "via": 5, "issue": 6}}}],
+      "targets": [{"expr": "sum by (run_id, reason, status, repo, requested_by, via, issue) (count_over_time({job=\"pi-agent\"} | json | event=\"attention\" [$__range]))", "queryType": "instant", "format": "table"}]
     },
     {
       "id": 18, "title": "Runs in progress (3h)", "type": "table",
@@ -152,7 +152,7 @@
       "gridPos": {"h": 14, "w": 24, "x": 0, "y": 40},
       "datasource": {"type": "loki", "uid": "loki"},
       "options": {"showTime": true, "wrapLogMessage": true, "sortOrder": "Ascending"},
-      "targets": [{"expr": "{job=\"pi-agent\"} |= \"$run_id\" | json | line_format \"{{.run_id}} r{{.round}} {{.event}} {{.stage}} {{.guard}} {{.status}}{{.provider}}/{{.model}} {{.tool}} {{.outcome}} {{.gate}} {{.stop_reason}}{{.reason}} in={{.tokens_in}} out={{.tokens_out}} {{.error}}\""}]
+      "targets": [{"expr": "{job=\"pi-agent\"} |= \"$run_id\" | json | line_format \"{{.run_id}} r{{.round}} {{.event}} {{.stage}} {{.guard}} {{.status}}{{.provider}}/{{.model}} {{.tool}} {{.outcome}} {{.gate}} {{.stop_reason}}{{.reason}} in={{.tokens_in}} out={{.tokens_out}}\""}]
     },
     {
       "id": 19, "title": "Issue pipeline (pi-ticket, ADR-028)", "type": "row", "collapsed": false,

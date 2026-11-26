@@ -1,7 +1,7 @@
 """The pre-push shim (.githooks/pre-push) on a throwaway repository, without Nix: prek is replaced by a stub that
 logs the lines it is handed. A push that brings new commits to more than one ref is refused before prek and leaves
 the remote unchanged; one ref, a delete, a new ref at a commit the remote has, and a new ref beside it pass through
-as before. The guard is the platform's no-force-guard v5 text, which carries the block."""
+as before. The guard is the platform's no-force-guard v6 text, which carries the block."""
 import os
 import pathlib
 import subprocess
@@ -15,7 +15,7 @@ SHIM = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / ".githooks" / 
 
 
 text = SHIM.read_text()
-check("no-force-guard v5" in text, "the shim carries the no-force guard v5")
+check("no-force-guard v6" in text, "the shim carries the no-force guard v6")
 check("only the first would be gated" in text, "the one-ref block is in the shim (a prek install -f drops it)")
 prek_lines = [l for l in text.splitlines() if l.startswith('PREK="/')]
 if len(prek_lines) != 1:

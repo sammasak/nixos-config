@@ -62,6 +62,8 @@ in
       };
       users.groups.exec_pool = { };
       environment.systemPackages = [ pkg ];
+      # `exec-pool submit | start` refuses a repository a slot could not push to; a slot host's list must not be shorter
+      environment.etc."exec-pool/repos".text = lib.concatLines cfg.repos;
 
       services.postgresql = {
         ensureDatabases = [ "exec_pool" ];
