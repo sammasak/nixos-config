@@ -211,6 +211,8 @@ in
         serviceConfig = {
           Type = "oneshot";
           ExecStart = lib.getExe send;
+          # the rate floor instead: a send failing before it empties the queue (a full /var) would restart at once
+          ExecStopPost = "${pkgs.coreutils}/bin/sleep 2";
           Nice = 10;
         };
       };

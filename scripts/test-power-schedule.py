@@ -151,7 +151,10 @@ check(set(windowed) <= set(uploaders), f"msi-ms7758 and asus-b460m queue their b
 for host in uploaders:
     service = units[host].get("store-upload.service", "")
     path = units[host]["store-upload.path"]
-    check("StartLimitIntervalSec=0" in service.split("[Service]")[0] and "PathExists=/var/lib/store-upload/queue" in path,
+    check("PathExists=/var/lib/store-upload/queue" in path, f"{host}'s store-upload.path starts the send while the queue exists")
+    check("StartLimitIntervalSec=0" in service.split("[Service]")[0],
           f"{host}'s store-upload.service has no start limit, so a burst of queue writes cannot fail store-upload.path")
+    check(re.search(r"^ExecStopPost=\S+/bin/sleep [1-9]", service, re.M) is not None,
+          f"{host}'s store-upload.service waits after each run, so a send that keeps failing cannot restart in a hot loop")
 
 finish()
