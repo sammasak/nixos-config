@@ -1265,8 +1265,8 @@ def slot_binds(n, own):
 def check_slot_reach():
     # a whole host each, one at a time
     declarations = []
-    for host, case, count, own in (("acer-swift", "{ homelab.execPool.slot.privateUsers = lib.mkForce false; }", 3, False),
-                                   ("acer-swift", "{ }", 3, True),
+    for host, case, count, own in (("acer-swift", "{ homelab.execPool.slot.privateUsers = lib.mkForce false; }", 4, False),
+                                   ("acer-swift", "{ }", 4, True),
                                    ("msi-ms7758", "{ }", 4, True)):
         out = run_eval(SLOT_REACH % {"root": json.dumps(ROOT), "host": host, "case": case})
         got = json.loads(out.stdout) if out.returncode == 0 else {"error": out.stderr.strip()[-600:]}
