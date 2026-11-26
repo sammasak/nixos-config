@@ -37,7 +37,8 @@ def evals(s: set[tuple[str, str]]) -> set[str]:
     return {t for k, t in s if k == "eval"}
 
 
-check(got("goals.md", "docs/shipping.md", "CLAUDE.md") == set(), "docs and goals.md: nothing")
+# Placeholder names: the push hook runs every scripts/test-* that names a changed doc, and this one needs the gate probe.
+check(got("notes.md", "docs/notes.md", "README-x.md") == set(), "docs and a top-level *.md: nothing")
 check(got("docs/sub/x.md") == set(), "a nested doc under docs/: nothing")
 check(evals(got("hosts/lenovo-21CB001PMX/notes.md")) == set(HOSTS), "a *.md outside docs/ and the top level is not a doc")
 r = got("modules/homelab/monitoring/rules/exec-pool.yaml")
