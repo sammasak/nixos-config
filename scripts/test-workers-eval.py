@@ -1328,6 +1328,8 @@ let
     git = c.systemd.services."exec-pool-exec@".environment;
   };
   slots = n: builtins.genList (i: "pool${toString (i + 1)}") n;
+  # each slot's capabilities from its host's facts: msi powers off nights and weekends, so it is not always-on
+  caps = c: map (n: (builtins.fromJSON c.systemd.services."exec-pool-runner-${n}".environment.EXEC_POOL_SLOT).capabilities) (slots 4);
   # what each start-limit setting a slot's per-turn units and a named worker's container evaluate to
   limits = c: n: let s = c.systemd.services; in {
     slots = map (n: s."container@${n}".unitConfig.StartLimitIntervalSec or null) (slots n);
@@ -1354,6 +1356,7 @@ in {
   polkit = acer.security.polkit.extraConfig;
   slot2 = builtins.fromJSON acer.systemd.services.exec-pool-runner-pool2.environment.EXEC_POOL_SLOT;
   msiSlots = map (n: (builtins.fromJSON msi.systemd.services."exec-pool-runner-${n}".environment.EXEC_POOL_SLOT).agents) (slots 4);
+  capabilities = { acer = caps acer; msi = caps msi; noMonitoring = caps (flake.nixosConfigurations.msi-ms7758.extendModules { modules = [ { homelab.execPool.monitoring = flake.inputs.nixpkgs.lib.mkForce false; } ]; }).config; };
   limits = { acer = limits acer 4; msi = limits msi 4; };
   namedLimit = { inherit (named) StartLimitIntervalSec StartLimitBurst; };
   # acer's light pool4 beside pool3, and the slice that holds both
@@ -1376,6 +1379,11 @@ def check_runner():
           and got.get("msiSlots") == [["none", "claude"]] * 4
           and got.get("exec", "").endswith("/bin/exec-pool-runner exec %i") and rule in got.get("polkit", "") and 'subject.user == "exec_pool"' in got.get("polkit", ""),
           f"acer runs exec-pool-runner-pool1 to -pool4 as exec_pool with its root helper exec-pool-exec@, and polkit lets exec_pool start only {rule}; acer also sets the role's password, acer's slots offering codex too (dropped at start while no login exists), msi runs the same for its four slots, each claiming for none and claude ({ {k: got.get(k) for k in ('acer', 'msi', 'user', 'slot', 'slot2', 'msiSlots', 'exec')} or out.stderr.strip()[-300:]})")
+    caps = got.get("capabilities", {})
+    check([sorted(c) for c in caps.get("acer", [])] == [["always-on", "github", "monitoring"]] * 4
+          and [sorted(c) for c in caps.get("msi", [])] == [["github", "monitoring"]] * 4
+          and caps.get("noMonitoring") == [["github"]] * 4,
+          f"each slot offers the capabilities its host's facts give it, which a task's --requires names: github with repos, monitoring with homelab.execPool.monitoring (msi with it off: github alone), always-on on acer and not on msi, which has a power window ({caps or out.stderr.strip()[-300:]})")
     polkit = got.get("polkit", "")
     resets = json.dumps([f"dev-env-reset@{n}.service" for n in acer_slots], separators=(",", ":"))
     check(f'var resets = {resets};' in polkit

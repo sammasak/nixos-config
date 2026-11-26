@@ -239,12 +239,12 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
         .query_one("SELECT max(version) FROM schema_migrations", &[])
         .unwrap()
         .get(0);
-    assert_eq!(version, 27);
+    assert_eq!(version, 28);
     submit(&mut s, &task("t-1", 1));
     // a newer binary's additive migration keeps the floor: this one still serves the database, as after a rollback
     pg.sql()
         .execute(
-            "INSERT INTO schema_migrations (version, floor) VALUES (28, 27)",
+            "INSERT INTO schema_migrations (version, floor) VALUES (29, 28)",
             &[],
         )
         .unwrap();
@@ -252,17 +252,17 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
     assert!(s.claim(&slot("s0"), 60).unwrap().is_some());
     // one this binary would misread, or one that names no floor, is refused
     pg.sql()
-        .execute("INSERT INTO schema_migrations (version) VALUES (29)", &[])
+        .execute("INSERT INTO schema_migrations (version) VALUES (30)", &[])
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(29))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(30))));
     pg.sql()
         .execute(
-            "UPDATE schema_migrations SET floor = 29 WHERE version = 29",
+            "UPDATE schema_migrations SET floor = 30 WHERE version = 30",
             &[],
         )
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(29))));
-    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(29))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(30))));
+    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(30))));
 }
 
 #[test]
@@ -397,8 +397,12 @@ fn the_submitter_queues_through_submit_task_and_reads_no_prompt() {
     ] {
         refused(&mut c, sql, "42501");
     }
-    let bad: [(&str, serde_json::Value); 8] = [
+    let bad: [(&str, serde_json::Value); 12] = [
         ("/capabilities", json!(["read_only"])),
+        ("/capabilities", json!(["monitoring", "github"])),
+        ("/capabilities", json!([1])),
+        ("/capabilities", json!("github")),
+        ("/capabilities", json!(["github", "github"])),
         ("/credential_class", json!("root")),
         ("/retry", json!({ "max_attempts": 9 })),
         ("/command/agent", json!("none")),
@@ -472,6 +476,118 @@ fn submit_task_refuses_an_agent_no_slot_seen_in_the_last_day_offers() {
             "{sql}: {e}"
         );
     }
+}
+
+#[test]
+fn submit_task_refuses_a_capability_no_slot_seen_in_the_last_day_offers_with_the_agent() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let conninfo = pg
+        .conninfo()
+        .replace("user=exec_pool ", "user=exec_pool_submit ");
+    let mut s = Store::open(&conninfo).unwrap();
+    let requiring = |key: &str, caps: &[&str]| {
+        let mut t = agent_task();
+        t["idempotency_key"] = json!(key);
+        t["capabilities"] = json!(caps);
+        serde_json::from_value::<TaskSpec>(t).unwrap()
+    };
+    let refusal = |s: &mut Store, t: &TaskSpec| match s.submit_task(t, 0) {
+        Err(QueueError::Unoffered(message)) => message,
+        other => panic!("{other:?}"),
+    };
+    let mut monitored = claude_slot();
+    monitored.capabilities = BTreeSet::from(["monitoring".to_owned()]);
+    assert!(owner.claim(&monitored, 60).unwrap().is_none());
+    // a pi slot offering github does not offer it to a claude task
+    let mut pi = slot("pool2");
+    pi.agents = BTreeSet::from([Agent::Pi]);
+    pi.capabilities = BTreeSet::from(["github".to_owned()]);
+    assert!(owner.claim(&pi, 60).unwrap().is_none());
+    let message = refusal(&mut s, &requiring("cli:github", &["github", "monitoring"]));
+    assert!(
+        message.contains("offers capability github with agent claude")
+            && message.contains("offered: monitoring"),
+        "{message}"
+    );
+    let mut github = claude_slot();
+    github.id = "pool3".to_owned();
+    github.capabilities = BTreeSet::from(["github".to_owned()]);
+    assert!(owner.claim(&github, 60).unwrap().is_none());
+    let message = refusal(&mut s, &requiring("cli:both", &["github", "monitoring"]));
+    assert!(
+        message.contains("github and monitoring together"),
+        "{message}"
+    );
+    assert!(
+        s.tasks(5).unwrap().is_empty(),
+        "a refused task leaves no row"
+    );
+    // a requirement one slot offers queues, and a task with none as before
+    let (id, duplicate) = s
+        .submit_task(&requiring("cli:monitoring", &["monitoring"]), 0)
+        .unwrap();
+    assert!(!duplicate);
+    assert_eq!(
+        s.submit_task(&requiring("cli:monitoring", &["monitoring"]), 0)
+            .unwrap(),
+        (id, true),
+        "the same task again under its key is the one queued"
+    );
+    s.submit_task(&requiring("cli:none", &[]), 0).unwrap();
+    // a slot's next claim records the capabilities it offers now
+    monitored.capabilities.clear();
+    assert!(owner.claim(&monitored, 60).unwrap().is_some());
+    assert!(owner.claim(&github, 60).unwrap().is_none());
+    let message = refusal(&mut s, &requiring("cli:monitoring-2", &["monitoring"]));
+    assert!(message.contains("offered: github"), "{message}");
+    // a start_session refuses alike, and the submitter cannot make a slot offer one
+    let session = requiring("cli:session", &["monitoring"]);
+    assert!(matches!(
+        s.start_session(&session, 0),
+        Err(QueueError::Unoffered(_))
+    ));
+    let e = Client::connect(&conninfo, NoTls)
+        .unwrap()
+        .batch_execute("UPDATE slots SET capabilities = '[\"monitoring\"]'")
+        .unwrap_err();
+    assert_eq!(
+        e.code().map(postgres::error::SqlState::code),
+        Some("42501"),
+        "{e}"
+    );
+}
+
+#[test]
+fn a_task_requiring_a_capability_is_claimed_only_by_a_slot_that_offers_it() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let mut plain = claude_slot();
+    plain.capabilities.clear();
+    let mut monitored = claude_slot();
+    monitored.id = "pool2".to_owned();
+    monitored.capabilities = BTreeSet::from(["monitoring".to_owned()]);
+    assert!(owner.claim(&plain, 60).unwrap().is_none());
+    assert!(owner.claim(&monitored, 60).unwrap().is_none());
+    let conninfo = pg
+        .conninfo()
+        .replace("user=exec_pool ", "user=exec_pool_submit ");
+    let mut s = Store::open(&conninfo).unwrap();
+    let mut t = agent_task();
+    t["capabilities"] = json!(["monitoring"]);
+    let (id, _) = s
+        .submit_task(&serde_json::from_value(t).unwrap(), 0)
+        .unwrap();
+    assert!(
+        owner.claim(&plain, 60).unwrap().is_none(),
+        "a slot without the capability leaves it queued"
+    );
+    let claim = owner.claim(&monitored, 60).unwrap().unwrap();
+    assert_eq!(claim.task.id, id);
+    assert_eq!(
+        claim.task.capabilities,
+        BTreeSet::from(["monitoring".to_owned()])
+    );
 }
 
 #[test]
