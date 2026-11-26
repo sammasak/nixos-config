@@ -18,7 +18,8 @@ use jiff::ZonedDateTime;
 use serde_json::{Value, json};
 
 const DB: &str = "host=/run/postgresql dbname=exec_pool user=exec_pool_submit";
-/// The repositories a slot reaches (homelab.execPool.repos), one `owner/name` a line; a host without it checks none.
+/// The repositories a slot fetches with the token and pushes to (homelab.execPool.repos), one `owner/name` a line, unless
+/// `EXEC_POOL_REPOS` names another file; a host without it (a submitter off the queue host) checks none.
 const REPOS: &str = "/etc/exec-pool/repos";
 const USAGE: &str = "usage: exec-pool COMMAND
   submit --agent claude|codex|pi --repo URL --rev REV --workdir PATH --prompt TEXT|--prompt-file FILE [--model M]
@@ -260,10 +261,11 @@ fn run(cmd: &str, args: &Args, store: &mut Store) -> Result<(), Fail> {
     match cmd {
         "submit" | "start" => {
             let task = task_spec(cmd, args)?;
-            match std::fs::read_to_string(REPOS) {
+            let repos = std::env::var("EXEC_POOL_REPOS").unwrap_or_else(|_| REPOS.to_owned());
+            match std::fs::read_to_string(&repos) {
                 Ok(list) => listed(&task.source.repo, &list).map_err(Fail::Usage)?,
                 Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-                Err(e) => return Err(Fail::Usage(format!("{REPOS}: {e}"))),
+                Err(e) => return Err(Fail::Usage(format!("{repos}: {e}"))),
             }
             let priority = args.opt("priority").map_or(Ok(0), |n| {
                 n.parse::<i32>()
@@ -827,9 +829,10 @@ mod tests {
 
     #[test]
     fn a_repository_off_the_pool_s_list_is_refused_naming_the_list() {
-        let list = "sammasak/nixos-config\nsammasak/Pi-Harness\n";
+        let list = "sammasak/nixos-config\r\n  sammasak/Pi-Harness\n";
         for url in [
             "https://github.com/sammasak/nixos-config.git",
+            "ssh://git@github.com/sammasak/nixos-config/",
             "git@github.com:sammasak/pi-harness.git",
         ] {
             assert_eq!(listed(url, list), Ok(()), "{url}");
