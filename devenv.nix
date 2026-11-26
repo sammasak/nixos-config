@@ -985,6 +985,9 @@ let
     lintComments
     lintShell
     deployRsPins
+    (gate "nixos-lint-fleet-pairs" [ pkgs.python3 pkgs.git ] ''
+      python3 scripts/lint-fleet-pairs.py
+    '')
   ];
   # the pre-push hook's fast set: no nix fmt (it evaluates the flake and may build the formatter)
   pushLints = lints ++ [ secretsVerify ];
