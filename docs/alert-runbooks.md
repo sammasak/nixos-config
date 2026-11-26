@@ -432,12 +432,12 @@ when `exec-pool start` refuses it, the session ends `failed`, or `cancelled` or 
 without a report, the session pushed `pool/<task id>` (it is read-only), no report came within 3 h (it is cancelled),
 or the report could not be posted. A name reported less than 6 h ago starts no new investigation; a firing still
 active after that starts one. The issue is public: a posted text has secret-shaped values
-(tokens, keys, `password=`) replaced by `[redacted]`, and the session is told to quote none. With `alertname`, an investigation of that alert failed; without it, the trigger
+(tokens, keys, `password=`) replaced by `[redacted]`, and the session is told to quote none. With `investigated`, an investigation of that alert failed; without it, the trigger
 is blind.
 First: on lenovo, `journalctl -u alert-investigations.service` names the session and the reason;
 `homelab_alert_investigation_failures_total` counts them by reason. The issue holds the session id: `exec-pool result
 ID` and `exec-pool logs ID` show what it did. A pushed branch is left for the owner to read and delete. Without
-`alertname`, `curl -sf http://alertmanager.fleet.sammasak.dev:9093/-/ready` from lenovo.
+`investigated`, `curl -sf http://alertmanager.fleet.sammasak.dev:9093/-/ready` from lenovo.
 Do not: delete `/var/lib/alert-investigations/state.json` to clear it; the counters and the per-name issue numbers
 live there, and every firing still active would be investigated again.
 Rollback: `homelab.alertInvestigations.alerts = [ ];` on lenovo and deploy (or drop a name from the JSON and deploy lenovo
