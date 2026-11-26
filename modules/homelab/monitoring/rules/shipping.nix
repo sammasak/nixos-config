@@ -41,8 +41,9 @@ let
   untouchedDays = a.OpenIssuesUntouched.days.value;
   parkedOut = lib.concatMapStringsSep " " (r: "-repo:sammasak/${r}") policy.issues.parkedRepos.value;
   # the one command that reruns a failed step alone, from its step and check labels: a check inside the flake check
-  # by its attribute, any other recorded step by nixos:step; "unrecorded" failed before its first step
-  rerun = ''{{ if eq $labels.step "unrecorded" }}devenv tasks run nixos:qa{{ else if and $labels.check (eq $labels.step "nixos-flake-check") }}nix build -L .#{{ $labels.check }}{{ else }}NIXOS_STEP={{ $labels.step }} devenv tasks run nixos:step{{ end }}'';
+  # by its attribute (one with a dot: flake-output-kinds and the step's other guards rerun the step), any other recorded
+  # step by nixos:step; "unrecorded" failed before its first step
+  rerun = ''{{ if eq $labels.step "unrecorded" }}devenv tasks run nixos:qa{{ else if and (match "[.]" $labels.check) (eq $labels.step "nixos-flake-check") }}nix build -L .#{{ $labels.check }}{{ else }}NIXOS_STEP={{ $labels.step }} devenv tasks run nixos:step{{ end }}'';
   setting = v: if builtins.isList v then toString (builtins.length v) else toString v;
   quietHours =
     let
@@ -181,7 +182,7 @@ in
             in
             "${fails} >= ${toString a.RetroDueStepFailsRepeat.minFailures.value} unless on (step, check) (${stale} unless on (step, check) (${rose})) and on () ${gateRuns} >= ${toString a.RetroDueStepFailsRepeat.lastRuns.value} unless on (step, check) (max by (step, check) (shipping_gate_step_last_failure_timestamp_seconds) < on () group_left max(homelab_scheduled_gate_green_timestamp_seconds{job=\"node-exporter\"}) unless on (step, check) max by (step, check) (homelab_scheduled_gate_green_deferred{job=\"node-exporter\"}))"
           )
-          "Gate step {{ $labels.step }}{{ if $labels.check }}, check {{ $labels.check }},{{ end }} failed on {{ $value }} heads in 7 d: a retro is due (Shipping dashboard: failed gate steps; Platform health for the runs). Rerun it alone on main: ${rerun}; a scheduled full gate on main that passes after the last failure clears this, as does ${toString newFailureHours} h with no new one."
+          "Gate step {{ $labels.step }}{{ if eq $labels.check \"step\" }} (check=\"step\": the step's own record, no inner check named on those heads){{ else if $labels.check }}, check {{ $labels.check }},{{ end }} failed on {{ $value }} heads in 7 d: a retro is due (Shipping dashboard: failed gate steps; Platform health for the runs). Rerun it alone on main: ${rerun}; a scheduled full gate on main that passes after the last failure clears this, as does ${toString newFailureHours} h with no new one."
           { }
         )
         # min_over_time over 45 m spans two runs (every 30 min): one failed run that the next one fixes stays quiet

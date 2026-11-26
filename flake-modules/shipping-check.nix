@@ -220,7 +220,7 @@ let
             values = "1x${n (redFor + 10)}";
           }
           {
-            series = ''shipping_gate_step_failures{step="shunt-metrics-test",window="7d"}'';
+            series = ''shipping_gate_step_failures{check="step",step="shunt-metrics-test",window="7d"}'';
             values = "${n minFails}x${n (stepFor + 20)}";
           }
           {
@@ -257,6 +257,7 @@ let
               {
                 exp_labels = {
                   step = "shunt-metrics-test";
+                  check = "step";
                   severity = "warning";
                   team = "shipping";
                 };
@@ -265,7 +266,7 @@ let
                     rule = lib.findFirst (r: r.alert or "" == "RetroDueStepFailsRepeat") null (
                       lib.concatMap (g: g.rules) (builtins.fromJSON (builtins.readFile rules)).groups
                     );
-                    summary = "Gate step shunt-metrics-test failed on ${n minFails} heads in 7 d: a retro is due (Shipping dashboard: failed gate steps; Platform health for the runs). Rerun it alone on main: NIXOS_STEP=shunt-metrics-test devenv tasks run nixos:step; a scheduled full gate on main that passes after the last failure clears this, as does ${n newFailFor} h with no new one.";
+                    summary = "Gate step shunt-metrics-test (check=\"step\": the step's own record, no inner check named on those heads) failed on ${n minFails} heads in 7 d: a retro is due (Shipping dashboard: failed gate steps; Platform health for the runs). Rerun it alone on main: NIXOS_STEP=shunt-metrics-test devenv tasks run nixos:step; a scheduled full gate on main that passes after the last failure clears this, as does ${n newFailFor} h with no new one.";
                   in
                   {
                     inherit summary;
