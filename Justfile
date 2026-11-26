@@ -100,8 +100,8 @@ deploy HOST:
       SYSTEM_CHECKS_TOPLEVEL=1 scripts/system-checks.sh {{HOST}} {{memcap}} || { c=$?; rec checks-failed; exit "$c"; }; \
       target=$(nix eval --raw .#deploy.nodes.{{HOST}}.hostname) || target=""; \
       if [ -n "$target" ] && timeout 60 ssh -o StrictHostKeyChecking=yes "deploy@$target" command -v exec-pool-drain >/dev/null 2>&1; then \
-        drained=1; echo "deploy: draining the execution pool on {{HOST}}: no claims, running session turns park" >&2; \
-        timeout --foreground 1200 ssh -o StrictHostKeyChecking=yes "deploy@$target" 'sudo exec-pool-drain on && exec-pool-drain wait 900' \
+        drained=1; echo "deploy: draining the execution pool on {{HOST}}: no claims, running session turns park, a running one-shot run gets 60 s and then rides the deploy through" >&2; \
+        timeout --foreground 1200 ssh -o StrictHostKeyChecking=yes "deploy@$target" 'sudo exec-pool-drain on && exec-pool-drain wait 900 60' \
           || echo "deploy: {{HOST}} still runs a pool attempt after the drain's wait; deploying anyway, its restarted runner adopts it" >&2; fi; \
       rc=0; systemd-run --user --scope -q {{memcap}} {{deploy-rs}} .#{{HOST}} --skip-checks 2>&1 | tee "$log" || rc=${PIPESTATUS[0]}; \
       exec {all}>&-; undrain; \

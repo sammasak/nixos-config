@@ -261,7 +261,8 @@ labels but states, agents, reasons and hosts.
 A deploy never needs an idle pool: `just deploy` drains a pool host first (`exec-pool-drain on`, the request every
 runner reads at `/run/exec-pool-runner/drain`, held until cleared or 2 h pass), so its runners stop claiming and park
 a running session turn as `host_draining` with a `continue` row, which wakes it at once on any other host; a one-shot run is not stopped, and a runner restarted under it adopts it. The recipe
-waits up to 15 minutes for the host's helpers, deploys, and clears the request whatever deploy-rs returned. A settle
+waits up to 15 minutes for the host's session turns to park and 60 s for a one-shot run, which then finishes under the
+new generation, naming every attempt it waits on (task, slot, how long it has run) every 30 s and when a bound expires; then it deploys, and clears the request whatever deploy-rs returned. A settle
 or park the queue cannot take because it is restarting (its own host deployed) is retried while the lease lasts.
 
 ## Turning it on
