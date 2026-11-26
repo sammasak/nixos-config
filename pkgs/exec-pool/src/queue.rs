@@ -2012,6 +2012,29 @@ fn waiting(tx: &mut Transaction<'_>, out: &mut String, hosts: &[String]) -> Resu
             "exec_pool_waiting{{host=\"{host}\",reason=\"{why}\"}} {n}"
         );
     }
+    // a message to a waiting session queues it in the same transaction; an unread one left (held input) is acted on
+    out.push_str(
+        "# HELP exec_pool_waiting_oldest_seconds Seconds since the oldest waiting attempt with no unread message parked, \
+         by host and the reason it last went to waiting (0 with none).\n\
+         # TYPE exec_pool_waiting_oldest_seconds gauge\n",
+    );
+    for (host, why, secs) in counted(
+        tx,
+        &format!(
+            "SELECT {LAST_HOST}, p.reason, extract(epoch FROM now() - min(p.at))::int8 FROM attempts a \
+             CROSS JOIN LATERAL (SELECT e.reason, e.at FROM events e WHERE e.attempt_id = a.id \
+             AND e.to_status = 'waiting' ORDER BY e.id DESC LIMIT 1) p WHERE a.status = 'waiting' \
+             AND NOT EXISTS (SELECT FROM inbox i WHERE i.task_id = a.task_id AND i.kind = 'message' \
+             AND i.consumed_epoch IS NULL) GROUP BY 1, 2"
+        ),
+        hosts,
+        &ParkReason::ALL.map(ParkReason::as_str),
+    )? {
+        let _ = writeln!(
+            out,
+            "exec_pool_waiting_oldest_seconds{{host=\"{host}\",reason=\"{why}\"}} {secs}"
+        );
+    }
     Ok(())
 }
 

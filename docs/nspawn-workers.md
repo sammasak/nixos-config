@@ -201,6 +201,18 @@ free, within 2 minutes and then at most hourly per directory. A send that fails
 is retried at the next 2 minute run. `sam.workers.ntfyUrl = null` turns all of
 it off (`services.devEnvironments.alert` is the program they call).
 
+### ExecPoolReplyUnread
+
+A session's last turn parked as `turn_end` (its final reply written, often a pull request open) over 15 minutes ago,
+for 5 minutes, and no message has been sent to it since: `exec_pool_waiting_oldest_seconds{reason="turn_end"}`,
+which acer's queue renders per host and park reason, from the park's event. A shipped session is cancelled and a
+sent message re-queues it, so neither counts.
+
+1. On acer, `exec-pool list --limit 50`: the `waiting` sessions parked `turn_end`.
+2. `exec-pool status ID` for each: its reply and pull request.
+3. Ship it (review, merge) and close it with `exec-pool cancel ID`, or send it on with
+   `exec-pool send ID --prompt TEXT`. The alert clears at the next scrape after the last one is closed or sent.
+
 
 ## Pause and resume
 
