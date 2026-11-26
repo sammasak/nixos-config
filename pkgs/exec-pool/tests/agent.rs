@@ -246,6 +246,11 @@ fn a_session_turn_is_told_the_prefix_when_it_starts_and_its_input_alone_after() 
         SESSION_WAIT.contains("pool-wait")
             && SESSION_WAIT.contains("What does not: running processes")
             && SESSION_WAIT.contains("Before you stop or wait, commit and push")
+            && SESSION_WAIT.contains("While you wait, send no status messages")
+    );
+    assert!(
+        exec_pool::agent::PULL_REQUEST.contains("not the independent review"),
+        "a task that may open a pull request is told to check its own diff first"
     );
     assert!(
         !argv(&t).unwrap().concat().contains("pool-wait"),
