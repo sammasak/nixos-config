@@ -373,7 +373,8 @@ def check_slots():
     secret = [login["auth"], os.path.dirname(login["auth"]), os.path.dirname(login["tokens"]), "auth.json", "codex-egress"]
     leaks = {n: [s for s in secret if s in json.dumps(v)] for n, v in P["slots"].items()}
     leaks["exec-pool-exec@"] = [s for s in secret if s in json.dumps(P["exec"])]
-    check(len(P["slots"]) == 3 and not any(leaks.values()), f"no slot's binds, container unit, guest environment or guest units, nor the exec helper, name the login or its tokens ({leaks})")
+    proxied = set(re.findall(r"bind unix//run/dev-env-egress/([^/]+)/openai\.sock", pathlib.Path(P["caddyfile"]).read_text()))
+    check(P["slots"] and set(P["slots"]) == proxied and not any(leaks.values()), f"no slot's binds, container unit, guest environment or guest units, nor the exec helper, name the login or its tokens, every slot the proxy serves read ({sorted(proxied)}, {leaks})")
     cfg = P["slots"]["pool1"]["codexConfig"]
     check(cfg.startswith('model_provider = "host-proxy"\nweb_search = "disabled"\n') and '\nbase_url = "http://127.0.0.1:4103/v1"\n' in cfg
           and "\nsupports_websockets = false\n" in cfg and "\n[analytics]\nenabled = false\n" in cfg
