@@ -5,7 +5,8 @@ real scripts/post-deploy-check.sh to the target, so a unit in a restart loop, wh
 fails it with result=check-failed. deploy-rs's --dry-activate exits 0 whatever the dry activation did, so dry-activate
 reruns switch-to-configuration dry-activate over ssh and exits non-zero, with its output, when that or the closure diff
 fails, and 0 when both pass. A deploy of a host whose lock (in XDG_RUNTIME_DIR, here a temporary directory) is held is
-refused at once with result=locked. Every private (sammasak) input of flake.lock is git over ssh, so a deploy as the
+refused at once with result=locked; one of another host waits for the shared lock a running deploy holds, bounded by
+DEPLOY_LOCK_WAIT, recording result=waited or result=lock-timeout. Every private (sammasak) input of flake.lock is git over ssh, so a deploy as the
 user fetches a new pin with that user's key; a github: input would need the root-only nix access token."""
 import fcntl
 import json
@@ -60,10 +61,10 @@ esac""",
 
 
 def run(recipe, shadow="", check_script=None, host="acer-swift", runtime=None, justfile=ROOT / "Justfile", pool=False,
-        **env):
+        during=None, **env):
     """shadow: the activation's report on the target (None: there is none); check_script: the post-deploy check's text;
     runtime: XDG_RUNTIME_DIR, where the deploy locks are (default: a fresh one); pool: the target has exec-pool-drain,
-    whose `wait` exits DRAIN_WAIT_RC."""
+    whose `wait` exits DRAIN_WAIT_RC; during: called with the stub log's path while the recipe runs."""
     with tempfile.TemporaryDirectory() as tmp:
         tmp = pathlib.Path(tmp)
         for rel, body in STUBS.items():
@@ -78,12 +79,15 @@ def run(recipe, shadow="", check_script=None, host="acer-swift", runtime=None, j
             drain.write_text('#!/usr/bin/env bash\necho "drain $*" >> "$LOG"\n[ "$1" != wait ] || exit "${DRAIN_WAIT_RC:-0}"\n')
             drain.chmod(0o755)
         (tmp / "log").touch()
-        out = subprocess.run([shutil.which("just"), "--justfile", str(justfile), "--working-directory", str(tmp),
-                              recipe, host], capture_output=True, text=True,
-                             env=dict(os.environ, PATH=f"{tmp / 'bin'}:{env.pop('PATH', os.environ['PATH'])}", FIX=str(tmp),
-                                      XDG_RUNTIME_DIR=str(runtime or tmp),
-                                      LOG=str(tmp / "log"), SHADOWED_USER_UNITS=str(tmp / "shadowed-user-units"), **env))
-        return out.returncode, out.stdout + out.stderr, (tmp / "log").read_text()
+        proc = subprocess.Popen([shutil.which("just"), "--justfile", str(justfile), "--working-directory", str(tmp),
+                                 recipe, host], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                env=dict(os.environ, PATH=f"{tmp / 'bin'}:{env.pop('PATH', os.environ['PATH'])}",
+                                         FIX=str(tmp), XDG_RUNTIME_DIR=str(runtime or tmp), LOG=str(tmp / "log"),
+                                         SHADOWED_USER_UNITS=str(tmp / "shadowed-user-units"), **env))
+        if during:
+            during(tmp / "log")
+        out = proc.communicate()[0]
+        return proc.returncode, out, (tmp / "log").read_text()
 
 
 rc, out, log = run("deploy")
@@ -167,6 +171,44 @@ with tempfile.TemporaryDirectory() as runtime:
     rc, out, log = run("deploy", runtime=runtime)
     check(rc == 0 and "result=ok" in log and lock.read_text().startswith("pid "),
           f"deploy: once the holder exits, the host deploys and records itself as the holder (rc {rc}: {out.strip()[-200:]})")
+
+with tempfile.TemporaryDirectory() as runtime:
+    shared = pathlib.Path(runtime) / "deploy.lock"
+    with open(shared, "w") as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        held.write("msi-ms7758, pid 4242, def456, since 10:30:00\n")
+        held.flush()
+        seen = {}
+
+        def release(log):
+            time.sleep(2)
+            seen["before"] = log.read_text()
+            fcntl.flock(held, fcntl.LOCK_UN)
+
+        rc, out, log = run("deploy", runtime=runtime, during=release, DEPLOY_LOCK_WAIT="60")
+        check(rc == 0 and "system-checks" not in seen["before"] and "nix run" not in seen["before"]
+              and "waiting up to 60s for the deploy of msi-ms7758, pid 4242, def456, since 10:30:00" in out
+              and "result=waited seconds=" in log and "result=ok" in log
+              and log.index("result=waited") < log.index("system-checks") < log.index("result=ok")
+              and shared.read_text().startswith("acer-swift, pid "),
+              f"deploy: with another host's deploy holding the shared lock, it waits, naming the holder, then runs once "
+              f"it is freed and records result=waited with the wait (rc {rc}: {out.strip()[-300:]})")
+        fcntl.flock(held, fcntl.LOCK_EX)
+        held.seek(0)
+        held.truncate()
+        held.write("msi-ms7758, pid 4242, def456, since 10:30:00\n")
+        held.flush()
+        t0 = time.monotonic()
+        rc, out, log = run("deploy", runtime=runtime, DEPLOY_LOCK_WAIT="2")
+        took = time.monotonic() - t0
+        check(rc != 0 and 2 <= took < 10 and "result=lock-timeout" in log and "result=interrupted" not in log
+              and "system-checks" not in log and "nix run" not in log
+              and "gave up on acer-swift after 2s, msi-ms7758, pid 4242, def456, since 10:30:00 still deploys" in out,
+              f"deploy: it gives up after DEPLOY_LOCK_WAIT ({took:.1f}s), naming the holder, and records "
+              f"result=lock-timeout (rc {rc}: {out.strip()[-300:]})")
+    rc, out, log = run("deploy", runtime=runtime)
+    check(rc == 0 and "result=ok" in log and "result=waited" not in log,
+          f"deploy: a free shared lock is taken without a wait (rc {rc})")
 
 rc, out, log = run("dry-activate")
 check(rc == 0 and "--dry-activate" in log, f"dry-activate: a passing dry activation exits 0 (rc {rc}: {out.strip()})")

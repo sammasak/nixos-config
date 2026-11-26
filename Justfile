@@ -47,6 +47,11 @@ audit-candidate HOST=host TARGET=(if HOST == host { "local" } else { HOST }):
 # A second deploy of a HOST being deployed is refused at once, recorded
 # result=locked: a flock on $XDG_RUNTIME_DIR/deploy-HOST.lock (every checkout of
 # this user), held by the deploy's processes, so it ends when they die.
+# Deploys of other hosts run one at a time: two deploy-rs clients and evaluations, each under its own 7G cap,
+# do not fit in lenovo's memory (both were killed, exit 137). A second one waits on $XDG_RUNTIME_DIR/deploy.lock
+# from its system checks until the first's deploy-rs returns, up to DEPLOY_LOCK_WAIT seconds (default 1800),
+# recorded result=waited with the wait as seconds, or result=lock-timeout when it gives up. The post-deploy
+# check, light ssh, runs outside it.
 # Break-glass: DEPLOY_UNGATED=1 just deploy HOST deploys it anyway, with a
 # warning. A scope, not `capped`: it keeps the caller's environment,
 # terminal and Ctrl-C. The cap covers the deploy-rs client and its evaluation;
@@ -84,6 +89,12 @@ deploy HOST:
       lock=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/deploy-{{HOST}}.lock; exec {held}<>"$lock"; \
       flock -n "$held" || { holder=$(cat "$lock"); echo "deploy: refused, {{HOST}} is being deployed already (${holder:-holder unknown}); not queued, rerun when it ends" >&2; rec locked; exit 1; }; \
       echo "pid $$, $sha, since $(date +%T)" >"$lock"; \
+      shared=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/deploy.lock; exec {all}<>"$shared"; \
+      if ! flock -n "$all"; then holder=$(cat "$shared"); bound=${DEPLOY_LOCK_WAIT:-1800}; \
+        echo "deploy: waiting up to ${bound}s for the deploy of ${holder:-holder unknown}: two deploys' caps do not fit in this host's memory" >&2; \
+        flock -w "$bound" "$all" || { echo "deploy: gave up on {{HOST}} after ${bound}s, ${holder:-holder unknown} still deploys; rerun when it ends" >&2; rec lock-timeout; exit 1; }; \
+        rec waited; recorded=0; start=$SECONDS; fi; \
+      echo "{{HOST}}, pid $$, $sha, since $(date +%T)" >"$shared"; \
       SYSTEM_CHECKS_TOPLEVEL=1 scripts/system-checks.sh {{HOST}} {{memcap}} || { c=$?; rec checks-failed; exit "$c"; }; \
       target=$(nix eval --raw .#deploy.nodes.{{HOST}}.hostname) || target=""; \
       if [ -n "$target" ] && timeout 60 ssh -o StrictHostKeyChecking=yes "deploy@$target" command -v exec-pool-drain >/dev/null 2>&1; then \
@@ -91,7 +102,7 @@ deploy HOST:
         timeout --foreground 1200 ssh -o StrictHostKeyChecking=yes "deploy@$target" 'sudo exec-pool-drain on && exec-pool-drain wait 900' \
           || echo "deploy: {{HOST}} still runs a pool attempt after the drain's wait; deploying anyway, its restarted runner adopts it" >&2; fi; \
       rc=0; systemd-run --user --scope -q {{memcap}} {{deploy-rs}} .#{{HOST}} --skip-checks 2>&1 | tee "$log" || rc=${PIPESTATUS[0]}; \
-      undrain; \
+      exec {all}>&-; undrain; \
       rolled=0; if grep -q 'rolled back to previous generation' "$log"; then rolled=1; fi; \
       units=$(sed -n 's/.*restarting the following units: //p' "$log" | tr ',' '\n' | grep -c . || true); \
       check=255; \
