@@ -66,7 +66,8 @@ let
       host = config.networking.hostName;
       id = n;
       state = "idle";
-      inherit (cfg) capabilities;
+      # host-, not host:: a capability name is [a-z0-9-] (pkgs/exec-pool/migrations/0028_requires.up.sql)
+      capabilities = cfg.capabilities ++ [ "host-${config.networking.hostName}" ];
       agents = [ "none" ] ++ cfg.agents;
     };
   # the slot's declared Claude settings, recorded with each turn so the session metrics split by them (#626)

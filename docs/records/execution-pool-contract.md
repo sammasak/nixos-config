@@ -280,7 +280,7 @@ PostgreSQL, so it is imported only where the queue runs; it imports the other tw
 | `light.slots`, `light.memory`, `light.cpu`, `light.cpuQuota` | 0, `"1G"`, 1, `"200%"` | the last `light.slots` slots reserve less and get a CPUQuota ceiling |
 | `repos` | the owner's repositories | what the GitHub sidecar signs for a slot: fetch, push (branch and snapshot ref), gh |
 | `agents` | `[ ]` | `claude`, `codex`, `pi`; sessions run claude |
-| `capabilities` | from the host's facts | what each slot offers a task: `github` (with `repos`), `monitoring` (with `monitoring`), `always-on` (no power window, never sleeps) |
+| `capabilities` | from the host's facts | what each slot offers a task: `github` (with `repos`), `monitoring` (with `monitoring`), `always-on` (no power window, never sleeps), and always `host-<hostName>` (the runner adds it) |
 | `timeoutSecs` | 1800 | a one-shot run's or a session turn's time limit |
 | `queueListener` | null | a runner's remote queue (a `sam.fleet` listener); null: this host's |
 | `remoteRunners` | false | the queue admits `exec_pool_runner` over TCP |

@@ -29,7 +29,7 @@ const USAGE: &str = "usage: exec-pool COMMAND
         task, so give a new --key to run it once more. N, -100 to 100 (0), orders the claim: higher first, and a
         queued task gains one for every 10 minutes it waits, so a low one still runs; a running task is never stopped
         for another. The same key again keeps the priority it was first given. Each --requires NAME is a capability
-        the slot must offer (homelab.execPool.capabilities: github, monitoring, always-on); a task no slot seen in
+        the slot must offer (homelab.execPool.capabilities: github, monitoring, always-on, and host-HOST for the slot's host); a task no slot seen in
         the last day offers them to, with its agent, is refused, naming the capability.
   start             submit's flags, claude only: starts a session, whose first turn runs the prompt and parks it
                     waiting; prints its id

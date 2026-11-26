@@ -591,6 +591,45 @@ fn a_task_requiring_a_capability_is_claimed_only_by_a_slot_that_offers_it() {
 }
 
 #[test]
+fn a_task_requiring_a_host_is_claimed_only_by_that_hosts_slot_and_an_unknown_host_is_refused() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let mut msi = claude_slot();
+    msi.capabilities = BTreeSet::from(["host-msi-ms7758".to_owned()]);
+    let mut acer = claude_slot();
+    acer.host = "acer-swift".to_owned();
+    acer.capabilities = BTreeSet::from(["host-acer-swift".to_owned()]);
+    assert!(owner.claim(&msi, 60).unwrap().is_none());
+    assert!(owner.claim(&acer, 60).unwrap().is_none());
+    let conninfo = pg
+        .conninfo()
+        .replace("user=exec_pool ", "user=exec_pool_submit ");
+    let mut s = Store::open(&conninfo).unwrap();
+    let requiring = |key: &str, host: &str| {
+        let mut t = agent_task();
+        t["idempotency_key"] = json!(key);
+        t["capabilities"] = json!([host]);
+        serde_json::from_value::<TaskSpec>(t).unwrap()
+    };
+    match s.submit_task(&requiring("cli:lenovo", "host-lenovo"), 0) {
+        Err(QueueError::Unoffered(message)) => assert!(
+            message.contains("offers capability host-lenovo with agent claude")
+                && message.contains("offered: host-acer-swift, host-msi-ms7758"),
+            "{message}"
+        ),
+        other => panic!("{other:?}"),
+    }
+    let (id, _) = s
+        .submit_task(&requiring("cli:acer", "host-acer-swift"), 0)
+        .unwrap();
+    assert!(
+        owner.claim(&msi, 60).unwrap().is_none(),
+        "msi's slot leaves a task for acer queued"
+    );
+    assert_eq!(owner.claim(&acer, 60).unwrap().unwrap().task.id, id);
+}
+
+#[test]
 fn the_runner_claims_and_settles_and_writes_nothing_else() {
     let pg = Pg::new();
     let mut owner = pg.migrated();
