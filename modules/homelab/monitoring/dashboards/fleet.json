@@ -514,7 +514,7 @@
           }
         ]
       },
-      "description": "One row per host: status, uptime, CPU %, memory %, root filesystem %, hottest sensor, alerts firing on it, failed units, NixOS generation, version and toplevel hash (the deploy log below carries the commit).",
+      "description": "One row per host: status, uptime, CPU %, memory %, root filesystem %, hottest sensor, alerts firing on it, failed units, NixOS generation, version and toplevel hash (the deploy log below carries the commit). A blank failed-units cell on an up host means its systemd collector failed (NodeSystemdCollectorFailed).",
       "transformations": [
         {
           "id": "merge",

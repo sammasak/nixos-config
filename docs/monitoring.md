@@ -109,7 +109,8 @@ See [the measured improvement cycle](monitoring-improvement-cycle.md) for the fl
   - NodeSystemdUnitFailed (warning, 15 m): any failed service, socket, timer, target or path unit.
   - NodeSystemdCollectorFailed (warning, 10 m): node exporter's systemd collector failed on a host, so every
     `node_systemd_unit_state` series of that host is gone; while it fires, StoreUploadStale, NodeSystemdUnitFailed and
-    the failed-unit panels are blind on that host ([runbook](alert-runbooks.md#nodesystemdcollectorfailed)).
+    ShuntCollectorStale's failed-unit leg are blind on that host, and the failed-unit panels show only a
+    "systemd collector failed" row for it ([runbook](alert-runbooks.md#nodesystemdcollectorfailed)).
   - DnsDown (critical, 5 m): lenovo's AdGuard does not answer its status API.
   - DnsStatsStale (warning): `adguard.prom` has not been rewritten for over 5 min.
   - JournalEntriesDropped (warning, 5 m): Alloy's Loki writer dropped journal entries in the last 15 min on a host that is up.
