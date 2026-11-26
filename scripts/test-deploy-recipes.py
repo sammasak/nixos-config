@@ -32,7 +32,11 @@ case "$*" in
   *hostname*) printf target ;;
   *diff-closures*) exit "${DIFF_RC:-0}" ;;
 esac""",
-    "bin/ssh": 'echo "ssh $*" >> "$LOG"; shift 3; exec bash -c "$*"',
+    # the target has exec-pool-drain only as the pool fixture, whatever this host's PATH holds
+    "bin/ssh": """echo "ssh $*" >> "$LOG"; shift 3
+[ "$*" != "command -v exec-pool-drain" ] || [ -x "$FIX/bin/exec-pool-drain" ] || exit 1
+exec bash -c "$*"
+""",
     "bin/sudo": 'echo "sudo $*" >> "$LOG"; exec "$@"',
     # a clean tree on origin/main
     "bin/git": 'case $1 in rev-parse) echo abc123 ;; esac',
@@ -76,7 +80,7 @@ def run(recipe, shadow="", check_script=None, host="acer-swift", runtime=None, j
         (tmp / "log").touch()
         out = subprocess.run([shutil.which("just"), "--justfile", str(justfile), "--working-directory", str(tmp),
                               recipe, host], capture_output=True, text=True,
-                             env=dict(os.environ, PATH=f"{tmp / 'bin'}:{os.environ['PATH']}", FIX=str(tmp),
+                             env=dict(os.environ, PATH=f"{tmp / 'bin'}:{env.pop('PATH', os.environ['PATH'])}", FIX=str(tmp),
                                       XDG_RUNTIME_DIR=str(runtime or tmp),
                                       LOG=str(tmp / "log"), SHADOWED_USER_UNITS=str(tmp / "shadowed-user-units"), **env))
         return out.returncode, out.stdout + out.stderr, (tmp / "log").read_text()
@@ -112,6 +116,11 @@ if old.returncode == 0 and "shadowed-user-units" not in old.stdout:
           f"seeded: main's post-deploy check passes a host whose activation found a shadowed unit, so the check above is new (rc {rc})")
 
 check("exec-pool-drain on" not in run("deploy")[2], "deploy: a host without exec-pool-drain is deployed without a drain")
+with tempfile.TemporaryDirectory() as own:
+    (pathlib.Path(own) / "exec-pool-drain").write_text("#!/usr/bin/env bash\nexit 1\n")
+    (pathlib.Path(own) / "exec-pool-drain").chmod(0o755)
+    check("exec-pool-drain on" not in run("deploy", PATH=f"{os.environ['PATH']}:{own}")[2],
+          "seeded: a drain on the test host's own PATH does not make the target a pool host")
 rc, out, log = run("deploy", pool=True)
 steps = [l.split()[0] + " " + l.split()[1] for l in log.splitlines() if l.startswith(("system-checks", "drain", "nix run"))]
 check(rc == 0 and "result=ok" in log
