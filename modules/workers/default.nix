@@ -671,6 +671,7 @@ in
           "checks-run"
           "coverage"
           "instructions"
+          "local-lane"
           "offload"
           "review"
         ];
