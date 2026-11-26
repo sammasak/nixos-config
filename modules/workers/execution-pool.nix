@@ -116,7 +116,7 @@ in
             name: real: text:
             lib.hiPrio (
               pkgs.writeShellScriptBin name ''
-                light() {
+                ${refusal name}light() {
                   # no evaluation starts while the scheduled gate holds the heavy lock (#835): its scheduled-gate.lock
                   # (pkgs/heavy-lock) is waited out first, within the same 900 s. One already running goes on: held
                   # shared across it, overlapping slots would starve the gate's exclusive take.
@@ -143,6 +143,33 @@ in
             );
           nix = lib.getExe config.nix.package;
           devenv = lib.getExe pkgs.devenv;
+          # each task's measured need, which no light slot's reserve covers
+          heavyTasks = {
+            "nixos:seventh-host-test" = "5.6 GB (its slot's peak, one host's evaluation 4.8 GiB)";
+            "nixos:workers-eval-test" = "WEVAL";
+            "nixos:qa" = "the 5.6 GB of nixos:seventh-host-test, one of its gates";
+          };
+          # The slots share environments.slice (#827): in a light slot one of these is refused at once, not killed
+          # there by the kernel minutes in; whatever locks the caller holds. Exit 77, not a test's failure.
+          refusal =
+            name:
+            lib.optionalString (name == "devenv" && isLight devEnvironment.name) ''
+              r=
+              for a; do
+                case $r:$a in
+                  :tasks) r=t ;;
+                  t:run) r=r ;;
+                  t:*) r= ;;
+                  ${lib.concatStrings (
+                    lib.mapAttrsToList (t: need: ''
+                      r:${t})
+                        echo "devenv: ${t} refused in ${devEnvironment.name}, a light slot reserving ${cfg.light.memory}: it needs ${need}; run it in a full slot (${cfg.slot.memory} reserved) or leave it to the scheduled gate" >&2
+                        exit 77 ;;
+                    '') heavyTasks
+                  )}
+                esac
+              done
+            '';
           cargoJobs = toString (
             lib.max 1 (dev.instances.${devEnvironment.name}.memory.reserved / 1073741824)
           );

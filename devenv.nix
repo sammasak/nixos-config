@@ -950,7 +950,12 @@ let
       ])
       ''
         WORK_LOCKS_HELD=1 GC_FREE_SPACE_DIVISOR=16 flock -o -w 900 /run/work-locks/light-work.lock \
-          nix flake show --json --all-systems --no-write-lock-file >/dev/null
+          nix flake show --json --all-systems --no-write-lock-file >/dev/null || {
+          rc=$?
+          # in a pool slot a SIGKILL is the kernel's OOM killer at the slots' shared environments.slice (#827)
+          [ "$rc" -ne 137 ] || echo "nixos-push-eval: nix flake show was killed (SIGKILL) after $SECONDS s; in a pool slot that is the OOM killer at environments.slice, which all slots share, and this evaluation takes 4 to 6 GiB: push again when the other slots are idle" >&2
+          exit "$rc"
+        }
       '';
   heavyLock = pkgs.callPackage ./pkgs/heavy-lock/package.nix { };
   qaGreen = gate "qa-green" (with pkgs; [

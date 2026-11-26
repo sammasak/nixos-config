@@ -1434,6 +1434,48 @@ def check_runner():
               f"{host} {what}, and its helper commits as the owner's git identity ({ {k: v for k, v in p.items() if k != 'git'} }, { {k: v for k, v in git.items() if 'GIT_' in k} })")
 
 
+# modules/workers/execution-pool.nix: a slot's devenv wrapper refuses the tasks that need more than a light slot's
+# reserve at once, in one line and exit 77, whatever locks its caller holds; a full slot and other tasks pass through.
+SLOT_DEVENV = r"""
+let
+  acer = (builtins.getFlake (toString %(root)s)).nixosConfigurations.acer-swift.config;
+  wrapper = n: builtins.unsafeDiscardStringContext (builtins.head (builtins.filter (p: (p.name or "") == "devenv" && p ? text) acer.containers.${n}.config.environment.systemPackages)).text;
+in { pool3 = wrapper "pool3"; pool4 = wrapper "pool4"; }
+"""
+
+
+def check_slot_devenv():
+    out = run_eval(SLOT_DEVENV % {"root": json.dumps(ROOT)})
+    texts = json.loads(out.stdout) if out.returncode == 0 else {}
+    check(set(texts) == {"pool3", "pool4"}, f"acer's pool3 and pool4 each have a devenv wrapper ({sorted(texts) or out.stderr.strip()[-300:]})")
+    if set(texts) != {"pool3", "pool4"}:
+        return
+    with tempfile.TemporaryDirectory() as t:
+        stub = pathlib.Path(t) / "devenv"
+        stub.write_text('#!/bin/sh\necho "ran: $*"\n')
+        stub.chmod(0o755)
+
+        def run(slot, *args):
+            script = pathlib.Path(t) / slot
+            script.write_text(re.sub(r"/nix/store/[a-z0-9]{32}-devenv-[^/\s]*/bin/devenv", str(stub), texts[slot]))
+            r = subprocess.run(["bash", str(script), *args], capture_output=True, text=True,
+                               env={**os.environ, "WORK_LOCKS_HELD": "1"})
+            return r.returncode, r.stdout.strip(), r.stderr.strip()
+
+        for args in (["tasks", "run", "nixos:seventh-host-test"], ["shell", "--", "devenv", "tasks", "run", "nixos:qa"],
+                     ["tasks", "run", "nixos:fmt-check", "nixos:workers-eval-test"]):
+            rc, so, se = run("pool4", *args)
+            task = args[-1]
+            check(rc == 77 and so == "" and len(se.splitlines()) == 1 and f"{task} refused in pool4, a light slot reserving 1G" in se
+                  and "needs " in se and "full slot (2G reserved)" in se and "scheduled gate" in se,
+                  f"light pool4: `devenv {' '.join(args)}` is refused at once with exit 77 and one line naming the task, the slot's reserve, the need and where to run it instead ({rc}, {so!r}, {se!r})")
+        for slot, args in (("pool4", ["tasks", "run", "nixos:fmt-check"]), ("pool4", ["shell", "--", "grep", "nixos:qa"]),
+                           ("pool3", ["tasks", "run", "nixos:seventh-host-test"]), ("pool3", ["tasks", "run", "nixos:qa"])):
+            rc, so, se = run(slot, *args)
+            check(rc == 0 and so == f"ran: {' '.join(args)}" and "refused" not in se,
+                  f"{slot}: `devenv {' '.join(args)}` is not refused and runs devenv as given ({rc}, {so!r}, {se!r})")
+
+
 def check_nested(facts):
     managed = json.loads(facts["managed"]) if facts.get("managed") else {}
     conf = facts.get("containers", "")
@@ -1816,6 +1858,7 @@ def main():
     check_session_dock()
     check_slot_reach()
     check_runner()
+    check_slot_devenv()
     out = run_eval(fleet(FLEET_INSTANCE, FLEET_FACTS))
     facts = json.loads(out.stdout) if out.returncode == 0 else {}
     check(facts.get("assertions") == [], f"msi-ms7758 with a claude instance fails no assertion ({facts.get('assertions', out.stderr.strip()[-600:])})")
