@@ -497,13 +497,18 @@ def check_push_filter(acer, msi):
         GitHubRecorder.seen = []
         upstream = http.server.ThreadingHTTPServer(("127.0.0.1", 0), GitHubRecorder)
         threading.Thread(target=upstream.serve_forever, daemon=True).start()
-        try:
-            # the filter's socket does not exist here: a receive-pack is a 502, never GitHub's
-            wrong = site_wrong(site, r"https://(api\.)?github\.com", [("POST", p, 502) for p in RECEIVE]
-                               + [("GET", "/sammasak/nixos-config/info/refs?service=git-receive-pack", True)],
-                               f"http://127.0.0.1:{upstream.server_port}")
-        finally:
-            upstream.shutdown()
+        # on acer the live filter listens at the site's socket and counts what it refuses (ExecPoolPushesRefused):
+        # point the site at a socket in a temp dir that nothing serves, so a receive-pack is a 502, never GitHub's
+        with tempfile.TemporaryDirectory() as t:
+            local = re.sub(r"unix/\S+", f"unix/{t}/filter.sock", site)
+            check(set(re.findall(r"unix/(\S+)", local.split("\n", 2)[2])) == {f"{t}/filter.sock"},
+                  f"{n}'s site under test proxies to no socket outside its temp dir")
+            try:
+                wrong = site_wrong(local, r"https://(api\.)?github\.com", [("POST", p, 502) for p in RECEIVE]
+                                   + [("GET", "/sammasak/nixos-config/info/refs?service=git-receive-pack", True)],
+                                   f"http://127.0.0.1:{upstream.server_port}")
+            finally:
+                upstream.shutdown()
         check(wrong == [] and not any("receive-pack" in p.split("?")[0] for p, _ in GitHubRecorder.seen),
               f"{n}'s site lets no receive-pack past the filter, and still the ref listing ({'no caddy on PATH' if wrong is None else wrong})")
     push = sites.get("bind unix//run/dev-env-egress/.push.sock", "")
@@ -1589,8 +1594,8 @@ def check_submitter():
 
 
 LEGACY_SESSIONS = r"""
-let u = (builtins.getFlake (toString %(root)s)).nixosConfigurations.acer-swift.config.systemd.units;
-in (import <nixpkgs> { }).linkFarm "legacy" [
+let a = (builtins.getFlake (toString %(root)s)).nixosConfigurations.acer-swift; u = a.config.systemd.units;
+in a.pkgs.linkFarm "legacy" [
   { name = "gc"; path = u."exec-pool-legacy-sessions.service".unit; }
   { name = "list"; path = u."exec-pool-legacy-sessions-list.service".unit; }
 ]
