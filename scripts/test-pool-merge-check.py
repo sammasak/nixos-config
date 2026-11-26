@@ -6,7 +6,8 @@ evaluation, flake.lock and any unmapped path every host (seeded: a rule change b
 host; two migrations on one number, and a gap, fail). Every evaluation takes the heavy lock, then the light one the
 push hook's evaluation takes, and a build compiles under the heavy one alone. A slot's nix wrapper, from the module's
 text with flock and nix stubbed: build --expr, --file and flake attributes evaluate under light and build outside it,
-nix-build instantiates under light and builds outside it, and flake check runs under light."""
+nix-build instantiates under light and builds outside it, and flake check runs under light. A slot's cargo has no lane and
+CARGO_BUILD_JOBS from its reserve."""
 
 import importlib.util
 import os
@@ -136,6 +137,17 @@ def lane(name: str, real: str, d: pathlib.Path) -> pathlib.Path:
     out.chmod(0o755)
     return out
 
+
+# A slot's cargo (#827): in a devenv shell cargo is the profile's, which a PATH lane misses, so the cap is an environment
+# variable every cargo reads (a login's, and the manager's DefaultEnvironment, which the runner's systemd-run steps get), and no cargo
+# subcommand (--version, metadata or a compile) waits on a lock.
+src = (HERE.parent / "modules/workers/execution-pool.nix").read_text()
+check('(lane "cargo"' not in src and not re.search(r"\bcargo\b", src.split("(lane ", 1)[1].split("# Not a cargo lane", 1)[0]),
+      "no cargo lane: cargo --version, cargo metadata and a compile wait on no lock")
+cap = re.search(r"cargoJobs = toString \(\s*lib\.max 1 \(dev\.instances\.\$\{devEnvironment\.name\}\.memory\.reserved / 1073741824\)\s*\);", src)
+check(cap is not None and "environment.sessionVariables.CARGO_BUILD_JOBS = cargoJobs;" in src
+      and 'systemd.settings.Manager.DefaultEnvironment = "CARGO_BUILD_JOBS=${cargoJobs}";' in src,
+      "a slot's CARGO_BUILD_JOBS, a job per GiB of its reserve and at least one, for logins and the runner's systemd-run steps")
 
 # each run of the stub nix as `argv locked|free`: an evaluation prints a drv, as nix eval --raw would
 with tempfile.TemporaryDirectory() as tmp:

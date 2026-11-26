@@ -143,6 +143,9 @@ in
             );
           nix = lib.getExe config.nix.package;
           devenv = lib.getExe pkgs.devenv;
+          cargoJobs = toString (
+            lib.max 1 (dev.instances.${devEnvironment.name}.memory.reserved / 1073741824)
+          );
         in
         lib.mkIf (lib.elem devEnvironment.name slotNames) {
           environment.systemPackages = [
@@ -256,6 +259,13 @@ in
               esac
             '')
           ];
+          # Not a cargo lane: in a devenv shell cargo is the profile's, ahead of this PATH, and every cargo reads this.
+          # About a GiB a rustc: a slot compiles within its reserve, and the reserves fit the shared slice (#827). A
+          # best effort (`-j` overrides it); the slice's MemoryMax stays the limit. Logins read sessionVariables; the
+          # runner's steps are transient systemd-run units with a filtered environment, which get the manager's
+          # DefaultEnvironment (not globalEnvironment: that is only the declared units' Environment=).
+          environment.sessionVariables.CARGO_BUILD_JOBS = cargoJobs;
+          systemd.settings.Manager.DefaultEnvironment = "CARGO_BUILD_JOBS=${cargoJobs}";
           # A slot runs task text: none of the host user's groups (wheel, kvm, input) and no sudo, whose setuid
           # wrapper is host root's in a slot without privateUsers. mkForce: core/users.nix and rootInGuest add them.
           users.users.${dev.user}.extraGroups = lib.mkForce [ ];
