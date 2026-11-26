@@ -92,7 +92,7 @@ deploy HOST:
       shared=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/deploy.lock; exec {all}<>"$shared"; \
       if ! flock -n "$all"; then holder=$(cat "$shared"); bound=${DEPLOY_LOCK_WAIT:-1800}; \
         echo "deploy: waiting up to ${bound}s for the deploy of ${holder:-holder unknown}: two deploys' caps do not fit in this host's memory" >&2; \
-        flock -w "$bound" "$all" || { echo "deploy: gave up on {{HOST}} after ${bound}s, ${holder:-holder unknown} still deploys; rerun when it ends" >&2; rec lock-timeout; exit 1; }; \
+        flock -w "$bound" "$all" || { holder=$(cat "$shared"); echo "deploy: gave up on {{HOST}} after ${bound}s, ${holder:-holder unknown} still deploys; rerun when it ends" >&2; rec lock-timeout; exit 1; }; \
         rec waited; recorded=0; start=$SECONDS; fi; \
       echo "{{HOST}}, pid $$, $sha, since $(date +%T)" >"$shared"; \
       SYSTEM_CHECKS_TOPLEVEL=1 scripts/system-checks.sh {{HOST}} {{memcap}} || { c=$?; rec checks-failed; exit "$c"; }; \
