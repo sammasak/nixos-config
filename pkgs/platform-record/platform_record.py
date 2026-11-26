@@ -22,7 +22,6 @@ import pathlib
 import re
 import sys
 import time
-import urllib.request
 from collections.abc import Iterator
 from datetime import datetime
 
@@ -132,6 +131,9 @@ def write_retry(spool: pathlib.Path, entries: list[Entry]) -> None:
 
 
 def push(url: str, entries: list[Entry]) -> bool:
+    # imported here: about 0.2 s, and a record the host ships (a slot's, after each light hold) never pushes
+    import urllib.request
+
     streams: dict[tuple[str, str], list[list[str]]] = {}
     for e in sorted(entries, key=lambda e: int(e["ts"])):
         streams.setdefault((e["kind"], e["host"]), []).append([e["ts"], e["line"]])

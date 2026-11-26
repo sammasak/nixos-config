@@ -141,7 +141,7 @@ in
                     rc=$?
                   fi
                   [ -z "$fd" ] || exec {fd}<&-
-                  PLATFORM_RECORD_SHIPPER=host ${lib.getExe record} lock lane=light class="$class" wait_seconds=$((held - start)) seconds=$((SECONDS - held)) rc="$rc" >&2 || :
+                  PLATFORM_RECORD_SHIPPER=host PLATFORM_RECORD_SPOOL=${spool} ${lib.getExe record} lock lane=light class="$class" wait_seconds=$((held - start)) seconds=$((SECONDS - held)) rc="$rc" >&2 || :
                   return "$rc"
                 }
                 if [ -z "''${WORK_LOCKS_HELD:-}" ] && [ -e /run/work-locks/light-work.lock ]; then
@@ -156,6 +156,9 @@ in
           # the scheduled gate's worst case, modules/homelab/scheduled-gate.nix's TimeoutStartSec (8 h; held equal by
           # scripts/test-pool-merge-check.py): a slot waiting less fails its turn with rc 75 while a gate runs
           gateWait = toString (8 * 3600);
+          # the spool the host ships is the guest user's own (scripts/guest-records.py), not the HOME a runner step gets
+          # (an attempt's under attempts/, a session turn's /session/cur/home: pkgs/exec-pool/src/workspace.rs)
+          spool = "${config.users.users.${dev.user}.home}/.local/state/platform-records";
           cargoJobs = toString (
             lib.max 1 (dev.instances.${devEnvironment.name}.memory.reserved / 1073741824)
           );
@@ -264,21 +267,32 @@ in
               exit
             '')
             # devenv evaluates in-process and caches it: under the lock its eval, or a warm `shell -- true` for a
-            # command that runs a task or a shell, which then evaluates from that cache. No warm-up while the stamp
+            # command that runs a task or a shell, whose shell then evaluates from that cache. No warm-up while the stamp
             # matches what devenv's cache keys on: the files its last evaluation read (.devenv/input-paths.txt, its
-            # direnv watch list: devenv.nix, .yaml, .lock, the local overrides and every file they import) and devenv
-            # itself. A changed one, a missing list or a failed warm-up warms up again; env vars it read are not keyed.
+            # direnv watch list: devenv.nix, .yaml, .lock, the local overrides and every file they import), the env
+            # vars it read (eval_env_input in its db, and those this repo's cache holds), the db itself (a deleted or
+            # recreated one is cold) and devenv. A key that moved during the warm-up, a missing list or db or a failed
+            # warm-up writes no stamp, so the next call warms up again.
             (lane "devenv" devenv ''
               warm_key() {
-                local f
-                [ -f "$1/input-paths.txt" ] || return
+                local f v db=$1/nix-eval-cache.db files=()
+                [ -f "$1/input-paths.txt" ] && [ -f "$db" ] || return
                 {
                   echo ${devenv}
+                  ${pkgs.coreutils}/bin/stat -c 'db %d:%i' "$db"
+                  { printf '%s\n' HOME DEVENV_CONTAINER SECRETSPEC_SECRETS NIXPKGS_ALLOW_UNFREE NIXPKGS_ALLOW_INSECURE \
+                      NIXPKGS_ALLOW_BROKEN NIXPKGS_ALLOW_NONSOURCE NIXPKGS_ALLOW_UNSUPPORTED_SYSTEM
+                    ${pkgs.sqlite}/bin/sqlite3 -readonly "$db" 'SELECT DISTINCT name FROM eval_env_input' 2>/dev/null
+                  } | ${pkgs.coreutils}/bin/sort -u | while IFS= read -r v; do
+                    case $v in "" | [0-9]* | *[!A-Za-z0-9_]*) continue ;; esac
+                    if [ -n "''${!v+set}" ]; then printf 'env %s=%s\n' "$v" "''${!v}"; else echo "env $v unset"; fi
+                  done
                   while IFS= read -r f; do
                     if [ -d "$f" ]; then echo "$f dir $(${pkgs.coreutils}/bin/ls -A "$f" | ${pkgs.coreutils}/bin/sha256sum)"
-                    elif [ -e "$f" ]; then echo "$f $(${pkgs.coreutils}/bin/sha256sum <"$f")"
+                    elif [ -e "$f" ]; then files+=("$f")
                     else echo "$f absent"; fi
                   done <"$1/input-paths.txt"
+                  [ ''${#files[@]} -eq 0 ] || ${pkgs.coreutils}/bin/sha256sum -- "''${files[@]}" 2>/dev/null
                 } | ${pkgs.coreutils}/bin/sha256sum
               }
               case ''${1:-} in
@@ -290,7 +304,7 @@ in
                   d=$d/.devenv
                   k=$(warm_key "$d")
                   if [ -z "$k" ] || [ "$(${pkgs.coreutils}/bin/cat "$d/light-warm" 2>/dev/null)" != "$k" ]; then
-                    if light devenv-warm-up ${devenv} shell -- true >&2 && k=$(warm_key "$d") && [ -n "$k" ]; then
+                    if light devenv-warm-up ${devenv} shell -- true >&2 && [ -n "$k" ] && [ "$(warm_key "$d")" = "$k" ]; then
                       { echo "$k" >"$d/light-warm.$$" && ${pkgs.coreutils}/bin/mv "$d/light-warm.$$" "$d/light-warm"; } 2>/dev/null || :
                     fi
                   fi ;;
