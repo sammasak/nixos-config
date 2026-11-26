@@ -2,8 +2,8 @@
 
 The direction this queue serves: [vision.md](vision.md), its four parts: (1) a platform, (2) an agent runtime
 trusted with long work, (3) a system that tells us whether it got better, (4) local inference that earns its place.
-Realigned on 26 Nov 2026 at 23:00 UTC against vision.md and the open and recently updated issues and pull requests
-in sammasak/nixos-config, herman, skills, devenv-platform and paddock (gh, read 22:45 to 23:00 UTC). A fact marked
+Realigned on 26 Nov 2026 at 23:10 UTC against vision.md and the open and recently updated issues and pull requests
+in sammasak/nixos-config, herman, skills, devenv-platform and paddock (gh, read 22:45 to 23:10 UTC). A fact marked
 "per coordinator" is from the coordinator's session at 26 Nov 23:45 CET and is not on GitHub. What shipped before
 26 Nov 20:00 UTC is in git history and the closed issues.
 
@@ -52,7 +52,7 @@ answers nothing through the pool's proxy, so 26 Nov is not read here).
 
 ## Queue, in pick-up order
 
-State of 26 Nov 23:00 UTC. The order: pool breakages found tonight first (they cost every slot now), then the gate's
+State of 26 Nov 23:10 UTC. The order: pool breakages found tonight first (they cost every slot now), then the gate's
 first test, then the oldest waiting item, then the topics that merged most today (pool runtime, Paddock) behind them.
 A brief number is the coordinator's, not on GitHub.
 
@@ -75,7 +75,13 @@ A brief number is the coordinator's, not on GitHub.
 | 15 | [#624](https://github.com/sammasak/nixos-config/issues/624), [#826](https://github.com/sammasak/nixos-config/issues/826) | each firing alert has a receipt with its cause; RetroDueStepFailsRepeat clears once the scheduled gate passes `scorecard-test` (#942) | 3, alerts are few and say what to do |
 | 16 | [#837](https://github.com/sammasak/nixos-config/issues/837) | nixos:qa runs `scripts/check-tuning.py`, so Check tuning's minutes come from the records, not from PR bodies | 3, where time went |
 | 17 | [#898](https://github.com/sammasak/nixos-config/issues/898) | a slot's eval and fetch caches survive turns (resets shipped in #910); close it or name what is left | 2, long work on any slot |
-| 18 | cleanup | close #859 (`--requires` shipped in #886, #892, skills 178) and pi-harness [#26](https://github.com/sammasak/pi-harness/issues/26) (its pin is already devenv-platform main 358f2c28); close devenv-platform [#155](https://github.com/sammasak/devenv-platform/issues/155) after a Loki reading shows no text fields | 3, the open issues say what is still owed |
+| 18 | none yet (finding 8) | a finished session whose branch has no pull request is flagged on the pool's session report, so no work ends unseen | 2, agents stay visible |
+| 19 | [#646](https://github.com/sammasak/nixos-config/issues/646) (finding 9) | the v0.1 acceptance script runs in a VM and prints PASS, FAIL or UNTESTED per criterion | 2, a runtime trusted with long work |
+
+Housekeeping, outside the queue (no vision.md goal of its own): close #859 (`--requires` shipped in #886, #892 and
+skills 178) and pi-harness [#26](https://github.com/sammasak/pi-harness/issues/26) (its pin is already
+devenv-platform main 358f2c28); close devenv-platform [#155](https://github.com/sammasak/devenv-platform/issues/155)
+once a Loki reading shows no text fields.
 
 ### Anti-starvation
 
