@@ -1988,6 +1988,68 @@ fn a_message_sent_while_a_turn_runs_is_delivered_after_its_park() {
 }
 
 #[test]
+fn only_a_reply_parked_past_the_window_with_an_empty_inbox_counts_as_unread() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, old) = session(&pg);
+    let mut parked_ago = |s: &mut Store, key: Option<&str>, minutes: i32| {
+        let id = key.map_or_else(
+            || old.clone(),
+            |k| {
+                let mut task: TaskSpec = serde_json::from_value(agent_task()).unwrap();
+                k.clone_into(&mut task.idempotency_key);
+                s.start_session(&task, 0).unwrap().0
+            },
+        );
+        let (a, epoch, turn) = started(&mut owner);
+        owner
+            .park(&a, epoch, &park(ParkReason::TurnEnd, turn.upto))
+            .unwrap();
+        pg.sql()
+            .execute(
+                "UPDATE events SET at = now() - make_interval(mins => $2) \
+                 WHERE attempt_id = $1 AND to_status = 'waiting'",
+                &[&a, &minutes],
+            )
+            .unwrap();
+        id
+    };
+    parked_ago(&mut s, None, 20);
+    let fresh = parked_ago(&mut s, Some("cli:fresh"), 5);
+    let sent = parked_ago(&mut s, Some("cli:sent"), 30);
+    let timed = parked_ago(&mut s, Some("cli:timed"), 50);
+    s.send_timer(&timed, "later", "2999-01-01T00:00:00Z")
+        .unwrap();
+    let closed = parked_ago(&mut s, Some("cli:closed"), 40);
+    s.cancel(&closed).unwrap();
+    s.send(&sent, "and then this").unwrap();
+    let oldest = |m: &str, why: &str| -> i64 {
+        let head =
+            format!("exec_pool_waiting_oldest_seconds{{host=\"msi-ms7758\",reason=\"{why}\"}} ");
+        m.lines()
+            .find_map(|l| l.strip_prefix(&head))
+            .unwrap_or_else(|| panic!("{m}"))
+            .parse()
+            .unwrap()
+    };
+    let metrics = owner.metrics().unwrap();
+    let age = oldest(&metrics, "turn_end");
+    assert!(
+        (1200..1260).contains(&age),
+        "the 20 minute one, not the re-queued, timed or closed ones: {age}"
+    );
+    assert_eq!(oldest(&metrics, "preempted"), 0);
+    for id in [&old, &fresh, &sent, &timed, &closed] {
+        assert!(!metrics.contains(id.as_str()), "no id in the metrics: {id}");
+    }
+    s.cancel(&old).unwrap();
+    let age = oldest(&owner.metrics().unwrap(), "turn_end");
+    assert!((300..360).contains(&age), "the 5 minute one: {age}");
+    s.cancel(&fresh).unwrap();
+    assert_eq!(oldest(&owner.metrics().unwrap(), "turn_end"), 0);
+}
+
+#[test]
 fn a_message_sent_while_a_turn_runs_reaches_its_pane_and_is_read_at_its_park() {
     let pg = Pg::new();
     let mut owner = pg.migrated();
