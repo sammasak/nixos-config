@@ -59,6 +59,7 @@ ASSERTED = [
     ("model without an agent", '{ services.devEnvironments.instances.ok = { agent = "none"; prompt = lib.mkForce null; }; }', 'ok.model is set but agent is "none"'),
     ("prompt without an agent", '{ services.devEnvironments.instances.ok = { agent = "none"; model = lib.mkForce null; }; }', 'ok.prompt is set but agent is "none"'),
     ("prompt without a surface", "{ services.devEnvironments.sessionSurface = lib.mkForce null; }", "prompt needs a sessionSurface"),
+    ("docked with an agent", "{ services.devEnvironments.instances.ok.sessionDock = true; }", "ok.sessionDock is set but agent is not"),
     ("reserves above pool", "{ services.devEnvironments.instances = { a = { }; b = { }; c = { }; d = { }; }; }", "adds up to 10240M, more than pool.memory 8192M"),
     ("hash collision", "{ services.devEnvironments.instances = { eal = { }; ea1 = { }; }; }", "two names hash to one address"),
     ("host's own name", "{ networking.hostName = lib.mkForce \"ok\"; programs.ssh.knownHosts.box.hostNames = [ \"ok\" ]; }", "the name is this host's own"),

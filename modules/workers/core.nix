@@ -742,7 +742,7 @@ let
       sessionDock = mkOption {
         type = types.bool;
         default = false;
-        description = "A read-write /session from the host's .sessions/dock/<name>, root's, where a session's home and work tree are moved in for one turn; adding it restarts the container once.";
+        description = "A read-write /session from the host's .sessions/dock/<name>, root's, where a session's home and work tree are moved in for one turn, its pane opened by whoever moves it in (no session surface); adding it restarts the container once.";
       };
       ownNixCache = mkOption {
         type = types.bool;
@@ -1443,6 +1443,10 @@ in
             {
               assertion = w.prompt == null || cfg.sessionSurface != null;
               message = "${i}.prompt needs a sessionSurface to deliver it.";
+            }
+            {
+              assertion = !w.sessionDock || w.agent == "none";
+              message = "${i}.sessionDock is set but agent is not \"none\": a docked instance gets no session surface to start it.";
             }
             {
               assertion = w.credentials == null || lib.all (n: cfg.credentials ? ${n}) w.credentials;

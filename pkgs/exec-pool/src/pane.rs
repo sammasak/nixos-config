@@ -52,9 +52,13 @@ pub fn label(slot: &str, key: &str) -> String {
 }
 
 /// Whether a workspace `label` is one of `slot`'s, which the helper closes before and after a turn.
+///
+/// The bare slot is the standing workspace a slot's session surface held, left behind where that unit was not running to close it.
 #[must_use]
 pub fn is_slots(label: &str, slot: &str) -> bool {
-    label.strip_prefix(slot).is_some_and(|r| r.starts_with(' '))
+    label
+        .strip_prefix(slot)
+        .is_some_and(|r| r.is_empty() || r.starts_with(' '))
 }
 
 /// What is prompted for `input`, and what to write to [`INPUT_FILE`] first when it is too long to paste.
@@ -404,6 +408,7 @@ mod tests {
         assert!(is_slots(&l, "pool1"));
         assert!(!is_slots(&l, "pool"));
         assert!(!is_slots("pool10 x", "pool1"));
+        assert!(is_slots("pool1", "pool1") && !is_slots("pool10", "pool1"));
     }
 
     #[test]
