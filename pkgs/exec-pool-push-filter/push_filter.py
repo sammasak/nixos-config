@@ -18,7 +18,8 @@ fragment, directive or operation), and that pull request, read upstream with a q
 `.fleet`, with no manifest: for it the head is any task's `pool/<id>`, and the filter's own read query is answered
 too, for a listed repository's pull request alone. A refusal after that read tells the slot a fixed text, never
 what the owner's token read, and each slot reads at most MAX_LOOKUPS pull requests in LOOKUP_WINDOW (`.fleet`,
-FLEET_LOOKUPS).
+FLEET_READS times that for each of the `slots` it stands for). A refusal by the filter upstream (acer's, for msi's
+read) reaches the slot as that filter's own text; any other failed read is a "try again later".
 
 GitHub's own answer is passed back as it comes, so the client sees whether the push landed. A broken upstream is a 502
 and nothing is tried again: the push may or may not have landed, and only the client (the park checks with ls-remote)
@@ -29,7 +30,8 @@ counted there for node-exporter, as exec_pool_push_filter_pushes_total{slot,resu
 exec_pool_push_filter_pulls_total{slot,result} (ready marks included); a request naming no known slot counts as slot
 "unknown".
 
-SLOTS is a JSON object: each slot's {"manifest": the runner's file or null, "repos": ["owner/repo", ...]}.
+SLOTS is a JSON object: each slot's {"manifest": the runner's file or null, "repos": ["owner/repo", ...]}, and for
+`.fleet` "slots": how many slots of the fleet's hosts share its read budget.
 
 Usage: exec-pool-push-filter LISTEN UPSTREAM SLOTS [TEXTFILE]
        exec-pool-push-filter --list   (the metric names it writes)"""
@@ -88,13 +90,16 @@ FLEET = ".fleet"
 MAX_RESOLVE = 1 << 16
 # reads upstream with the owner's token, per slot: a few ready marks, never a scan of the owner's pull requests
 MAX_LOOKUPS, LOOKUP_WINDOW = 20, 600.0
-# all of msi's slots, each mark read twice there (msi's filter's read, then the mark's own)
-FLEET_LOOKUPS = 8 * MAX_LOOKUPS
+# each mark of a fleet slot is read twice here (its host's filter's read, then the mark's own)
+FLEET_READS = 2
+# what the filter's refusals say: an upstream answer with it is a filter's refusal, not GitHub's
+REFUSED_PULL = "pull request refused by the pool's filter: "
 
 
 class Slot(NamedTuple):
     manifest: str | None
     repos: frozenset[str]
+    slots: int
 
 
 class Counts:
@@ -145,6 +150,18 @@ class Hidden(Refused):
     @property
     def public(self) -> str:
         return "not a pull request of this slot's task"
+
+
+class Upstream(Refused):
+    """A refusal by the filter upstream: the slot gets its text as that filter sent it, which names nothing read."""
+
+    def __init__(self, text: str) -> None:
+        super().__init__(f"refused upstream: {text}")
+        self.text = text
+
+    @property
+    def public(self) -> str:
+        return self.text
 
 
 class Body:
@@ -378,6 +395,20 @@ def ready_mark(body: bytes) -> str:
     return pr
 
 
+def filter_refusal(raw: bytes) -> str | None:
+    """The reason in a pool filter's own refusal of a pull request call, else None (GitHub's 403, a proxy's)."""
+    try:
+        msg = json.loads(raw)
+    except (ValueError, RecursionError):
+        return None
+    text = msg.get("message") if isinstance(msg, dict) and set(msg) == {"message"} else None
+    if not isinstance(text, str) or not text.startswith(REFUSED_PULL):
+        return None
+    why = text[len(REFUSED_PULL):]
+    # a filter's reasons are one short line
+    return why if 0 < len(why) <= 300 and why.isprintable() else None
+
+
 def resolve_body(node: str) -> bytes:
     return json.dumps({"query": RESOLVE, "variables": {"id": node}}).encode()
 
@@ -435,7 +466,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.counts.bump(kind, self.headers.get("X-Pool-Slot", ""), "refused")
         if kind == "pull":
             # gh prints an API error's message
-            msg = json.dumps({"message": f"pull request refused by the pool's filter: {why}"}).encode()
+            msg = json.dumps({"message": REFUSED_PULL + why}).encode()
             ctype = "application/json"
         else:
             msg = f"push refused by the pool's ref filter: {why}\n".encode()
@@ -528,7 +559,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         slot, now = self.headers.get("X-Pool-Slot", ""), time.monotonic()
         with self.lookups_lock:
             recent = [t for t in self.lookups.get(slot, []) if now - t < LOOKUP_WINDOW]
-            limit = FLEET_LOOKUPS if slot == FLEET else MAX_LOOKUPS
+            limit = MAX_LOOKUPS * self.slots[slot].slots * (FLEET_READS if slot == FLEET else 1)
             if len(recent) >= limit:
                 raise Refused(f"over {limit} pull request reads in {LOOKUP_WINDOW:.0f} s: try again later")
             self.lookups[slot] = [*recent, now]
@@ -544,7 +575,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         finally:
             conn.close()
         if resp.status != 200 or len(raw) > MAX_RESOLVE or resp.getheader("Content-Encoding", "identity") != "identity":
-            # a status names nothing the token read; through acer's sidecar it is acer's refusal or GitHub's failure
+            if resp.status == 403 and len(raw) <= MAX_RESOLVE and (text := filter_refusal(raw)) is not None:
+                raise Upstream(text)
+            # a status names nothing the token read: GitHub's failure, or through acer's sidecar acer's proxy (a 502)
             raise Refused(f"the pull request could not be read upstream ({resp.status}), try again later")
         try:
             pr = json.loads(raw)["data"]["node"]
@@ -624,8 +657,11 @@ def main(argv: list[str]) -> int:
         return 2
     listen, Handler.upstream = argv[1], argv[2]
     with open(argv[3], encoding="utf-8") as f:
-        Handler.slots = {n: Slot(v["manifest"], frozenset(r.lower() for r in v["repos"]))
+        Handler.slots = {n: Slot(v["manifest"], frozenset(r.lower() for r in v["repos"]), v.get("slots", 1))
                          for n, v in json.load(f).items()}
+    if any(type(s.slots) is not int or s.slots < 1 for s in Handler.slots.values()):
+        print("SLOTS: a slot's \"slots\" is not a positive integer", file=sys.stderr)
+        return 2
     Handler.counts = Counts(argv[4] if len(argv) == 5 else None, list(Handler.slots))
     if os.path.exists(listen):
         os.unlink(listen)

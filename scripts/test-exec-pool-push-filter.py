@@ -8,7 +8,9 @@ A pull request it opens (`POST /repos/o/r/pulls`, the slot site's route to the f
 Its GraphQL (`POST /graphql`, routed to the filter too) passes one markPullRequestReadyForReview of the task's own pull
 request, its head read with the filter's own query; another task's, branch's, fork's or unlisted repository's, and any
 body with more or other than that mutation, is refused. The fleet's slot `.fleet` marks any task's ready and answers
-the filter's read for a listed repository alone.
+the filter's read for a listed repository alone, within its budget for the `slots` it stands for. msi's filter, its
+read sent through a Caddy socket to `.fleet`, tells its slot acer's own refusal as it is, and "try again later" only
+when acer is unreachable or a 502.
 Its textfile counts each passed and refused request by slot, the first refusal included.
 Usage: test-exec-pool-push-filter.py FILTER   (caddy and git on PATH)"""
 
@@ -172,7 +174,9 @@ def main():
         manifest = d / "manifest.json"
         manifest.write_text(json.dumps({"task": {"id": "t-1"}}))
         (d / "slots.json").write_text(json.dumps({"pool1": {"manifest": str(manifest), "repos": ["O/R"]},
-                                                  ".fleet": {"manifest": None, "repos": ["o/r"]}}))
+                                                  ".fleet": {"manifest": None, "repos": ["o/r"], "slots": 1}}))
+        (d / "msi-slots.json").write_text(json.dumps({"pool1": {"manifest": str(manifest), "repos": ["o/r"]}}))
+        acer, down = str(d / "acer.sock"), str(d / "down.sock")
         fsock, push = str(d / "filter.sock"), str(d / "push.sock")
         port = free_port()
         (d / "Caddyfile").write_text(f"""{{
@@ -210,6 +214,16 @@ http://127.0.0.1:{port} {{
   }}
 }}
 http:// {{
+  bind unix/{acer}
+  reverse_proxy unix/{fsock} {{
+    header_up X-Pool-Slot .fleet
+  }}
+}}
+http:// {{
+  bind unix/{down}
+  reverse_proxy unix/{d}/nothing.sock
+}}
+http:// {{
   bind unix/{push}
   reverse_proxy 127.0.0.1:{backend.server_port} {{
     flush_interval -1
@@ -221,14 +235,25 @@ http:// {{
         prom = d / "push-filter.prom"
         filt = subprocess.Popen([FILTER, fsock, push, str(d / "slots.json"), str(prom)],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        # msi's filters: through acer's .fleet, through a proxy whose upstream is down (a 502), and to no socket at all
+        msis = {up: (str(d / f"msi-{n}.sock"), subprocess.Popen(
+                    [FILTER, str(d / f"msi-{n}.sock"), up, str(d / "msi-slots.json")],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True))
+                for n, up in enumerate([acer, down, str(d / "nothing.sock")])}
         try:
             wait_for(lambda: socket.create_connection(("127.0.0.1", port), 0.2).close(), "caddy", caddy)
             wait_for(lambda: socket.socket(socket.AF_UNIX).connect(push), "caddy's push socket", caddy)
             wait_for(lambda: socket.socket(socket.AF_UNIX).connect(fsock), "the filter", filt)
+            for sock, proc in msis.values():
+                wait_for(lambda sock=sock: socket.socket(socket.AF_UNIX).connect(sock), "msi's filter", proc)
             run(d, f"http://127.0.0.1:{port}/o/r.git", bare, fsock, manifest, prom)
             pulls(port, fsock, manifest, prom)
-            graphql(port, fsock, prom)
+            fleet_first = graphql(port, fsock, prom)
+            fleet_slot(fsock, {up: sock for up, (sock, _) in msis.items()}, acer, down, fleet_first)
         finally:
+            for _, proc in msis.values():
+                proc.terminate()
+                proc.wait(5)
             filt.terminate()
             caddy.terminate()
             filt.wait(5)
@@ -488,43 +513,72 @@ def graphql(port, fsock, prom):
     check(0 < reads - first <= 20 and status == 403 and len(Backend.reads) == reads and "try again later" in again["message"],
           f"a slot reads at most 20 pull requests upstream in 10 minutes, then is refused before reading, told to "
           f"retry ({got} {again})")
-    fleet(fsock, ready, js, sent)
+    return fleet(fsock, ready, js, sent)
 
 
 RESOLVE = ("query($id: ID!) { node(id: $id) { ... on PullRequest { headRefName "
                    "headRepository { nameWithOwner } repository { nameWithOwner } } } }")
 
 
+def post(sock, slot, body):
+    """A GraphQL POST straight to a filter's socket from slot: its status and the JSON it got back."""
+    conn = http.client.HTTPConnection("localhost", timeout=10)
+    conn.sock = socket.socket(socket.AF_UNIX)
+    conn.sock.connect(sock)
+    conn.request("POST", "/graphql", body=json.dumps(body).encode(),
+                 headers={"Content-Type": "application/json", "X-Pool-Slot": slot})
+    resp = conn.getresponse()
+    out = resp.read()
+    conn.close()
+    return resp.status, json.loads(out or b"{}")
+
+
+def fleet_slot(fsock, msi, acer, down, fleet_first):
+    """msi's filter reads through acer's: acer's refusal is the slot's, as acer worded it; a broken route is a retry.
+    Then `.fleet`, standing for one slot, reads 2 * 20 pull requests and no more: every read since fleet_first."""
+    sent = len(Backend.api)
+    status, _ = post(msi[acer], "pool1", {"query": READY, "variables": {"id": "PR_own"}})
+    check(status == 200 and len(Backend.api) == sent + 1,
+          f"msi's ready mark of its task's own pull request passes both filters ({status})")
+    status, got = post(msi[acer], "pool1", {"query": READY, "variables": {"id": "PR_unlisted"}})
+    check(status == 403 and got.get("message") == "pull request refused by the pool's filter: not a pull request of "
+          "this slot's task" and len(Backend.api) == sent + 1,
+          f"acer's refusal of msi's read reaches msi's slot as acer's own refusal, never a retry ({status} {got})")
+    for what, up in [("a 502", down), ("no upstream", next(u for u in msi if u not in (acer, down)))]:
+        status, got = post(msi[up], "pool1", {"query": READY, "variables": {"id": "PR_own"}})
+        check(status == 403 and "try again later" in got.get("message", ""), f"{what} from acer is a retry ({status} {got})")
+    for _ in range(41):
+        status, got = post(fsock, ".fleet", {"query": RESOLVE, "variables": {"id": "PR_own"}})
+        if status != 200:
+            break
+    status, again = post(msi[acer], "pool1", {"query": READY, "variables": {"id": "PR_own"}})
+    check(len(Backend.reads) - fleet_first == 40 and "over 40 pull request reads" in got.get("message", "")
+          and "over 40 pull request reads" in again.get("message", "") and "try again later" in again["message"],
+          f"the fleet's slot standing for one slot reads 2 * 20 pull requests in 10 minutes, and msi's slot is told "
+          f"acer's retry ({len(Backend.reads) - fleet_first} {got} {again})")
+
+
 def fleet(fsock, ready, js, sent):
     """The fleet's sidecar's slot: msi's filter's read and ready mark, already held to its task there."""
     fleet_reads = len(Backend.reads)
 
-    def post(body):
-        conn = http.client.HTTPConnection("localhost", timeout=10)
-        conn.sock = socket.socket(socket.AF_UNIX)
-        conn.sock.connect(fsock)
-        conn.request("POST", "/graphql", body=json.dumps(body).encode(), headers={**js, "X-Pool-Slot": ".fleet"})
-        resp = conn.getresponse()
-        out = resp.read()
-        conn.close()
-        return resp.status, out
-
-    status, out = post({"query": RESOLVE, "variables": {"id": "PR_other_task"}})
-    check(status == 200 and len(Backend.reads) == fleet_reads + 1 and json.loads(out)["data"]["node"]["headRefName"] == "pool/t-2" and len(Backend.api) == sent,
+    status, out = post(fsock, ".fleet", {"query": RESOLVE, "variables": {"id": "PR_other_task"}})
+    check(status == 200 and len(Backend.reads) == fleet_reads + 1 and out.get("data", {}).get("node", {}).get("headRefName") == "pool/t-2" and len(Backend.api) == sent,
           f"the fleet's slot, beside pool1 out of reads, answers the filter's own read of a listed repository's pull "
-          f"request ({status} {out[:200]!r})")
-    status, _ = post({"query": RESOLVE, "variables": {"id": "PR_unlisted"}})
+          f"request ({status} {str(out)[:200]})")
+    status, _ = post(fsock, ".fleet", {"query": RESOLVE, "variables": {"id": "PR_unlisted"}})
     check(status == 403, f"and not of an unlisted repository's ({status})")
-    status, _ = post({"query": RESOLVE.replace("headRefName", "headRefName title"), "variables": {"id": "PR_own"}})
+    status, _ = post(fsock, ".fleet", {"query": RESOLVE.replace("headRefName", "headRefName title"), "variables": {"id": "PR_own"}})
     check(status == 403, f"nor any other read ({status})")
-    status, _ = post({"query": READY, "variables": {"id": "PR_other_task"}})
+    status, _ = post(fsock, ".fleet", {"query": READY, "variables": {"id": "PR_other_task"}})
     check(status == 200 and len(Backend.api) == sent + 1, f"it passes the ready mark of any task's pull request ({status})")
     for what, node in [("main's", "PR_main"), ("a fork's", "PR_fork"), ("an unlisted repository's", "PR_unlisted")]:
-        status, _ = post({"query": READY, "variables": {"id": node}})
+        status, _ = post(fsock, ".fleet", {"query": READY, "variables": {"id": node}})
         check(status == 403 and len(Backend.api) == sent + 1, f"and refuses {what} ({status})")
     check(raw(fsock, ".fleet", b"x" * 10) == 403
           and raw(fsock, ".fleet", json.dumps({"head": "pool/t-1"}).encode(), js, "/repos/o/r/pulls") == 403,
           "the fleet's slot pushes nothing and opens no pull request")
+    return fleet_reads
 
 
 if __name__ == "__main__":

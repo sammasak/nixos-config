@@ -439,7 +439,7 @@ let
 in {
   listener = { inherit (msi.sam.fleet.listeners.github-egress) host port from url; };
   msi = { caddy = caddy msi; creds = msi.systemd.services.dev-env-egress.serviceConfig.LoadCredential; paths = builtins.attrNames msi.systemd.paths;
-          filtered = msi.systemd.services ? exec-pool-push-filter; };
+          filtered = msi.systemd.services ? exec-pool-push-filter; slots = msi.homelab.execPool.slots; };
   acer = { caddy = caddy acer; repos = acer.homelab.execPool.repos; msiAddress = acer.sam.fleet.hosts.msi-ms7758.address;
            filter = let sc = acer.systemd.services.exec-pool-push-filter.serviceConfig; in {
              inherit (sc) User PrivateNetwork RestrictAddressFamilies;
@@ -493,10 +493,11 @@ def check_push_filter(acer, msi, forward):
     slots = f.get("slots", {})
     fleet = slots.pop(".fleet", None)
     check(slots and all(v == {"manifest": f"/run/exec-pool-runner/{n}/manifest.json", "repos": acer.get("repos")} for n, v in slots.items())
-          and fleet == {"manifest": None, "repos": acer.get("repos")}
+          and fleet == {"manifest": None, "repos": acer.get("repos"), "slots": msi.get("slots")} and msi.get("slots", 0) > 0
           and f.get("User") == acer.get("egressUser") and f.get("PrivateNetwork") is True and f.get("RestrictAddressFamilies") == ["AF_UNIX"]
           and msi.get("filtered") is True,
-          f"acer's filter reads each slot's runner manifest and repositories, and the fleet's with none, as the proxy's user with no network; msi runs one too ({f})")
+          f"acer's filter reads each slot's runner manifest and repositories, and the fleet's with none, its read budget "
+          f"msi's {msi.get('slots')} slots', as the proxy's user with no network; msi runs one too ({f})")
     d = "/run/exec-pool-push-filter-metrics"
     check(f.get("textfile") == f"{d}/push-filter.prom" and f.get("ReadWritePaths") == [f"-{d}"]
           and f"--collector.textfile.directory={d}" in f.get("exporter", []),
