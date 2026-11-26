@@ -36,8 +36,8 @@ const USAGE: &str = "usage: exec-pool COMMAND
   send ID [--at HH:MM|RFC3339] --prompt TEXT|--prompt-file FILE
                     the session's next turn runs TEXT: a waiting session (or one in needs_review, which this resumes)
                     is queued for it, a running one takes it once its turn ends. With --at, a timer: TEXT is delivered
-                    from that time (HH:MM: the next one, local time), when it queues a waiting session; it resumes
-                    none in needs_review. Prints the attempt and its status
+                    from that time (HH:MM: the next one, local time; one passed under 6 h ago is refused), when it
+                    queues a waiting session; it resumes none in needs_review. Prints the attempt and its status
   attach ID [--timeout SECS]
                     wakes the session into a slot's Herdr pane with no message of yours (it is told the owner opened
                     it) and prints the host, slot and Herdr agent to open, once its turn runs (600 s by default)
