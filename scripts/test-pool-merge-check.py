@@ -6,7 +6,8 @@ evaluation, flake.lock and any unmapped path every host (seeded: a rule change b
 host; two migrations on one number, and a gap, fail). Every evaluation takes the heavy lock, then the light one the
 push hook's evaluation takes, and a build compiles under the heavy one alone. A slot's nix wrapper, from the module's
 text with flock and nix stubbed: build --expr, --file and flake attributes evaluate under light and build outside it,
-nix-build instantiates under light and builds outside it, and flake check runs under light."""
+nix-build instantiates under light and builds outside it, and flake check runs under light. A slot's cargo has no lane and
+CARGO_BUILD_JOBS from its reserve."""
 
 import importlib.util
 import os
@@ -216,6 +217,15 @@ with tempfile.TemporaryDirectory() as tmp:
     check(r == ["build .# free"], f"the default package (an empty fragment) is passed through whole ({r})")
     r = runs("store", "gc")
     check(r == ["store gc free"], f"another subcommand runs unlocked ({r})")
+
+# A slot's cargo (#827): in a devenv shell cargo is the profile's, which a PATH lane misses, so the cap is an environment
+# variable every cargo reads, and no cargo subcommand (--version, metadata or a compile) waits on a lock.
+src = (HERE.parent / "modules/workers/execution-pool.nix").read_text()
+check('(lane "cargo"' not in src and not re.search(r"\bcargo\b", src.split("(lane ", 1)[1].split("# Not a cargo lane", 1)[0]),
+      "no cargo lane: cargo --version, cargo metadata and a compile wait on no lock")
+cap = re.search(r"environment\.sessionVariables\.CARGO_BUILD_JOBS = toString \(\s*lib\.max 1 \(dev\.instances\.\$\{devEnvironment\.name\}"
+                r"\.memory\.reserved / 1073741824\)\s*\);", src)
+check(cap is not None, "a slot's CARGO_BUILD_JOBS is a session variable, a job per GiB of its reserve, at least one")
 
 repo = HERE.parent / "pkgs/exec-pool/migrations"
 check(pmc.migrations_problem(repo) is None, f"this tree's exec-pool migrations ({pmc.migrations_problem(repo)})")

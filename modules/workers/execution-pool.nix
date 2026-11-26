@@ -243,6 +243,11 @@ in
               esac
             '')
           ];
+          # Not a cargo lane: in a devenv shell cargo is the profile's, ahead of this PATH, and every cargo reads this.
+          # About a GiB a rustc: a slot compiles within its reserve, and the reserves fit the shared slice (#827).
+          environment.sessionVariables.CARGO_BUILD_JOBS = toString (
+            lib.max 1 (dev.instances.${devEnvironment.name}.memory.reserved / 1073741824)
+          );
           # A slot runs task text: none of the host user's groups (wheel, kvm, input) and no sudo, whose setuid
           # wrapper is host root's in a slot without privateUsers. mkForce: core/users.nix and rootInGuest add them.
           users.users.${dev.user}.extraGroups = lib.mkForce [ ];
