@@ -139,6 +139,7 @@ writes one gate-step record per check.
 | gate probe | 3.9 mean (7 d) | none traced | every host |
 | nixos-flake-check | 13.7 mean, 28.8 worst (7 d) | `execution-pool-vm` (#795); ruff E501 (#787); exec-pool clippy and rustfmt; `legacyPackages` (#828) | every check and every x86 host |
 | workers-eval-test | 2.0 mean (7 d) | 0b90b42d (#781), f4fac5f5 (#736) | gate probe, `modules/workers/` |
+| workers-eval-test on acer (escape, #825) | 2.0 mean (7 d) | passed in slots and off acer, failed in acer's scheduled gate: `<nixpkgs>` with no NIX_PATH, and the push-filter case reached acer's live filter socket (ExecPoolPushesRefused fired for pool1 to pool3); the test now reads no host state outside its temp dir | the host it runs on |
 | seventh-host-test | 3.2 mean (7 d) | none traced | hosts.nix, fleet.nix, every host |
 | shunt-metrics-test | unknown | df0f5007 (#759) | probe, `scripts/shunt-metrics.py` |
 | deploy-recipes-test | about 0.05 | fails on a `github:` private input since #803 | Justfile, flake.lock |
