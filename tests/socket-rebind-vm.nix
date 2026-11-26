@@ -1,6 +1,6 @@
 # open-webui-proxy-rebind's premise in QEMU (open-webui.nix): a switch that adds a ListenStream binds it only through a
 # oneshot keyed on the socket's unit, and a plain socket keeps its old listeners. If the plain one ever binds too,
-# switch-to-configuration handles sockets (nixpkgs#74899) and the rebind unit can go. `nix build .#socket-rebind-vm`.
+# switch-to-configuration handles sockets (nixpkgs#74899) and the rebind unit can go. `nix build .#checks.x86_64-linux.socket-rebind-vm`.
 { pkgs }:
 pkgs.testers.runNixOSTest {
   name = "socket-rebind";

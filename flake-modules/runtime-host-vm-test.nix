@@ -5,8 +5,8 @@
   ...
 }:
 {
-  # Checks only: the flake check evaluates each package in a process of its own, so these tests as packages too would
-  # be evaluated twice. `just role-vm-test` builds the check and its .broken variant.
+  # Checks only: nixos:flake-check evaluates each package in a process of its own, so these tests as packages too would
+  # be evaluated twice.
   perSystem =
     { pkgs, system, ... }:
     let

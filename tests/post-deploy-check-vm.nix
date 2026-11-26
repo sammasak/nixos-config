@@ -1,6 +1,6 @@
 # scripts/post-deploy-check.sh (just deploy's post-deploy check) against real systemd states, run as an unprivileged
 # user the way deploy runs it: a failed unit, one waiting to restart and one activating again after a restart each fail
-# it, a condition-skipped unit and a plain long-running oneshot do not. `nix build .#post-deploy-check-vm`.
+# it, a condition-skipped unit and a plain long-running oneshot do not. `nix build .#checks.x86_64-linux.post-deploy-check-vm`.
 { pkgs }:
 let
   check = ../scripts/post-deploy-check.sh;

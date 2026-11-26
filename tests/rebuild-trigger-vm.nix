@@ -1,6 +1,6 @@
 # The rebuild trigger's directory and path unit without a provisioning oneshot, in QEMU: a boot with the module reaches
 # `running` with no ordering cycle, and a switch that turns the module on creates the directory from the tmpfiles rule
-# alone. `nix build .#rebuild-trigger-vm`; also a flake check.
+# alone. `nix build .#checks.x86_64-linux.rebuild-trigger-vm`.
 { pkgs }:
 let
   base =
