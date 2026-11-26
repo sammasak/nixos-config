@@ -665,11 +665,12 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "s"
+          "unit": "s",
+          "noValue": "no timer data (systemd collector failed?)"
         },
         "overrides": []
       },
-      "description": "Every systemd timer on the host: the power schedule, backups, the gate records. A timer that never ran is left out.",
+      "description": "Every systemd timer on the host: the power schedule, backups, the gate records. A timer that never ran is left out. No value while the host is up means its systemd collector failed (NodeSystemdCollectorFailed).",
       "transformations": [
         {
           "id": "organize",
