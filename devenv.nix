@@ -374,15 +374,18 @@ let
   # light_held CMD...: CMD under the light-work lane (#827) where the host has one and no caller holds it
   # (WORK_LOCKS_HELD), the lock this shell's and closed in CMD as flock -o would. light_wait is the seconds waited for it
   # (0 with no lock file, unknown under a caller's hold: not measured here) and light_run CMD's, for a step's record.
+  # Within 900 s, except for the scheduled gate, which waits as long as the holds take rather than go red on a slot's (a
+  # slot's own evaluations wait out its scheduled-gate.lock first: modules/workers/execution-pool.nix).
   lightHeld = ''
     light_held() {
-      local fd="" rc=0 t=$SECONDS
+      local fd="" rc=0 t=$SECONDS cap=(-w 900)
+      [ "''${NIXOS_QA_MODE:-}" != scheduled ] || cap=()
       light_wait=0
       if [ -n "''${WORK_LOCKS_HELD:-}" ]; then
         light_wait=unknown
       elif [ -e /run/work-locks/light-work.lock ]; then
         exec {fd}</run/work-locks/light-work.lock
-        ${pkgs.util-linux}/bin/flock -w 900 "$fd" || rc=$?
+        ${pkgs.util-linux}/bin/flock "''${cap[@]}" "$fd" || rc=$?
         light_wait=$((SECONDS - t))
       fi
       t=$SECONDS
@@ -994,11 +997,30 @@ let
   # Platform health dashboard (pkgs/platform-record)
   timed = lib.concatMapStringsSep "\n" (g: ''
     t=$SECONDS
-    if ${lib.getExe g}; then r=pass; else r=fail; fi
+    if ${lib.getExe g}; then r=pass; else r=$(step_result $?); fi
     echo "nixos-qa: ${g.name} took $((SECONDS - t)) s" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}"
-    ${lib.getExe record} gate-step gate=nixos-qa step=${g.name} seconds=$((SECONDS - t)) result=$r sha="$sha"
-    [ "$r" = pass ]
+    ${lib.getExe record} gate-step gate=nixos-qa step=${g.name} seconds=$((SECONDS - t)) result="$r" sha="$sha"
+    step_done ${g.name} "$r"
   '');
+  # nixos:qa's step outcomes (scripts/test-qa-push.py runs them seeded). A manual run ends at its first red step; a
+  # scheduled one (mode) runs every step and is red at the end, naming each red one. Exit 77 from a step that read the
+  # probe while it was red (scripts/gate_probe.py) is skipped, not a red of its own for the probe's reason.
+  stepOutcomes = ''
+    red=()
+    step_result() { if [ "$1" = 77 ] && [ "''${GATE_PROBE:-}" = red ]; then echo skipped; else echo fail; fi; }
+    step_done() {
+      case $2 in
+        pass) ;;
+        skipped) echo "nixos-qa: $1 skipped: it reads the gate probe, which is red in this run" >&2 ;;
+        *) [ "$mode" = scheduled ] || return 1; red+=("$1") ;;
+      esac
+    }
+    steps_end() {
+      [ ''${#red[@]} -gt 0 ] || return 0
+      echo "nixos-qa: ''${#red[@]} red step(s): ''${red[*]}" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}" >&2
+      return 1
+    }
+  '';
   tests = [
     nvimCheck
     nativeOtelRelayTest
@@ -1188,6 +1210,7 @@ let
           fi
         }
         trap on_exit EXIT
+        ${stepOutcomes}
         # always-loaded instructions: this repo's CLAUDE.md and the global one Home Manager links (names only, no path)
         ${lib.getExe record} instructions file=repo-CLAUDE.md bytes="$(wc -c <CLAUDE.md)"
         if [ -f "$HOME/.claude/CLAUDE.md" ]; then
@@ -1202,14 +1225,19 @@ let
         )}
         ${lightHeld}
         probe_out() { GATE_PROBE=$(${lib.getExe probe}); }
-        light_held probe_out
-        export GATE_PROBE
+        if light_held probe_out; then r=pass; else r=fail; fi
         echo "nixos-qa: ${probe.name} took $light_run s, after $light_wait s waiting for light-work.lock" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}"
-        ${lib.getExe record} gate-step gate=nixos-qa step=${probe.name} seconds="$light_run" wait_seconds="$light_wait" result=pass sha="$sha"
-        python3 scripts/gate_probe.py coverage | jq -r 'to_entries[] | "\(.key) \(.value.assertions) \(.value.checks)"' \
-          | while read -r node assertions checks; do
-            ${lib.getExe record} coverage node="$node" assertions="$assertions" system_checks="$checks"
-          done
+        ${lib.getExe record} gate-step gate=nixos-qa step=${probe.name} seconds="$light_run" wait_seconds="$light_wait" result=$r sha="$sha"
+        step_done ${probe.name} "$r"
+        # a scheduled run goes on without it: each test that reads it is skipped (step_result)
+        [ "$r" = pass ] || GATE_PROBE=red
+        export GATE_PROBE
+        if [ "$r" = pass ]; then
+          python3 scripts/gate_probe.py coverage | jq -r 'to_entries[] | "\(.key) \(.value.assertions) \(.value.checks)"' \
+            | while read -r node assertions checks; do
+              ${lib.getExe record} coverage node="$node" assertions="$assertions" system_checks="$checks"
+            done
+        fi
         # The flake check and the four slowest tests side by side where measured safe, each into its own log,
         # printed whole and recorded per step after all ended (#502); in this order, one after the other, elsewhere
         side_by_side() {
@@ -1222,7 +1250,7 @@ let
             order+=("$n")
             (
               t=$SECONDS
-              if "$e" >"$dir/$n.log" 2>&1; then r=pass; else r=fail; fi
+              if "$e" >"$dir/$n.log" 2>&1; then r=pass; else r=$(step_result $?); fi
               echo "$r $((SECONDS - t))" >"$dir/$n.res"
             ) &
           done
@@ -1238,7 +1266,7 @@ let
             cat "$dir/$n.log"
             echo "nixos-qa: $n took $secs s" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}"
             ${lib.getExe record} gate-step gate=nixos-qa step="$n" seconds="$secs" result="$r" sha="$sha"
-            [ "$r" = pass ] || bad+=("$n")
+            step_done "$n" "$r" || bad+=("$n")
           done
           [ ''${#bad[@]} -eq 0 ] || { echo "nixos-qa: failed side by side: ''${bad[*]}" >&2; return 1; }
         }
@@ -1263,6 +1291,7 @@ let
           ${timed sideBySide}
         fi
         ${timed tests}
+        steps_end
       '';
 
   # Checks the PUSHED commit in a throwaway worktree, so neither
@@ -1695,7 +1724,7 @@ in
     "nixos:guest-records-test" =
       task "The host ships guest platform records on a fake Loki: each line once, also after a rewrite; host labels only; label keys, unknown kinds, oversize and too-old lines dropped; 500 per run; a link or FIFO on the spool's path refused; trashOne ships before its rename" guestRecordsTest;
     "nixos:scheduled-gate-test" =
-      task "The scheduled full gate on a throwaway origin, devenv stubbed: nixos:qa once per new main head, mode=scheduled, in a clean worktree at it; a red run names its first failed step and the last green head (unrecorded with no record); a run killed mid-gate records nothing; the textfile is what --list names" scheduledGateTest;
+      task "The scheduled full gate on a throwaway origin, devenv stubbed: nixos:qa once per new main head, mode=scheduled, in a clean worktree at it; a red run names its first failed step and the last green head (unrecorded with no record) and lists every failed step; a run killed mid-gate records nothing; the textfile is what --list names" scheduledGateTest;
     "nixos:platform-records-test" =
       task "Platform health records: dashboard kinds match the helper and its callers, labels job/kind/host only, a down Loki or unknown kind never fails the caller" platformRecordsTest;
     "nixos:measurement-test" =

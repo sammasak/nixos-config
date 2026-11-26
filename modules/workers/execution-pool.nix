@@ -118,21 +118,21 @@ in
               pkgs.writeShellScriptBin name ''
                 light() {
                   # CLASS COMMAND...: no evaluation starts while the scheduled gate holds the heavy lock (#835): its
-                  # scheduled-gate.lock (pkgs/heavy-lock) is waited out first, within the same 900 s. One already running
-                  # goes on: held shared across it, overlapping slots would starve the gate's exclusive take. The light
+                  # scheduled-gate.lock (pkgs/heavy-lock) is waited out first, for as long as a gate may run, then the
+                  # light lock within 900 s. One already running goes on: held shared across it, overlapping slots would
+                  # starve the gate's exclusive take. The light
                   # lock is this shell's, closed in COMMAND as flock -o would; each call, a timed-out one included, is one
                   # kind=lock record of its wait (the gate's included) apart from its hold, in the spool the host ships.
-                  local class=$1 start=$SECONDS gate=/run/work-locks/scheduled-gate.lock w rc=0 fd="" held
+                  local class=$1 start=$SECONDS gate=/run/work-locks/scheduled-gate.lock rc=0 fd="" held
                   shift
                   if [ -e "$gate" ] && ! ${pkgs.util-linux}/bin/flock -s -n "$gate" true; then
                     echo "${name}: waiting for the scheduled gate, which holds /run/work-locks/heavy-work.lock" >&2
-                    ${pkgs.util-linux}/bin/flock -s -w 900 -E 75 "$gate" true || rc=$?
-                    [ "$rc" -ne 75 ] || echo "${name}: the scheduled gate still holds $gate after 900 s" >&2
+                    ${pkgs.util-linux}/bin/flock -s -w ${gateWait} -E 75 "$gate" true || rc=$?
+                    [ "$rc" -ne 75 ] || echo "${name}: the scheduled gate still holds $gate after ${gateWait} s" >&2
                   fi
                   if [ "$rc" -eq 0 ]; then
-                    w=$((900 - SECONDS + start))
                     exec {fd}</run/work-locks/light-work.lock
-                    ${pkgs.util-linux}/bin/flock -w $((w > 0 ? w : 0)) -E 75 "$fd" || rc=$?
+                    ${pkgs.util-linux}/bin/flock -w 900 -E 75 "$fd" || rc=$?
                     [ "$rc" -ne 75 ] || echo "${name}: /run/work-locks/light-work.lock still held after 900 s" >&2
                   fi
                   held=$SECONDS
@@ -153,6 +153,9 @@ in
           nix = lib.getExe config.nix.package;
           devenv = lib.getExe pkgs.devenv;
           record = pkgs.callPackage ../../pkgs/platform-record/package.nix { };
+          # the scheduled gate's worst case, modules/homelab/scheduled-gate.nix's TimeoutStartSec (8 h; held equal by
+          # scripts/test-pool-merge-check.py): a slot waiting less fails its turn with rc 75 while a gate runs
+          gateWait = toString (8 * 3600);
           cargoJobs = toString (
             lib.max 1 (dev.instances.${devEnvironment.name}.memory.reserved / 1073741824)
           );

@@ -9,7 +9,8 @@ push hook's evaluation takes, and a build compiles under the heavy one alone; a 
 apart from its run (seeded: a held light lock). A slot's nix wrapper, from the module's text with nix and the record
 stubbed: build --expr, --file and flake attributes evaluate under light and build outside it, nix-build instantiates
 under light and builds outside it, and flake check runs under light; the command never inherits the lock, and each hold
-is one lock record of its wait apart from its hold (seeded: a held light lock). A slot's devenv warms its shell up under
+is one lock record of its wait apart from its hold (seeded: a held light lock); it waits out a running scheduled gate
+for as long as the gate's unit may run, then gives up with rc 75 (seeded, the wait shortened). A slot's devenv warms its shell up under
 light only while no stamp matches the files its last evaluation read (seeded: an unstamped checkout, a changed devenv.nix
 or imported file, a failed warm-up). A slot's cargo has no lane and CARGO_BUILD_JOBS from its reserve."""
 
@@ -171,7 +172,7 @@ def lane(name: str, real: str, d: pathlib.Path, exe: str = "${nix}") -> pathlib.
     for k, v in {"${pkgs.util-linux}/bin/flock": "flock", "${lib.getExe record}": f"{d}/stub/record", "/run/work-locks/light-work.lock": f"{d}/light", "/run/work-locks/scheduled-gate.lock": f"{d}/gate",
                  "${config.nix.package}/bin/nix-instantiate": f"{d}/stub/nix-instantiate",
                  "${config.nix.package}/bin/nix-build": f"{d}/stub/nix-build", "${pkgs.coreutils}/bin/": "", "${pkgs.bash}/bin/bash": "bash",
-                 "${nix}": f"{d}/stub/nix", "${devenv}": f"{d}/stub/devenv", "${name}": name, "''$": "$"}.items():
+                 "${nix}": f"{d}/stub/nix", "${devenv}": f"{d}/stub/devenv", "${gateWait}": "3", "${name}": name, "''$": "$"}.items():
         text = text.replace(k, v)
     out = d / name
     out.write_text("#!/usr/bin/env bash\n" + text + "\n")
@@ -292,7 +293,22 @@ with tempfile.TemporaryDirectory() as tmp:
     rec = (d / "records").read_text().splitlines()[-1:]
     check(rec and re.fullmatch(r"host lock lane=light class=nix-eval wait_seconds=[12] seconds=[01] rc=0", rec[0]) is not None,
           f"its lock record counts the gate's wait as the hold's, the host shipping it ({rec})")
+    holder = subprocess.Popen(["flock", str(d / "gate"), "sleep", "6"])
+    while subprocess.run(["flock", "-n", str(d / "gate"), "true"], check=False).returncode == 0:
+        time.sleep(0.05)
+    (d / "log").write_text(""), (d / "records").write_text("")
+    w = subprocess.run([str(wrappers["nix"]), "eval", "--raw", ".#x"], env=env, capture_output=True, text=True, check=False)
+    holder.kill(), holder.wait()
+    rec = (d / "records").read_text().splitlines()
+    check(w.returncode == 75 and "still holds" in w.stderr and "after 3 s" in w.stderr and (d / "log").read_text() == ""
+          and len(rec) == 1 and re.fullmatch(r"host lock lane=light class=nix-eval wait_seconds=[34] seconds=0 rc=75", rec[0]) is not None,
+          f"seeded: a gate held past the wait (gateWait, 3 s here): rc 75, nothing run, the wait recorded ({w.returncode}, {w.stderr.strip()!r}, {rec})")
     (d / "gate").unlink()
+    ep = (HERE.parent / "modules/workers/execution-pool.nix").read_text()
+    gw = re.search(r"gateWait = toString \((\d+) \* 3600\);", ep)
+    to = re.search(r'TimeoutStartSec = "(\d+)h";', (HERE.parent / "modules/homelab/scheduled-gate.nix").read_text())
+    check(gw is not None and to is not None and gw.group(1) == to.group(1) and ep.count("${gateWait}") == 2,
+          f"a slot waits out the scheduled gate for as long as the gate's unit may run ({gw and gw.group(0)}, {to and to.group(0)})")
 
     def recorded(*argv: str, **extra: str) -> tuple[int, list[str], list[str]]:
         (d / "records").write_text("")

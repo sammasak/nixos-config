@@ -1,7 +1,8 @@
 """pkgs/scheduled-gate on a throwaway origin, without Nix: devenv is a stub that records where and how it ran and
 writes the platform records a gate would. The full gate runs once per new origin/main head, in a worktree at that
 head with mode=scheduled; a red run names its first failed step (a flake check's check included) and the last green
-head; a red head runs once more, then waits for a new head; a run with no failed record says unrecorded; a gate killed before it returns records nothing; the textfile
+head, and lists every failed step (seeded: three red steps, one of them a flake check's check, and a skipped one); a red
+head runs once more, then waits for a new head; a run with no failed record says unrecorded; a gate killed before it returns records nothing; the textfile
 carries exactly the names --list prints."""
 import json
 import os
@@ -42,6 +43,14 @@ case $(cat {t}/next) in
       echo "$now gate-step gate=other step=x seconds=1 result=fail sha=${{head:0:7}}"
       echo "$now gate-step gate=nixos-qa step=nixos-flake-check check=checks.x86_64-linux.foo seconds=3 result=fail head=$head drv=/x.drv"
       echo "$now gate-step gate=nixos-qa step=nixos-flake-check seconds=4 result=fail sha=${{head:0:7}}"; }} >> "$PLATFORM_RECORD_SPOOL"
+    exit 1 ;;
+  fail-many)
+    {{ echo "$now gate-step gate=nixos-qa step=nixos-lint-comments seconds=1 result=fail sha=${{head:0:7}}"
+      echo "$now gate-step gate=nixos-qa step=nixos-gate-probe seconds=1 result=pass sha=${{head:0:7}}"
+      echo "$now gate-step gate=nixos-qa step=nixos-flake-check check=checks.x86_64-linux.foo seconds=3 result=fail head=$head drv=/x.drv"
+      echo "$now gate-step gate=nixos-qa step=nixos-flake-check seconds=4 result=fail sha=${{head:0:7}}"
+      echo "$now gate-step gate=nixos-qa step=shunt-metrics-test seconds=2 result=skipped sha=${{head:0:7}}"
+      echo "$now gate-step gate=nixos-qa step=qa-push-test seconds=2 result=fail sha=${{head:0:7}}"; }} >> "$PLATFORM_RECORD_SPOOL"
     exit 1 ;;
   fail-bare) exit 1 ;;
   kill) kill -TERM $PPID; sleep 5 ;;
@@ -88,6 +97,9 @@ esac
     def red():
         return [k for k in metrics() if k.startswith("homelab_scheduled_gate_red")]
 
+    def failed_steps():
+        return [k for k in metrics() if k.startswith("homelab_scheduled_gate_failed_step")]
+
     h1 = git("rev-parse", "HEAD")
     r, ran = run("pass")
     check(r.returncode == 0 and len(ran) == 1 and ran[0] == f"{state}/tree scheduled {h1} tasks run nixos:qa clean=0",
@@ -109,6 +121,9 @@ esac
     check(r.returncode == 0 and len(ran) == 1 and reds == [want],
           f"C a red run names the first failed nixos-qa step, its check, and the last green head; the unit passes ({reds})")
     check(metrics()["homelab_scheduled_gate_main_behind"] == 0, "C a red run on main's head is not behind")
+    fs = failed_steps()
+    check(fs == [f'homelab_scheduled_gate_failed_step{{head="{h2[:12]}",step="nixos-flake-check",check="checks.x86_64-linux.foo"}}'],
+          f"C the failed steps: the flake check's failed check, its step's own record adding none ({fs})")
     r, ran = run("fail-check")
     check(len(ran) == 1 and h2 in ran[0] and red() == [want], f"D a red head runs once more, and red again stays red ({ran})")
     r, ran = run("pass")
@@ -118,16 +133,30 @@ esac
     r, ran = run("fail-bare")
     want3 = f'homelab_scheduled_gate_red{{head="{h3[:12]}",step="unrecorded",check="",green="{h1[:12]}"}}'
     check(red() == [want3], f"E a red run with no failed record of its own head says unrecorded ({red()})")
+    check(failed_steps() == [f'homelab_scheduled_gate_failed_step{{head="{h3[:12]}",step="unrecorded",check=""}}'],
+          f"E and lists it as its one failed step ({failed_steps()})")
+    h3b = commit("3b\n")
+    r, _ = run("fail-many")
+    fs = failed_steps()
+    pre = f'homelab_scheduled_gate_failed_step{{head="{h3b[:12]}",'
+    want_many = [pre + 'step="nixos-lint-comments",check=""}', pre + 'step="nixos-flake-check",check="checks.x86_64-linux.foo"}',
+                 pre + 'step="qa-push-test",check=""}']
+    st3 = json.loads((state / "state.json").read_text())
+    check(sorted(fs) == sorted(want_many) and st3["step"] == "nixos-lint-comments"
+          and st3["failed"] == ["nixos-lint-comments\t", "nixos-flake-check\tchecks.x86_64-linux.foo", "qa-push-test\t"]
+          and "3 failed step(s): nixos-lint-comments, nixos-flake-check (check checks.x86_64-linux.foo), qa-push-test" in r.stderr,
+          f"seeded: three red steps are each listed, in order, the first still the red series' step; a skipped one is not ({fs}, {st3.get('failed')}, {r.stderr.strip()})")
 
     h4 = commit("4\n")
     (state / "tree").mkdir()
     (state / "tree" / "stale").write_text("x\n")
     r, ran = run("kill")
     s = json.loads((state / "state.json").read_text())
-    check(r.returncode != 0 and s["head"] == h3 and metrics()["homelab_scheduled_gate_main_behind"] == 1,
+    check(r.returncode != 0 and s["head"] == h3b and metrics()["homelab_scheduled_gate_main_behind"] == 1,
           f"F a gate killed mid-run records nothing: the last finished head stays, main reads behind ({s['head'][:12]})")
     r, ran = run("pass")
-    check(len(ran) == 1 and h4 in ran[0] and red() == [], f"G the next run gates that head, green clears red ({ran})")
+    check(len(ran) == 1 and h4 in ran[0] and red() == [] and failed_steps() == [],
+          f"G the next run gates that head, green clears red and the failed steps ({ran})")
     m = metrics()
     check(0 < m["homelab_scheduled_gate_green_timestamp_seconds"] <= m["homelab_scheduled_gate_finished_timestamp_seconds"],
           f"G the green time is the passing run's start ({m})")
@@ -142,7 +171,7 @@ esac
     listed = subprocess.run([sys.executable, "-I", str(GATE), "--list"], capture_output=True, text=True,
                             check=True).stdout.split()
     typed = re.findall(r"^# TYPE (\S+) gauge$", prom.read_text(), re.M)
-    check(listed == typed and len(listed) == 8, f"--list names exactly the series the textfile types ({listed})")
+    check(listed == typed and len(listed) == 9, f"--list names exactly the series the textfile types ({listed})")
     commit("5\n")
     run("fail-check")
     exposed = {re.split(r"[{ ]", line)[0] for line in prom.read_text().splitlines() if not line.startswith("#")}

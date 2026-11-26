@@ -5,7 +5,8 @@ generation, as scripts/qa-green.sh writes it), or it plus documentation, gets th
 missing or unreadable record included, gets the fast set (the push lints, the push eval and its gate-step) and a
 result=owed mode=fast gate record, and records no green tree. Through a real git push, a linked worktree is judged on
 the pushed commit, not on its own HEAD. The push eval runs under the light-work lock, its record's wait apart from
-its run (seeded: a held lock)."""
+its run (seeded: a held lock). nixos:qa's step runner, seeded with two red steps: a manual run ends at the first, a
+scheduled one runs every step and ends red naming each; a step that reads a red probe is skipped, not red."""
 import json
 import os
 import pathlib
@@ -371,6 +372,66 @@ with tempfile.TemporaryDirectory() as t:
                DEVENV_STALE="1")
     check("refused" in err and records.read_text() == "", f"seeded: the stale gate records nothing ({err.strip()})")
     case("the same tree from a freshly entered devenv gets the fast set", stale, "FAST")
+
+# nixos:qa's step runner (timed, stepOutcomes and the probe step in devenv.nix) on stub steps: A passes, B and D fail, C
+# reads the probe (exits 77 when it is red, as scripts/gate_probe.py does); the probe passes or fails as PROBE_RC says
+tm = re.search(r'\n  timed = lib\.concatMapStringsSep "\\n" \(g: \'\'\n(.*?)\n  \'\'\);\n', src, re.DOTALL)
+so = re.search(r"\n  stepOutcomes = \'\'\n(.*?)\n  \'\';\n", src, re.DOTALL)
+qm = re.search(r'\n  qa =\s+gate\s+"nixos-qa".*?\'\'\n(.*?)\n *\'\';\n', src, re.DOTALL)
+pb = re.search(r"\n( *\$\{lightHeld\}\n *probe_out\(\).*?\n *fi\n)", qm.group(1), re.DOTALL) if qm else None
+check(tm is not None and so is not None and pb is not None and "${stepOutcomes}" in qm.group(1) and qm.group(1).rstrip().endswith("steps_end"),
+      "timed, stepOutcomes and the probe step found in devenv.nix; nixos:qa defines the outcomes and ends with steps_end")
+if tm and so and pb:
+    with tempfile.TemporaryDirectory() as t:
+        t = pathlib.Path(t)
+        recs = t / "records"
+        steps = {"A": "exit 0", "B": "exit 1", "C": '[ "${GATE_PROBE:-}" != red ] || exit 77; exit 0', "D": "exit 1"}
+        for n, body in {**steps, "probe": 'echo "$n" >> /dev/null; exit "${PROBE_RC:-0}"', "record": f'echo "$*" >> {recs}'}.items():
+            (t / n).write_text(f"#!/usr/bin/env bash\necho {n} >> {t}/ran\n{body}\n")
+            (t / n).chmod(0o755)
+        (t / "light").touch()
+
+        def unnix(text):
+            return (textwrap.dedent(text).replace("${lib.getExe record}", str(t / "record")).replace("\'\'${", "${"))
+        timed_steps = "".join(unnix(tm.group(1)).replace("${lib.getExe g}", str(t / n)).replace("${g.name}", n) + "\n" for n in steps)
+        probe_step = (unnix(pb.group(1)).replace("${lightHeld}", LIGHT_HELD.replace("\0d", "${").replace("/run/work-locks/light-work.lock", str(t / "light")))
+                      .replace("${lib.getExe probe}", str(t / "probe")).replace("${probe.name}", "nixos-gate-probe")
+                      .replace("python3 scripts/gate_probe.py coverage", "echo {}"))
+        script = t / "runner.sh"
+        body = "#!/usr/bin/env bash\nset -euo pipefail\nmode=$1 sha=abc\n" + unnix(so.group(1)) + "\n" + probe_step + timed_steps + "steps_end\n"
+        left = re.findall(r"\$\{(?!GATE_PROBE|NIXOS_QA|NIXOS_QA_MODE|WORK_LOCKS_HELD|cap|#red|red|PROBE_RC)[^}]*\}", body)
+        check(left == [], f"the step runner has no Nix interpolation the test does not stub ({left})")
+        script.write_text(body)
+
+        def runner(mode, **extra):
+            for f in (recs, t / "ran"):
+                f.write_text("")
+            r = subprocess.run(["bash", str(script), mode], env={**env, **extra}, capture_output=True, text=True, check=False)
+            results = [(line.split("step=")[1].split()[0], line.split("result=")[1].split()[0])
+                       for line in recs.read_text().splitlines() if "gate-step" in line]
+            return r.returncode, results, [x for x in (t / "ran").read_text().split() if x != "record"], r.stderr
+
+        rc, res, ran, err = runner("scheduled")
+        check(rc == 1 and res == [("nixos-gate-probe", "pass"), ("A", "pass"), ("B", "fail"), ("C", "pass"), ("D", "fail")]
+              and "2 red step(s): B D" in err,
+              f"seeded: a scheduled run with two red steps runs every step, records each, and ends red naming both ({rc}, {res}, {err.strip()})")
+        rc, res, ran, err = runner("manual")
+        check(rc == 1 and res == [("nixos-gate-probe", "pass"), ("A", "pass"), ("B", "fail")] and ran == ["probe", "A", "B"],
+              f"seeded: a manual run stops at its first red step ({rc}, {res}, {ran})")
+        rc, res, ran, err = runner("scheduled", PROBE_RC="1")
+        check(rc == 1 and res == [("nixos-gate-probe", "fail"), ("A", "pass"), ("B", "fail"), ("C", "skipped"), ("D", "fail")]
+              and "3 red step(s): nixos-gate-probe B D" in err and "C skipped: it reads the gate probe" in err,
+              f"seeded: a red probe in a scheduled run: the step reading it is skipped and said so, the rest run ({rc}, {res}, {err.strip()})")
+        rc, res, ran, err = runner("manual", PROBE_RC="1")
+        check(rc == 1 and res == [("nixos-gate-probe", "fail")] and ran == ["probe"],
+              f"seeded: a red probe ends a manual run, recorded as such ({rc}, {res}, {ran})")
+        (t / "C").write_text(f"#!/usr/bin/env bash\necho C >> {t}/ran\nexit 77\n")
+        rc, res, ran, err = runner("scheduled")
+        check(rc == 1 and ("C", "fail") in res, f"a 77 while the probe passed is red, not skipped ({res})")
+        for n in ("B", "C", "D"):
+            (t / n).write_text(f"#!/usr/bin/env bash\necho {n} >> {t}/ran\nexit 0\n")
+        rc, res, ran, err = runner("scheduled")
+        check(rc == 0 and all(r == "pass" for _, r in res) and len(res) == 5, f"every step green: the run passes ({rc}, {res})")
 
 # devenvFresh on its own, with the hashes Nix would bake in (builtFrom) and sha256sum on a throwaway tree
 fm = re.search(r"\n  devenvFresh = gate \"nixos-devenv-fresh\" \[ pkgs.coreutils \] ''\n(.*?)\n *'';\n", src, re.S)
