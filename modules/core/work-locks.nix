@@ -18,5 +18,7 @@ in
     };
     "/run/work-locks/heavy-work.lock".f = file;
     "/run/work-locks/light-work.lock".f = file;
+    # held by the scheduled gate beside heavy-work.lock (pkgs/heavy-lock), for a guest that cannot see its holder
+    "/run/work-locks/scheduled-gate.lock".f = file;
   };
 }
