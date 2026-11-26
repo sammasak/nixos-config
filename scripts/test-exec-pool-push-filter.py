@@ -456,12 +456,16 @@ def graphql(port, fsock, prom):
         ("a block string", {"query": READY.replace("$id}", '"""PR_own"""}').replace("($id: ID!) ", "")}),
         ("no JSON", b"mutation { markPullRequestReadyForReview }"),
         ("a form body", ({"query": READY}, {"Content-Type": "application/x-www-form-urlencoded"})),
+        ("a control character in its id", {"query": READY.replace("$id}", '"PR_own\tx"}').replace("($id: ID!) ", "")}),
+        ("a vertical tab, no GraphQL whitespace", {"query": READY.replace("mutation", "mutation\v"), "variables": {"id": "PR_own"}}),
         ("the filter's own read", {"query": RESOLVE, "variables": {"id": "PR_own"}}),
     ]:
         body, headers = body if isinstance(body, tuple) else (body, {})
         status, got = api(port, "/graphql", body, headers)
-        check(status == 403 and len(Backend.api) == sent and "refused by the pool's filter" in got.get("message", ""),
-              f"a GraphQL body with {what} is refused with a message, and never reaches GraphQL ({status} {got})")
+        check(status == 403 and len(Backend.api) == sent and "refused by the pool's filter" in got.get("message", "")
+              and not any(w in got["message"] for w in ("x/pub", "f/r", "pool/t-2", "main'")),
+              f"a GraphQL body with {what} is refused with a message naming nothing read upstream, and never reaches "
+              f"GraphQL ({status} {got})")
     js = {"Content-Type": "application/json"}
     ready = json.dumps({"query": READY, "variables": {"id": "PR_own"}}).encode()
     check(raw(fsock, "pool1", ready, js, "/graphql?x=1") == 403 and raw(fsock, "pool1", ready, js, "/GRAPHQL") == 403
@@ -469,8 +473,13 @@ def graphql(port, fsock, prom):
           "a ready mark with a query, another spelling of the path, or from a slot the filter does not know, is refused")
     c = counts(prom, PULLS)
     check(c[("pool1", "passed")] - before[("pool1", "passed")] == 3
-          and c[("pool1", "refused")] - before[("pool1", "refused")] == 31,
+          and c[("pool1", "refused")] - before[("pool1", "refused")] == 33,
           f"ready marks count with the slot's pull requests ({c})")
+    reads = len(Backend.reads)
+    for _ in range(20):
+        status, got = api(port, "/graphql", {"query": READY, "variables": {"id": "PR_main"}})
+    check(status == 403 and "over 20 pull request reads" in got.get("message", "") and len(Backend.reads) - reads == 11,
+          f"a slot reads at most 20 pull requests upstream in 10 minutes, then is refused before reading ({got})")
     fleet(fsock, ready, js, sent)
 
 

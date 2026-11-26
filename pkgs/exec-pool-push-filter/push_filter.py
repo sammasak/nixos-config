@@ -16,7 +16,8 @@ body is one `markPullRequestReadyForReview` mutation of one `pullRequestId`, not
 fragment, directive or operation), and that pull request, read upstream with a query of the filter's own, is
 `pool/<id>` of a repository in the slot's `repos`, from that repository. The fleet's sidecar sends msi's here as slot
 `.fleet`, with no manifest: for it the head is any task's `pool/<id>`, and the filter's own read query is answered
-too, for a listed repository's pull request alone.
+too, for a listed repository's pull request alone. A refusal after that read tells the slot a fixed text, never
+what the owner's token read, and each slot reads at most MAX_LOOKUPS pull requests in LOOKUP_WINDOW.
 
 GitHub's own answer is passed back as it comes, so the client sees whether the push landed. A broken upstream is a 502
 and nothing is tried again: the push may or may not have landed, and only the client (the park checks with ls-remote)
@@ -41,6 +42,7 @@ import socket
 import socketserver
 import sys
 import threading
+import time
 from collections.abc import Iterator
 from typing import Any, NamedTuple
 import io
@@ -66,8 +68,8 @@ RESOLVE = ("query($id: ID!) { node(id: $id) { ... on PullRequest { headRefName "
            "headRepository { nameWithOwner } repository { nameWithOwner } } } }")
 # the GraphQL tokens a ready mark needs: a name, a plain string, `$ ! : ( ) { }`; anything else (`...`, `@`, `=`,
 # `[`, a number, a block string) is no ready mark
-TOKEN = re.compile(r'[\s,\ufeff]+|#[^\n\r]*|(?P<name>[_A-Za-z][_0-9A-Za-z]*)'
-                   r'|(?P<str>"(?:[^"\\\n\r]|\\(?:["\\/bfnrt]|u[0-9A-Fa-f]{4}))*")(?!")|(?P<punct>[$!:(){}])')
+TOKEN = re.compile(r'[ \t\n\r,\ufeff]+|#[^\n\r]*|(?P<name>[_A-Za-z][_0-9A-Za-z]*)'
+                   r'|(?P<str>"(?:[^"\\\x00-\x1f]|\\(?:["\\/bfnrt]|u[0-9A-Fa-f]{4}))*")(?!")|(?P<punct>[$!:(){}])')
 # what a ready mark may read back of its own result, nothing a query could use
 PAYLOAD = {"__typename", "clientMutationId"}
 PULL_FIELDS = {"__typename", "id", "number", "isDraft", "url"}
@@ -83,6 +85,8 @@ RESULTS = ("passed", "refused")
 # the fleet's sidecar's slot: no instance name starts with a dot
 FLEET = ".fleet"
 MAX_RESOLVE = 1 << 16
+# reads upstream with the owner's token, per slot: a few ready marks, never a scan of the owner's pull requests
+MAX_LOOKUPS, LOOKUP_WINDOW = 20, 600.0
 
 
 class Slot(NamedTuple):
@@ -127,7 +131,17 @@ class Counts:
 
 
 class Refused(Exception):
-    pass
+    @property
+    def public(self) -> str:
+        return str(self)
+
+
+class Hidden(Refused):
+    """A refusal that names what the owner's token read upstream: the journal gets it, the slot a fixed text."""
+
+    @property
+    def public(self) -> str:
+        return "not a pull request of this slot's task"
 
 
 class Body:
@@ -321,6 +335,7 @@ def ready_mark(body: bytes) -> str:
             take("punct", "$")
             used, utype = take("name"), "ID"
         else:
+            # the token holds no control character: this is JSON's own string
             pr = json.loads(take("str"))
         take("punct", "}")
     take("punct", ")")
@@ -393,6 +408,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     upstream = ""
     slots: dict[str, Slot] = {}
+    lookups: dict[str, list[float]] = {}
+    lookups_lock = threading.Lock()
     counts = Counts(None, [])
 
     def address_string(self) -> str:
@@ -408,8 +425,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         return "pull" if PULLS_PATH.fullmatch(path) or path.lower() == GRAPHQL_PATH else "push"
 
-    def refuse(self, why: str) -> None:
+    def refuse(self, why: str, public: str | None = None) -> None:
         self.note(f"refused ({why})")
+        why = why if public is None else public
         kind = self.kind()
         self.counts.bump(kind, self.headers.get("X-Pool-Slot", ""), "refused")
         if kind == "pull":
@@ -434,7 +452,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         try:
             self.filter()
         except Refused as e:
-            self.refuse(str(e))
+            self.refuse(str(e), e.public)
 
     def do_GET(self) -> None:
         self.refuse("only a git-receive-pack, pull request or GraphQL POST is filtered")
@@ -481,7 +499,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             raw, pr = self.lookup(asked)
             repo = pr["repository"]["nameWithOwner"]
             if repo.lower() not in slot.repos:
-                raise Refused(f"{repo}'s pull request: not a listed repository's")
+                raise Hidden(f"{repo}'s pull request: not a listed repository's")
             self.note(f"answered the filter's read of {repo}'s {pr['headRefName']}")
             self.answer(200, "application/json", raw)
             return
@@ -490,20 +508,26 @@ class Handler(http.server.BaseHTTPRequestHandler):
         repo, head = pr["repository"]["nameWithOwner"], pr["headRefName"]
         from_repo = (pr.get("headRepository") or {}).get("nameWithOwner")
         if repo.lower() not in slot.repos:
-            raise Refused(f"{repo}'s pull request: not a listed repository's")
+            raise Hidden(f"{repo}'s pull request: not a listed repository's")
         if not isinstance(from_repo, str) or from_repo.lower() != repo.lower():
-            raise Refused(f"a pull request from {from_repo!r}, not from {repo}")
+            raise Hidden(f"a pull request from {from_repo!r}, not from {repo}")
         if slot.manifest is None:
             if not (head.startswith("pool/") and TASK_ID.fullmatch(head[5:])):
-                raise Refused(f"head {head!r}: the fleet marks ready only a task's pool/<id>")
+                raise Hidden(f"head {head!r}: the fleet marks ready only a task's pool/<id>")
         elif head != f"pool/{task_id(slot.manifest)}":
-            raise Refused(f"head {head!r}: a slot marks ready only its own task's pull request")
+            raise Hidden(f"head {head!r}: a slot marks ready only its own task's pull request")
         self.note(f"passed the ready mark of {repo}'s {head}")
         self.counts.bump("pull", self.headers.get("X-Pool-Slot", ""), "passed")
         self.forward(data, None)
 
     def lookup(self, node: str) -> tuple[bytes, dict[str, Any]]:
         """The pull request node is, read upstream with the filter's own query: the answer as sent, and its node."""
+        slot, now = self.headers.get("X-Pool-Slot", ""), time.monotonic()
+        with self.lookups_lock:
+            recent = [t for t in self.lookups.get(slot, []) if now - t < LOOKUP_WINDOW]
+            if len(recent) >= MAX_LOOKUPS:
+                raise Refused(f"over {MAX_LOOKUPS} pull request reads in {LOOKUP_WINDOW:.0f} s")
+            self.lookups[slot] = [*recent, now]
         conn = UnixConnection(self.upstream)
         try:
             conn.request("POST", GRAPHQL_PATH, body=resolve_body(node),
@@ -516,14 +540,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
         finally:
             conn.close()
         if resp.status != 200 or len(raw) > MAX_RESOLVE or resp.getheader("Content-Encoding", "identity") != "identity":
-            raise Refused(f"the pull request could not be read: {resp.status}")
+            raise Hidden(f"the pull request could not be read: {resp.status}")
         try:
             pr = json.loads(raw)["data"]["node"]
             if not (isinstance(pr["headRefName"], str) and isinstance(pr["repository"]["nameWithOwner"], str)
                     and isinstance(pr.get("headRepository") or {}, dict)):
                 raise TypeError("not a pull request's fields")
         except (ValueError, KeyError, TypeError) as e:
-            raise Refused(f"{node} is no pull request upstream: {e!r}") from e
+            raise Hidden(f"{node} is no pull request upstream: {e!r}") from e
         return raw, pr
 
     def body(self) -> Body:
