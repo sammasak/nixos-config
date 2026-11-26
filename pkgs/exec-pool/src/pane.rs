@@ -329,7 +329,7 @@ pub fn verdict(transcript: &str, from: usize, ended: bool) -> (String, bool) {
             .unwrap_or(0.0);
         Some((total - carried).max(0.0))
     });
-    // a cost-state that did not grow over a turn that spent tokens is a restored one, not this turn's: unpriced, not free
+    // a cost-state that did not grow (restored or shrunk) over a turn that spent tokens is not this turn's: unpriced, not free
     let spent = [
         "input_tokens",
         "output_tokens",
@@ -687,6 +687,10 @@ not json
         let restored =
             format!("{used}\n{{\"type\":\"cost-state\",\"totalCostUSD\":0.5,\"startTime\":1}}");
         let v = line(&verdict(&transcript(&restored), 3, true).0);
+        assert_eq!(v["total_cost_usd"], Value::Null);
+        let shrunk =
+            format!("{used}\n{{\"type\":\"cost-state\",\"totalCostUSD\":0.3,\"startTime\":1}}");
+        let v = line(&verdict(&transcript(&shrunk), 3, true).0);
         assert_eq!(v["total_cost_usd"], Value::Null);
         let grew =
             format!("{used}\n{{\"type\":\"cost-state\",\"totalCostUSD\":0.9,\"startTime\":1}}");
