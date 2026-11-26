@@ -114,7 +114,9 @@ With asus off every command exits 3 with "no local model up" and submits nothing
 3. The v0.1 acceptance script in a VM (PASS, FAIL or UNTESTED per criterion) is not written.
 4. A pull request's head is not held to the task's branch ([#653](https://github.com/sammasak/nixos-config/issues/653)).
    The push filter is live on both hosts: 1 d of `exec_pool_push_filter_pushes_total`, acer 17 passed, msi 3, 0 refused.
-5. Turn errors carry no arm label, so #625 and #626 cannot count them per arm.
+5. Turn errors per arm: `exec_pool_session_turn_errors_total{host,variant,shunt,agent}` (turn_error, turn_timeout,
+   turn_memory_kill) and `host_variant:exec_pool_session_turn_errors:increase1d`, live after acer-swift's deploy.
+   Follow-up: a row for it in the Agent harnesses comparison table.
 
 ## Check tuning
 
