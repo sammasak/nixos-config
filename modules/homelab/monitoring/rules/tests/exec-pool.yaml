@@ -552,3 +552,19 @@ tests:
               description: 'The owner''s ChatGPT login the egress proxy signs the slots'' Codex calls with on acer-swift failed or timed out on its refresh, or its access token expires within the hour, and nothing retries it: Codex tasks there will fail with 401. Sign in again on acer-swift as lukas, the login''s one writer: codex login --device-auth, which rewrites /home/lukas/.codex/auth.json (runbook).'
               query: 'codex_egress_refresh_failed{job="node-exporter",node="acer-swift"} or codex_egress_access_token_expiry_timestamp_seconds{job="node-exporter",node="acer-swift"} - time()'
               runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#codexloginrefreshfailed"
+
+  # #626: an error turn counts under its arm, a turn a minute on acer's 300K slots against none on the default ones
+  - interval: 1m
+    input_series:
+      - series: 'exec_pool_session_turn_errors_total{job="node-exporter",node="acer-swift",host="acer-swift",variant="300000",shunt="off",agent="claude"}'
+        values: '0+1x1500'
+      - series: 'exec_pool_session_turn_errors_total{job="node-exporter",node="acer-swift",host="acer-swift",variant="default",shunt="off",agent="claude"}'
+        values: '0x1500'
+    promql_expr_test:
+      - expr: host_variant:exec_pool_session_turn_errors:increase1d
+        eval_time: 25h
+        exp_samples:
+          - labels: 'host_variant:exec_pool_session_turn_errors:increase1d{host="acer-swift",variant="300000",shunt="off"}'
+            value: 1440
+          - labels: 'host_variant:exec_pool_session_turn_errors:increase1d{host="acer-swift",variant="default",shunt="off"}'
+            value: 0

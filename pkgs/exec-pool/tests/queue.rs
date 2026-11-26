@@ -2881,6 +2881,29 @@ fn a_timer_already_due_wakes_at_the_park_or_the_next_reconcile() {
 }
 
 #[test]
+fn a_turn_error_counts_under_the_arm_its_slot_declared() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let _session = session(&pg);
+    let (a, epoch, turn) = started(&mut owner);
+    let mut errored = park(ParkReason::TurnError, turn.upto);
+    errored.arm = Some(Arm::parse(r#"{"variant": "300000", "shunt": "off"}"#).unwrap());
+    owner.park(&a, epoch, &errored).unwrap();
+    let m = owner.metrics().unwrap();
+    let has = |line: &str| assert!(m.lines().any(|l| l == line), "{line}\n{m}");
+    has(
+        "exec_pool_session_turn_errors_total{host=\"msi-ms7758\",variant=\"300000\",shunt=\"off\",agent=\"claude\"} 1",
+    );
+    has(
+        "exec_pool_session_turn_errors_total{host=\"msi-ms7758\",variant=\"default\",shunt=\"off\",agent=\"claude\"} 0",
+    );
+    // it reported no usage, so it is no reported turn
+    has(
+        "exec_pool_session_turns_reported_total{host=\"msi-ms7758\",variant=\"300000\",shunt=\"off\",agent=\"claude\"} 0",
+    );
+}
+
+#[test]
 fn session_metrics_count_turns_wakes_and_tokens() {
     let pg = Pg::new();
     let mut owner = pg.migrated();

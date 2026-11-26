@@ -26,6 +26,10 @@ groups:
       - record: host_variant:exec_pool_session_cost_usd:increase1d
         expr: |
           sum by (host, variant, shunt) (increase(exec_pool_session_cost_usd_total{job="node-exporter",agent="claude"}[1d]))
+      # turns parked as turn_error, turn_timeout or turn_memory_kill: they report no usage, so the turns record misses them
+      - record: host_variant:exec_pool_session_turn_errors:increase1d
+        expr: |
+          sum by (host, variant, shunt) (increase(exec_pool_session_turn_errors_total{job="node-exporter",agent="claude"}[1d]))
 
   - name: exec-pool.alerts
     rules:

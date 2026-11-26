@@ -46,6 +46,28 @@ in
         description = "Each slot in its own 65536 uids (the instances' rootInGuest, without its sudo): guest root is an unprivileged host uid, a slot has its own sshd key and nix fetcher cache, and a reset empties that cache. A slot's home made in the other block is replaced by a fresh one at its next start.";
       };
     };
+    light = {
+      slots = mkOption {
+        type = types.ints.unsigned;
+        default = 0;
+        description = "How many of `slots`, the last ones, are light: `light.memory` reserved, `light.cpu` cores of CPUWeight and a CPUQuota of `light.cpuQuota`, so on a hot host one adds work without taking the others' share or the idle cores' heat.";
+      };
+      memory = mkOption {
+        type = types.strMatching "[1-9][0-9]*[KMGT]?";
+        default = "1G";
+        description = "A light slot's MemoryMin.";
+      };
+      cpu = mkOption {
+        type = types.ints.positive;
+        default = 1;
+        description = "A light slot's cores, as an instance's cpu.reserved.";
+      };
+      cpuQuota = mkOption {
+        type = types.strMatching "[1-9][0-9]*%";
+        default = "200%";
+        description = "A light slot's CPUQuota: its ceiling even while other cores sit idle.";
+      };
+    };
     repos = mkOption {
       type = types.listOf types.str;
       # what tasks hand back to, and nixos-config's private flake and devenv inputs for its fetch
@@ -161,6 +183,10 @@ in
     {
       assertion = !(has "runner") || has "queue" != (cfg.queueListener != null);
       message = "homelab.execPool.queueListener: set it for a runner without this host's queue, and only then.";
+    }
+    {
+      assertion = cfg.light.slots <= cfg.slots;
+      message = "homelab.execPool.light.slots: more light slots than slots.";
     }
     {
       assertion = !cfg.remoteRunners || has "queue";
