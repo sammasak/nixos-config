@@ -11,6 +11,8 @@
 //! A session task's turn runs in its slot's [`Dock`] instead, bound into the guest at [`DOCK`]: an empty HOME and
 //! checkout every turn, at the same guest paths in every slot, [`SESSION_HOME`] and [`SESSION_WORK`]. What outlives
 //! the turn is on the session's remote and in the queue (`crate::snapshot`), never in the dock.
+//!
+//! The slot's clone mirrors ([`Workspace::mirror`]) live in its Nix cache ([`NIX_CACHE`]), which the reset keeps.
 
 use std::fmt::Write as _;
 use std::fs;
@@ -24,6 +26,9 @@ use crate::RelPath;
 
 /// Under the guest home; the first attempt after a reset creates it, so it exists only if one already ran.
 pub const ROOT: &str = "attempts";
+
+/// Under the guest home: the slot's Nix cache, its own bind (`modules/workers/core.nix`) that a reset keeps.
+pub const NIX_CACHE: &str = ".cache/nix";
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum Error {
@@ -166,6 +171,7 @@ pub fn admit(last: Option<HomeId>, now: HomeId) -> Result<(), Error> {
 pub struct Workspace {
     root: String,
     dir: String,
+    nix_cache: String,
 }
 
 impl Workspace {
@@ -186,7 +192,11 @@ impl Workspace {
             let _ = write!(dir, "{b:02x}");
         }
         let _ = write!(dir, "-{lease_epoch}");
-        Ok(Self { root, dir })
+        Ok(Self {
+            root,
+            dir,
+            nix_cache: format!("{guest_home}/{NIX_CACHE}"),
+        })
     }
 
     #[must_use]
@@ -215,6 +225,16 @@ impl Workspace {
     #[must_use]
     pub fn out(&self) -> String {
         format!("{}/out", self.dir)
+    }
+
+    /// The slot's bare mirror of `repo` under its Nix cache, which outlives the reset: one per repository, named by
+    /// the FNV-1a hash of its URL, so a URL of any length or shape is one path component.
+    #[must_use]
+    pub fn mirror(&self, repo: &str) -> String {
+        let hash = repo.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+            (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
+        });
+        format!("{}/exec-pool-mirrors/{hash:016x}", self.nix_cache)
     }
 
     /// A session turn's guest commands that create the workspace's `tmp` and `out` only: its HOME and checkout are the
@@ -348,6 +368,34 @@ mod tests {
         assert_eq!(w.home(), "/home/lukas/attempts/612f2e2e2f62-3/home");
         assert_ne!(Workspace::new("/home/lukas", "a/../b", 4)?, w);
         assert_ne!(Workspace::new("/home/lukas", "a/../c", 3)?, w);
+        Ok(())
+    }
+
+    #[test]
+    fn a_repository_has_one_mirror_in_the_slots_nix_cache_whatever_its_url() -> Result<(), Error> {
+        let w = ws()?;
+        let other = Workspace::new("/home/lukas", "x", 9)?;
+        let a = w.mirror("https://github.com/sammasak/nixos-config.git");
+        assert_eq!(
+            a,
+            other.mirror("https://github.com/sammasak/nixos-config.git"),
+            "every attempt of the slot finds it"
+        );
+        for odd in [
+            "https://github.com/sammasak/nixos-config",
+            "",
+            "../../x",
+            &"a/".repeat(300),
+        ] {
+            let m = w.mirror(odd);
+            let name = m
+                .strip_prefix("/home/lukas/.cache/nix/exec-pool-mirrors/")
+                .unwrap_or_default();
+            assert!(
+                name.len() == 16 && name.bytes().all(|b| b.is_ascii_hexdigit()) && m != a,
+                "{odd:?}: {m}"
+            );
+        }
         Ok(())
     }
 

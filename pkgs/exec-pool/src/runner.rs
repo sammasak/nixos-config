@@ -109,6 +109,19 @@ pub struct Step {
     pub unit: &'static str,
     pub argv: Vec<String>,
     pub limit_secs: Option<u64>,
+    pub on_failure: OnFailure,
+}
+
+/// What a preparing step that exits non-zero or times out leaves; one stopped by a cancel or a drain stops the run
+/// whatever this says.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OnFailure {
+    /// The run stops there.
+    Stop,
+    /// The run goes on: the step only warms a cache.
+    GoOn,
+    /// This command runs in its place, under this unit, and its end is the step's.
+    Instead(&'static str, Vec<String>),
 }
 
 /// The bound of a quick step: a relink or the transcript probe.
@@ -120,6 +133,7 @@ const fn step(stage: Stage, unit: &'static str, argv: Vec<String>) -> Step {
         unit,
         argv,
         limit_secs: None,
+        on_failure: OnFailure::Stop,
     }
 }
 
@@ -186,8 +200,8 @@ impl Manifest {
         Workspace::new(guest_home, &self.attempt_id, self.lease_epoch)
     }
 
-    /// The guest commands in order: create the workspace, clone into it, check out the rev (an agent task on its
-    /// [`agent::branch`]), then
+    /// The guest commands in order: create the workspace, refresh the slot's mirror of the repository, clone into the
+    /// workspace with it ([`Manifest::clone_argv`]), check out the rev (an agent task on its [`agent::branch`]), then
     /// [`agent::argv`] in the task's workdir with the workspace's HOME. Each is an argv, never a shell string; `git`,
     /// `env` and `mkdir` are store paths the guest shares. Git reads the guest's system config alone, whose rewrite
     /// sends GitHub to the slot's proxy; the checkout's own config holds `identity` (name, email) for the agent's
@@ -205,18 +219,21 @@ impl Manifest {
         let t = &self.task;
         let run = ws.run(env, &t.command.workdir, &agent::argv(t)?)?;
         let [root, dirs] = ws.create(mkdir);
-        let [clone, checkout] = self.clone_argv(&ws.checkout(), tools, identity)?;
+        let ([init, fetch, clone], checkout) =
+            self.clone_argv(ws, &ws.checkout(), tools, identity)?;
         Ok(vec![
             step(Stage::Prepare, "exec-pool-root", root),
             step(Stage::Prepare, "exec-pool-workspace", dirs),
-            step(Stage::Prepare, "exec-pool-clone", clone),
+            init,
+            fetch,
+            clone,
             step(Stage::Prepare, "exec-pool-checkout", checkout),
             step(Stage::Run, "exec-pool-task", run),
         ])
     }
 
-    /// A session turn's preparing guest commands: the workspace's `tmp` and `out` in the slot home; the clone into the
-    /// dock's empty checkout and its way back to where the last park left it (`resume`, from the remote as the turn
+    /// A session turn's preparing guest commands: the workspace's `tmp` and `out` in the slot home; the mirror's
+    /// refresh and the clone into the dock's empty checkout and its way back to where the last park left it (`resume`, from the remote as the turn
     /// listed it); `relink`, which links the guest user's current Home Manager files into the session's empty HOME;
     /// and with a transcript its copy by `install` from the dock to where the agent reads it. The agent's own step
     /// follows the transcript probe: [`Manifest::turn`].
@@ -231,11 +248,13 @@ impl Manifest {
         (resume, relink, install): (&Resume, Vec<String>, &str),
     ) -> Result<Vec<Step>, StepsError> {
         let [root, dirs] = ws.create_scratch(tools.2);
-        let [clone, _] = self.clone_argv(SESSION_WORK, tools, identity)?;
+        let ([init, fetch, clone], _) = self.clone_argv(ws, SESSION_WORK, tools, identity)?;
         let mut steps = vec![
             step(Stage::Prepare, "exec-pool-root", root),
             step(Stage::Prepare, "exec-pool-workspace", dirs),
-            step(Stage::Prepare, "exec-pool-clone", clone),
+            init,
+            fetch,
+            clone,
         ];
         let g = Git {
             env: tools.1,
@@ -297,18 +316,25 @@ impl Manifest {
         ))
     }
 
-    /// The clone into `checkout` and the checkout of the rev there, by `git` with no global config: the guest's
-    /// system config alone, which sends GitHub to the slot's proxy (a private repository clones too).
+    /// The slot's mirror of the repository ([`Workspace::mirror`]) made and fetched, the clone into `checkout` and the
+    /// checkout of the rev there, by `git` with no global config: the guest's system config alone, which sends GitHub
+    /// to the slot's proxy (a private repository clones too).
+    ///
+    /// The mirror only saves the clone a download. Its steps go on when they fail: a fetch killed mid-way leaves it
+    /// as it was, and the clone fetches what it lacks. The clone borrows its objects and copies them
+    /// (`--dissociate`), so the checkout never depends on the mirror, which the next turn's fetch changes and a park
+    /// does not carry; and a clone that fails with it (a mirror broken on disk) runs again without it.
     fn clone_argv(
         &self,
+        ws: &Workspace,
         checkout: &str,
         (git, env, _): (&str, &str, &str),
         identity: (&str, &str),
-    ) -> Result<[Vec<String>; 2], StepsError> {
+    ) -> Result<([Step; 3], Vec<String>), StepsError> {
         let s = |v: &[&str]| v.iter().map(|&x| x.to_owned()).collect::<Vec<_>>();
-        let git = |args: &[&str]| {
+        let git = |args: &[String]| {
             let mut v = s(&[env, "GIT_CONFIG_GLOBAL=/dev/null", git]);
-            v.extend(s(args));
+            v.extend_from_slice(args);
             v
         };
         let t = &self.task;
@@ -320,7 +346,6 @@ impl Manifest {
         let mut checkout_args = s(&["-C", checkout, "checkout", "--quiet"]);
         checkout_args.extend(on);
         checkout_args.push(t.source.rev.clone());
-        let checkout_args: Vec<&str> = checkout_args.iter().map(String::as_str).collect();
         let mut clone = s(&[
             "clone",
             "--quiet",
@@ -332,9 +357,45 @@ impl Manifest {
         if let Some(url) = github_push_url(&t.source.repo) {
             clone.extend(["-c".to_owned(), format!("remote.origin.pushurl={url}")]);
         }
-        clone.extend(s(&["--", &t.source.repo, checkout]));
-        let clone: Vec<&str> = clone.iter().map(String::as_str).collect();
-        Ok([git(&clone), git(&checkout_args)])
+        let mirror = ws.mirror(&t.source.repo);
+        let mut borrowed = clone.clone();
+        borrowed.extend(s(&["--reference-if-able", &mirror, "--dissociate"]));
+        for c in [&mut clone, &mut borrowed] {
+            c.extend(s(&["--", &t.source.repo, checkout]));
+        }
+        let warm = |unit, argv| Step {
+            on_failure: OnFailure::GoOn,
+            ..step(Stage::Prepare, unit, argv)
+        };
+        // no background gc: the step's unit would kill it at its end, mid-write
+        let fetch = s(&[
+            "-c",
+            "gc.autoDetach=false",
+            "-c",
+            "maintenance.autoDetach=false",
+            "--git-dir",
+            &mirror,
+            "fetch",
+            "--quiet",
+            "--prune",
+            "--",
+            &t.source.repo,
+            "+refs/heads/*:refs/heads/*",
+        ]);
+        Ok((
+            [
+                warm(
+                    "exec-pool-mirror-init",
+                    git(&s(&["init", "--quiet", "--bare", "--", &mirror])),
+                ),
+                warm("exec-pool-mirror", git(&fetch)),
+                Step {
+                    on_failure: OnFailure::Instead("exec-pool-clone-plain", git(&clone)),
+                    ..step(Stage::Prepare, "exec-pool-clone", git(&borrowed))
+                },
+            ],
+            git(&checkout_args),
+        ))
     }
 
     /// The guest command that lists the task's branch on its repository once the run is over, through the same config
@@ -1048,7 +1109,7 @@ mod tests {
         );
     }
 
-    fn steps(m: &Manifest) -> [(Stage, Vec<String>); 5] {
+    fn steps(m: &Manifest) -> [(Stage, Vec<String>); 7] {
         let ws = m.workspace("/home/u").unwrap();
         let all: Vec<(Stage, Vec<String>)> = m
             .steps(
@@ -1098,6 +1159,8 @@ mod tests {
             [
                 "exec-pool-root",
                 "exec-pool-workspace",
+                "exec-pool-mirror-init",
+                "exec-pool-mirror",
                 "exec-pool-clone",
                 "exec-pool-checkout",
                 "exec-pool-relink"
@@ -1118,18 +1181,18 @@ mod tests {
                 &format!("{dir}/out")
             ]
         );
-        assert!(first[2].argv.ends_with(&[
+        assert!(first[4].argv.ends_with(&[
             "--".into(),
             "https://example.org/r.git".into(),
             SESSION_WORK.into()
         ]));
         assert!(
-            first[3]
+            first[5]
                 .argv
                 .ends_with(&["-b".into(), "pool/t1".into(), "abc123".into()])
         );
         assert_eq!(
-            first[4].argv,
+            first[6].argv,
             [
                 "/cp",
                 "-rsTH",
@@ -1149,6 +1212,8 @@ mod tests {
             [
                 "exec-pool-root",
                 "exec-pool-workspace",
+                "exec-pool-mirror-init",
+                "exec-pool-mirror",
                 "exec-pool-clone",
                 "exec-pool-fetch",
                 "exec-pool-checkout",
@@ -1158,17 +1223,17 @@ mod tests {
             ]
         );
         assert!(
-            resumed[3]
+            resumed[5]
                 .argv
                 .ends_with(&["origin".into(), "refs/pool-wip/t1".into()])
         );
         assert!(
-            resumed[4]
+            resumed[6]
                 .argv
                 .ends_with(&["-B".into(), "pool/t1".into(), "s1^".into()])
         );
         assert_eq!(
-            resumed[7].argv,
+            resumed[9].argv,
             [
                 "/install",
                 "-D",
@@ -1477,10 +1542,20 @@ mod tests {
     #[test]
     fn steps_make_the_workspace_then_clone_and_run_in_it() {
         let m = manifest(&task()).unwrap();
-        let [(s1, root), (s2, _), (s3, clone), (s4, checkout), (s5, run)] = steps(&m);
+        let [
+            (s1, root),
+            (s2, _),
+            (s3, init),
+            (s4, fetch),
+            (s5, clone),
+            (s6, checkout),
+            (s7, run),
+        ] = steps(&m);
         assert_eq!(
-            [s1, s2, s3, s4, s5],
+            [s1, s2, s3, s4, s5, s6, s7],
             [
+                Stage::Prepare,
+                Stage::Prepare,
                 Stage::Prepare,
                 Stage::Prepare,
                 Stage::Prepare,
@@ -1493,6 +1568,31 @@ mod tests {
         let git = ["/env", "GIT_CONFIG_GLOBAL=/dev/null", "/git"];
         assert_eq!(clone[..3], git, "no rewrite to ssh from the user's config");
         assert_eq!(checkout[..3], git);
+        assert_eq!(init[..3], git);
+        assert_eq!(fetch[..3], git);
+        let mirror = m
+            .workspace("/home/u")
+            .unwrap()
+            .mirror("https://example.org/r.git");
+        assert!(mirror.starts_with("/home/u/.cache/nix/exec-pool-mirrors/"));
+        assert_eq!(init[3..], ["init", "--quiet", "--bare", "--", &mirror]);
+        assert_eq!(
+            fetch[3..],
+            [
+                "-c",
+                "gc.autoDetach=false",
+                "-c",
+                "maintenance.autoDetach=false",
+                "--git-dir",
+                &mirror,
+                "fetch",
+                "--quiet",
+                "--prune",
+                "--",
+                "https://example.org/r.git",
+                "+refs/heads/*:refs/heads/*"
+            ]
+        );
         assert_eq!(
             clone[3..],
             [
@@ -1502,6 +1602,9 @@ mod tests {
                 "user.name=Pool",
                 "-c",
                 "user.email=pool@example.org",
+                "--reference-if-able",
+                &mirror,
+                "--dissociate",
                 "--",
                 "https://example.org/r.git",
                 &format!("{dir}/work")
@@ -1535,14 +1638,57 @@ mod tests {
     }
 
     #[test]
+    fn the_mirror_only_warms_the_clone_which_runs_without_it_when_it_fails_with_it() {
+        let m = manifest(&task()).unwrap();
+        let ws = m.workspace("/home/u").unwrap();
+        let all = m
+            .steps(
+                &ws,
+                ("/git", "/env", "/mkdir"),
+                ("Pool", "pool@example.org"),
+            )
+            .unwrap();
+        let of = |unit: &str| all.iter().find(|s| s.unit == unit).unwrap();
+        for warm in ["exec-pool-mirror-init", "exec-pool-mirror"] {
+            assert_eq!(of(warm).on_failure, OnFailure::GoOn, "{warm}");
+        }
+        for stops in [
+            "exec-pool-root",
+            "exec-pool-workspace",
+            "exec-pool-checkout",
+        ] {
+            assert_eq!(of(stops).on_failure, OnFailure::Stop, "{stops}");
+        }
+        let clone = of("exec-pool-clone");
+        let OnFailure::Instead(unit, plain) = &clone.on_failure else {
+            panic!("{:?}", clone.on_failure)
+        };
+        let mirror = ws.mirror("https://example.org/r.git");
+        let mut borrowed = plain.clone();
+        let at = borrowed.iter().position(|a| a == "--").unwrap();
+        borrowed.splice(
+            at..at,
+            ["--reference-if-able", &mirror, "--dissociate"].map(str::to_owned),
+        );
+        assert_eq!(
+            (*unit, &clone.argv),
+            ("exec-pool-clone-plain", &borrowed),
+            "the same clone, without the mirror"
+        );
+    }
+
+    #[test]
     fn a_github_checkout_pushes_over_ssh_and_its_branch_is_read_back() {
         let mut t = task();
         t["source"]["repo"] = json!("https://github.com/sammasak/nixos-config.git");
         t["command"] = json!({ "agent": "claude", "argv": ["go"], "workdir": "." });
         let m = manifest(&t).unwrap();
-        let [_, _, (_, clone), (_, checkout), _] = steps(&m);
+        let [_, _, _, _, (_, clone), (_, checkout), _] = steps(&m);
         assert_eq!(checkout[7..], ["-b", "pool/t1", "abc123"]);
-        let at = clone.iter().position(|a| a == "--").unwrap();
+        let at = clone
+            .iter()
+            .position(|a| a == "--reference-if-able")
+            .unwrap();
         assert_eq!(
             clone[at - 2..at],
             [

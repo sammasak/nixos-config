@@ -347,6 +347,9 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
   checked against its hash, so that fails the fetch, it does not swap the
   source). The evaluation cache inside it is per environment: its rows are
   unsigned and name the derivation to build.
+  A pool slot's cache also holds its bare mirror of each repository its tasks
+  clone (`exec-pool-mirrors/`, one per repository URL), fetched before each
+  clone, which borrows from it and copies what it uses (`--dissociate`).
 - `/run/work-locks` (`modules/core/work-locks.nix`) is the host's directory,
   bound read-only into every environment: `flock -o /run/work-locks/<lane>.lock`
   in a guest and on the host take the same lock, so one heavy job runs per

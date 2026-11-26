@@ -30,11 +30,12 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use exec_pool::queue::{Arm, Change, Claim, Park, QueueError, Store, TRANSCRIPT_BYTES, Transcript};
 use exec_pool::runner::{
-    CAPTURE_BYTES, DRAIN_REQUEST, ExecResult, Listed, MEMORY_KILLS, Manifest, PARK_PUSH_FAILURES,
-    PREPARE_FAILURES, PROMPTS_UNSUBMITTED, ParkedAt, QUICK_SECS, Session, Stage, Step, TurnHint,
-    TurnSettle, claim_fits, decide, decide_turn, drain_holds, guest_exit, handed_back, holds_tree,
-    oom_victims, parks_undelivered, read_bytes, read_regular, read_regular_up_to, receipt, relink,
-    remote_head, session_checkpoint, tail, tree_check, while_unavailable,
+    CAPTURE_BYTES, DRAIN_REQUEST, ExecResult, Listed, MEMORY_KILLS, Manifest, OnFailure,
+    PARK_PUSH_FAILURES, PREPARE_FAILURES, PROMPTS_UNSUBMITTED, ParkedAt, QUICK_SECS, Session,
+    Stage, Step, TurnHint, TurnSettle, claim_fits, decide, decide_turn, drain_holds, guest_exit,
+    handed_back, holds_tree, oom_victims, parks_undelivered, read_bytes, read_regular,
+    read_regular_up_to, receipt, relink, remote_head, session_checkpoint, tail, tree_check,
+    while_unavailable,
 };
 use exec_pool::snapshot::{self, Git, Plan, Resume, landed, listed, plan};
 use exec_pool::task_result::TaskResult;
@@ -1115,9 +1116,10 @@ impl Guest {
     ) -> bool {
         for Step {
             stage,
-            unit,
+            mut unit,
             argv,
             limit_secs,
+            on_failure,
         } in steps
         {
             // a stop before a step leaves the stage as it was: a turn stopped before its agent ran is still preparing
@@ -1136,27 +1138,53 @@ impl Guest {
             };
             let started = Instant::now();
             let log = self.log.as_ref().filter(|_| stage == Stage::Run);
-            let end = match stage {
-                Stage::Run => self.step_watched(
-                    (unit, true),
-                    &argv,
-                    (limit, (out, CAPTURE_BYTES), err),
-                    log,
-                    watch,
-                ),
-                Stage::Prepare => self.step((unit, true), &argv, limit, (out, err), log),
-            }
-            .map_err(|e| format!("{unit}: {e}"));
-            let end = end.unwrap_or_else(|e| {
+            let note = |e: &str| {
                 let _ =
                     io::Write::write_all(&mut &*err, format!("exec-pool-exec: {e}\n").as_bytes());
-                StepEnd {
-                    exit_code: None,
-                    timed_out: false,
-                    cancelled: false,
-                    stopped: false,
+            };
+            let ended = |r: io::Result<StepEnd>, unit: &str| {
+                r.unwrap_or_else(|e| {
+                    note(&format!("{unit}: {e}"));
+                    StepEnd {
+                        exit_code: None,
+                        timed_out: false,
+                        cancelled: false,
+                        stopped: false,
+                    }
+                })
+            };
+            let mut end = match stage {
+                Stage::Run => ended(
+                    self.step_watched(
+                        (unit, true),
+                        &argv,
+                        (limit, (out, CAPTURE_BYTES), err),
+                        log,
+                        watch,
+                    ),
+                    unit,
+                ),
+                Stage::Prepare => {
+                    ended(self.step((unit, true), &argv, limit, (out, err), log), unit)
                 }
-            });
+            };
+            let failed = |end: &StepEnd| {
+                !end.cancelled && !end.stopped && (end.exit_code != Some(0) || end.timed_out)
+            };
+            if stage == Stage::Prepare && failed(&end) {
+                match on_failure {
+                    OnFailure::Stop => {}
+                    OnFailure::GoOn => {
+                        note(&format!("{unit} failed; going on without it"));
+                        continue;
+                    }
+                    OnFailure::Instead(other, argv) => {
+                        note(&format!("{unit} failed; {other} instead"));
+                        unit = other;
+                        end = ended(self.step((unit, true), &argv, limit, (out, err), log), unit);
+                    }
+                }
+            }
             if stage == Stage::Run {
                 result.run_ms = ms(started);
             }
