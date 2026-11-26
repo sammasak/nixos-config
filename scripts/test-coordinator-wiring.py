@@ -101,24 +101,22 @@ def main():
     guard = skills / "hooks/check-heavy-build.py"
     on_lenovo = [c for c in P["bashHooks"]["lenovo"] if "check-heavy-build.py" in c]
     on_acer = [c for c in P["bashHooks"]["acer-swift"] if "check-heavy-build.py" in c]
-    if guard.exists():
-        names = [c.split(" ")[-2 if "check-heavy-build.py" in c else -1].rsplit("/", 1)[-1] for c in P["bashHooks"]["lenovo"]]
-        check(len(on_lenovo) == 1 and on_lenovo[0].endswith(f" {guard} {P['deployer']}") and "/bin/python3 " in on_lenovo[0]
-              and not on_acer and P["deployer"] == "lenovo-21CB001PMX",
-              f"lenovo alone runs check-heavy-build.py with the deployer's hostname as its argument (lenovo {on_lenovo}, acer {on_acer})")
-        check(names.index("check-loop.sh") < names.index("check-heavy-build.py")
-              and all(names.index("check-heavy-build.py") < i for i, n in enumerate(names) if n.startswith("shunt-")),
-              f"the guard runs after check-loop.sh and before the shunt hook ({names})")
-        blocked = subprocess.run(on_lenovo[0], shell=True, capture_output=True, text=True,
-                                 input='{"tool_input":{"command":"devenv tasks run nixos:qa"}}',
-                                 env=dict(os.environ, CHECK_HEAVY_BUILD_TEST_HOST=P["deployer"]))
-        passed = subprocess.run(on_lenovo[0], shell=True, capture_output=True, text=True,
-                                input='{"tool_input":{"command":"devenv tasks run nixos:qa"}}',
-                                env=dict(os.environ, CHECK_HEAVY_BUILD_TEST_HOST="acer-swift"))
-        check(blocked.returncode == 2 and "BLOCKED: heavy build" in blocked.stderr and passed.returncode == 0,
-              f"the registered command refuses nixos:qa under lenovo's hostname as the kernel spells it and passes on acer ({blocked.returncode}, {passed.returncode})")
-    else:
-        check(not on_lenovo and not on_acer, "the pinned skills input lacks check-heavy-build.py: no host registers it")
+    check(guard.exists(), f"the pinned skills input carries {guard.name}, the guard lenovo registers")
+    names = [c.split(" ")[-2 if "check-heavy-build.py" in c else -1].rsplit("/", 1)[-1] for c in P["bashHooks"]["lenovo"]]
+    check(len(on_lenovo) == 1 and on_lenovo[0].endswith(f" {guard} {P['deployer']}") and "/bin/python3 " in on_lenovo[0]
+          and not on_acer and P["deployer"] == "lenovo-21CB001PMX",
+          f"lenovo alone runs check-heavy-build.py with the deployer's hostname as its argument (lenovo {on_lenovo}, acer {on_acer})")
+    check(names.index("check-loop.sh") < names.index("check-heavy-build.py")
+          and all(names.index("check-heavy-build.py") < i for i, n in enumerate(names) if n.startswith("shunt-")),
+          f"the guard runs after check-loop.sh and before the shunt hook ({names})")
+    blocked = subprocess.run(on_lenovo[0], shell=True, capture_output=True, text=True,
+                             input='{"tool_input":{"command":"devenv tasks run nixos:qa"}}',
+                             env=dict(os.environ, CHECK_HEAVY_BUILD_TEST_HOST=P["deployer"]))
+    passed = subprocess.run(on_lenovo[0], shell=True, capture_output=True, text=True,
+                            input='{"tool_input":{"command":"devenv tasks run nixos:qa"}}',
+                            env=dict(os.environ, CHECK_HEAVY_BUILD_TEST_HOST="acer-swift"))
+    check(blocked.returncode == 2 and "BLOCKED: heavy build" in blocked.stderr and passed.returncode == 0,
+          f"the registered command refuses nixos:qa under lenovo's hostname as the kernel spells it and passes on acer ({blocked.returncode}, {passed.returncode})")
 
     lenovo, acer = set(P["files"]["lenovo"]), set(P["files"]["acer-swift"])
     check(COORDINATOR_FILES <= lenovo, "lenovo links the Claude and Codex coordinator adapters")
