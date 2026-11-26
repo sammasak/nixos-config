@@ -211,7 +211,7 @@ for mode, dryrun in dryruns.items():
             jobs = (t / "jobs").read_text().splitlines() if (t / "jobs").exists() else []
             alone = [l for l in lines if l.startswith("eval --raw") and l.endswith(".drvPath")]
             check(r.returncode == 0 and sorted(j.split()[1] for j in jobs) == [".#checks.aarch64-linux", ".#checks.x86_64-linux"]
-                  and all("--workers 2 --max-memory-size 2048 --gc-roots-dir " in j for j in jobs) and not any("checks." in l for l in alone),
+                  and all("--workers 2 --max-memory-size 2560 --gc-roots-dir " in j for j in jobs) and not any("checks." in l for l in alone),
                   f"each system's checks are evaluated in one nix-eval-jobs run, none in a nix process of its own ({r.returncode}, {jobs}, {alone}, {r.stderr[-300:]!r})")
             check(not any("nixosConfigurations.acer-swift." in l for l in alone)
                   and any("nixosConfigurations.lone.config.system.build.toplevel" in l for l in alone),

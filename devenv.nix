@@ -233,9 +233,10 @@ let
           done
         }
         # Every check of a system is evaluated in one nix-eval-jobs run, whose workers share nixpkgs and the fleet's
-        # modules until a worker over --max-memory-size MiB is replaced after its job; a job itself is not capped, so the
-        # peak is a host evaluation (acer's deploy check 2.8 GiB) per worker. eval_seconds is the check's own wallMs; a
-        # node's two deploy checks may each evaluate its host, on either worker. The roots keep every drv the run wrote
+        # modules until a worker over --max-memory-size MiB is replaced after its job. Their sum (5 GiB) caps the run: a
+        # check that exceeds it even alone fails with an error line, and acer's or msi's deploy check needs 4.1 GiB: a
+        # budget under about 4.5 GiB fails them. eval_seconds is the check's own wallMs; a node's two deploy checks may
+        # each evaluate its host, on either worker. The roots keep every drv the run wrote
         # until the step ends: the builds come hours after the evaluation.
         # Sets d to the check's drvPath, ev to its eval seconds and with to its run.
         declare -A pre=() evs=() ran=()
@@ -244,7 +245,7 @@ let
           local s=$1 t=$SECONDS out lines a v e bad="" rc=0
           echo "nixos-flake-check: eval checks.$s in one nix-eval-jobs run" >&2
           cur=checks.$s
-          out=$(nix-eval-jobs --flake ".#checks.$s" --workers 2 --max-memory-size 2048 --gc-roots-dir "$roots") || rc=$?
+          out=$(nix-eval-jobs --flake ".#checks.$s" --workers 2 --max-memory-size 2560 --gc-roots-dir "$roots") || rc=$?
           jq -r 'select(.error) | "nixos-flake-check: checks.'"$s"'.\(.attrPath[0]) failed to evaluate"' <<<"$out" >&2
           lines=$(jq -r 'select(.drvPath) | "\(.attrPath[0]) \(.drvPath) \((.stats.wallMs // 0) / 1000 | round)"' <<<"$out")
           while read -r a v e; do [ -z "$a" ] || { pre[checks.$s.$a]=$v; evs[checks.$s.$a]=$e; }; done <<<"$lines"
