@@ -3,8 +3,8 @@
 modules/core/fleet.nix names either port (one allowlisted line, with its reason), ntfy or Loki on a port off its
 sam.fleet fact fails an assertion, every host's rendered firewall admits each sam.fleet listener's port from exactly
 its callers' addresses and opens nothing the listeners and public entries do not list (an open port, an upstream
-openFirewall, a stray rule and a trusted interface each fail evaluation), each listener's service binds its port, and
-no tracked file, docs included, names a listener by its address:port instead of its inside name, lenovo's
+openFirewall, a stray rule and a trusted interface each fail evaluation), each listener's service binds its port, the
+listeners' address:port pairs scripts/lint-fleet-pairs.py reads from fleet.nix's text are the evaluated ones, lenovo's
 sam.herdr.machines and jump hosts must be the runtime hosts of flake-modules/hosts.nix: one left out, one the
 table no longer has, and the table with asus-b460m removed each fail evaluation; a collector on a host without a fleet
 address fails too."""
@@ -70,40 +70,18 @@ seeded = literals(files + [("modules/homelab/x.nix", f'  listen = ":{ports["ntfy
 check([(p, k) for p, _, k, _ in seeded] == [("modules/homelab/x.nix", "ntfy"), ("pkgs/platform-record/platform_record.py", "loki")],
       f"seeded: a module naming the ntfy port, and a second Loki literal in the allowlisted script, are found ({seeded})")
 
-# a listener's address:port in any tracked file, docs too: it is named by its inside name (sam.fleet.zone)
-PAIRS = {p["literal"]: p["name"] for p in P["pairs"]}
-# path prefix -> why a literal there stays
-PAIR_ALLOWED = {
-    "docs/records/": "dated records of what was run, as it was run",
-    "modules/homelab/monitoring/rules/tests/": "Prometheus series labels: a scrape's instance is its address",
-    "lib/app-manifest/golden/": "the rendered scrape config the manifest library is held to",
-    "pkgs/platform-record/platform_record.py": "a record must ship with DNS down; its default is held to sam.fleet.loki.url above",
-    "pkgs/scorecard/scorecard.py": "its defaults are held to sam.fleet's urls; scorecard reads with DNS down too",
-}
-
-
-def pair_literals(files):
-    """files: [(path, text)] -> [(path, line number, literal, its inside name)]"""
-    found = []
-    for path, text in files:
-        if path == "flake.lock" or path.startswith(tuple(PAIR_ALLOWED)):
-            continue
-        for n, line in enumerate(text.splitlines(), 1):
-            for m in re.finditer(r"(?<![0-9.])([0-9]{1,3}(?:[.][0-9]{1,3}){3}:[0-9]+)(?![0-9])", line):
-                if m.group(1) in PAIRS:
-                    found.append((path, n, m.group(1), PAIRS[m.group(1)]))
-    return found
-
-
-every = [(p, (ROOT / p).read_text(errors="ignore")) for p in tracked if (ROOT / p).is_file()]
-check(len(PAIRS) >= 10 and all(".fleet." in n for n in PAIRS.values()), f"the listeners' inside names are read ({len(PAIRS)})")
-pairs = pair_literals(every)
-check(pairs == [], "no tracked file names a listener by address:port, use its inside name: "
-      + "; ".join(f"{p}:{n} {l} -> {k}" for p, n, l, k in pairs))
-lit = next(iter(PAIRS))
-seeded = pair_literals([("docs/x.md", f"curl http://{lit}/ready"), ("docs/records/x.md", f"ran http://{lit}/")])
-check([(p, l) for p, _, l, _ in seeded] == [("docs/x.md", lit)],
-      f"seeded: a runbook naming {lit} is found, a dated record is not ({seeded})")
+# the lint-fleet-pairs.py lint scans every tracked file for a listener's address:port on every push, reading the
+# literals from fleet.nix's text; here its parse is held to the evaluated pairs
+spec = importlib.util.spec_from_file_location("lint_fleet_pairs", ROOT / "scripts" / "lint-fleet-pairs.py")
+lint_fleet_pairs = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(lint_fleet_pairs)
+evaluated = sorted(P["pairs"], key=lambda p: (p["literal"], p["name"]))
+try:
+    parsed = lint_fleet_pairs.pairs(ROOT)
+except lint_fleet_pairs.Unreadable as e:
+    parsed = str(e)
+check(parsed == evaluated,
+      f"lint-fleet-pairs.py's text parse of fleet.nix yields the evaluated listener pairs ({parsed} vs {evaluated})")
 
 F = P["failing"]
 check(len(F["hosts"]) >= 6 and all(m == [] for m in F["hosts"].values()), f"every host passes its assertions ({F['hosts']})")
