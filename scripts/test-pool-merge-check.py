@@ -122,7 +122,7 @@ for kind, target in (("eval", "msi-ms7758"), ("evalcheck", "execution-pool-vm"),
 sh = pmc.command(pmc.Check("show", "nixos-push-eval"), tree) or []
 check([sh[i + 2] for i, a in enumerate(sh) if a == "flock"] == [str(pmc.LOCK), str(pmc.LIGHT)]
       and sh[sh.index("nix"):] == ["nix", "flake", "show", "--json", "--all-systems", "--no-write-lock-file", "/t"]
-      and "WORK_LOCKS_HELD=1" in sh,
+      and {"WORK_LOCKS_HELD=1", "GC_FREE_SPACE_DIVISOR=16"} <= set(sh[sh.index("env"):sh.index("nix")]),
       f"show: the push hook's nix flake show of the merge, under the heavy lock, then the light one ({sh})")
 a = (pmc.command(pmc.Check("evalcheck", "execution-pool-vm"), tree) or [""])[-1]
 check(a == "/t#checks.x86_64-linux.execution-pool-vm.drvPath", f"evalcheck: the check's drvPath, nothing built ({a})")
@@ -282,35 +282,48 @@ with tempfile.TemporaryDirectory() as tmp:
     (repo / "tests/execution-pool-vm.nix").write_text("{ gh = 1; }\n")
     subprocess.run([*g, "commit", "--quiet", "-am", "the gh stub"], check=True)
     head = subprocess.run([*g, "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
+    # main moved on: the merge's tree is not the head's, so the push hook's pass on the head does not cover it
+    tree_ = subprocess.run([*g, "rev-parse", "HEAD^{tree}"], check=True, capture_output=True, text=True).stdout.strip()
+    (repo / "main.txt").write_text("main\n")
+    subprocess.run([*g, "add", "main.txt"], check=True)
+    moved = subprocess.run([*g, "write-tree"], check=True, capture_output=True, text=True).stdout.strip()
+    merge = subprocess.run([*g, "commit-tree", "-p", base, "-p", head, "-m", "merge", moved],
+                           check=True, capture_output=True, text=True).stdout.strip()
+    subprocess.run([*g, "reset", "--quiet", "--hard", head], check=True)
     saved = (os.getcwd(), os.environ["PATH"], pmc.RECORD)
     os.chdir(repo)
     os.environ["PATH"] = f"{d / 'bin'}:{os.environ['PATH']}"
     pmc.RECORD = d / "record.py"
     try:
         results = {}
-        for rc in ("0", "1", "pushed"):
-            os.environ["SHOW_RC"] = "1" if rc == "pushed" else rc
+        for rc in ("0", "1", "pushed", "moved"):
+            os.environ["SHOW_RC"] = "0" if rc == "0" else "1"
             if rc == "pushed":
                 (repo / ".git/nixos-qa-times").write_text(f"nixos-qa: full QA not run for {head}, owed to the scheduled gate on main\n")
             for f in ("nix.log", "record.log"):
                 (d / f).write_text("")
-            results[rc] = (pmc.check_tree(repo, "b", head, base, head), (d / "nix.log").read_text(),
-                           (d / "record.log").read_text())
+            results[rc] = (pmc.check_tree(repo, "b", head, base, merge if rc == "moved" else head),
+                           (d / "nix.log").read_text(), (d / "record.log").read_text())
     finally:
         os.chdir(saved[0])
         os.environ["PATH"] = saved[1]
         os.environ.pop("SHOW_RC", None)
         pmc.RECORD = saved[2]
     ok, bad = results["0"], results["1"]
-    check(ok[0] == 0 and f"flake show --json --all-systems --no-write-lock-file {repo}" in ok[1]
-          and "step=pool-merge-show check=nixos-push-eval" in ok[2] and "result=pass" in ok[2],
+
+    def shown(r: tuple[int, str, str], result: str) -> bool:
+        return any(f"result={result}" in l for l in r[2].splitlines() if "step=pool-merge-show check=nixos-push-eval" in l)
+
+    check(ok[0] == 0 and f"flake show --json --all-systems --no-write-lock-file {repo}" in ok[1] and shown(ok, "pass"),
           f"a tests/ change: its merge's flake show runs and records its own step ({ok})")
-    check(bad[0] == 1 and "step=pool-merge-show check=nixos-push-eval" in bad[2]
-          and any("result=fail" in l for l in bad[2].splitlines() if "pool-merge-show" in l),
+    check(bad[0] == 1 and shown(bad, "fail"),
           f"seeded: a merge whose flake show fails fails pool-merge-check, recorded as such ({bad})")
     pushed = results["pushed"]
-    check(pushed[0] == 0 and "flake show" not in pushed[1] and "step=pool-merge-show" in pushed[2] and "result=skipped" in pushed[2],
+    check(pushed[0] == 0 and "flake show" not in pushed[1] and shown(pushed, "skipped"),
           f"the merge is the head's own tree and this checkout's push hook passed it: no second flake show ({pushed})")
+    moved_ = results["moved"]
+    check(tree_ != moved and moved_[0] == 1 and "flake show" in moved_[1] and shown(moved_, "fail"),
+          f"seeded: the push hook passed the head but main moved on: the merge's flake show still runs ({moved_})")
 
 repo = HERE.parent / "pkgs/exec-pool/migrations"
 check(pmc.migrations_problem(repo) is None, f"this tree's exec-pool migrations ({pmc.migrations_problem(repo)})")

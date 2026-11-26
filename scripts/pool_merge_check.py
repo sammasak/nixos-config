@@ -163,8 +163,10 @@ HEAVY = ["flock", "-o", str(LOCK)]
 # heavy, then light: the push hook takes light alone, so the order never deadlocks. WORK_LOCKS_HELD: a pool slot's nix
 # (modules/workers/execution-pool.nix) would otherwise wait on this light hold, and take light for the build.
 EVAL = [*HEAVY, "flock", "-o", str(LIGHT), "env", "WORK_LOCKS_HELD=1", "nix", "eval", "--raw"]
-# devenv.nix pushEval's command, import-from-derivation off as there (flake show's default)
-FLAKE_SHOW = [*EVAL[:-2], "flake", "show", "--json", "--all-systems", "--no-write-lock-file"]
+# devenv.nix pushEval's command, import-from-derivation off as there (flake show's default); without the divisor it
+# peaks above the 3.9 GiB the light lane is sized for
+FLAKE_SHOW = [*HEAVY, "flock", "-o", str(LIGHT), "env", "WORK_LOCKS_HELD=1", "GC_FREE_SPACE_DIVISOR=16", "nix", "flake",
+              "show", "--json", "--all-systems", "--no-write-lock-file"]
 # one heavy hold over both steps: released between them, a long wait could let a GC delete the evaluated .drv
 BUILD = 'export WORK_LOCKS_HELD=1; drv=$(flock -o "$1" nix eval --raw "$2") && nix build --no-link -L "$drv^*"'
 
@@ -262,13 +264,13 @@ def check_tree(tree: pathlib.Path, branch: str, head: str, main_: str, commit: s
     show = Check("show", SHOW)
     if show in checks and push_eval_passed(head, commit):
         checks.remove(show)
-        say(f"skipped: {show.kind} {show.target} (the push hook passed it on {head}, whose tree this merge is)")
-        record(show, 0, "skipped", sha, head)
-    elif show not in checks:
-        skipped.append(show)
+        why = {show: f"the push hook passed it on {head}, whose tree this merge is"}
+    else:
+        why = {}
+    skipped += [show] if show not in checks else []
     say(f"{len(paths)} changed path(s); {len(checks)} check(s) to run, {len(skipped)} skipped")
     for c in skipped:
-        say(f"skipped: {c.kind} {c.target} (no changed path maps to it)")
+        say(f"skipped: {c.kind} {c.target} ({why.get(c, 'no changed path maps to it')})")
         record(c, 0, "skipped", sha, head)
     times: list[tuple[Check, int, bool]] = []
     for c in checks:
