@@ -113,23 +113,22 @@ fc = re.search(r"\n  flakeCheck =\s+gate\s+\"nixos-flake-check\".*?''\n(.*?)\n *
 check(fc is not None, "flakeCheck found in devenv.nix")
 
 
-def eval_jobs(t, names, errors=(), missing=(), rc=0, delay=0):
-    """nix-eval-jobs on the fake flake: one JSON line per check of `--flake .#checks.<system>`, an error line for
-    each name in errors, none for those in missing; every call is logged to <t>/jobs"""
-    (t / "nix-eval-jobs").write_text("#!/usr/bin/env python3\nimport json, sys, time\na = sys.argv[1:]\n"
+def eval_jobs(t, names, errors=(), missing=(), rc=0):
+    """nix-eval-jobs 2.35 on the fake flake: one JSON line per check of `--flake .#checks.<system>` (1.5 s of wallMs on
+    a success), an error line for each name in errors, none for those in missing; every call is logged to <t>/jobs"""
+    (t / "nix-eval-jobs").write_text("#!/usr/bin/env python3\nimport json, sys\na = sys.argv[1:]\n"
                                      f"open({str(t / 'jobs')!r}, 'a').write(' '.join(a) + '\\n')\n"
-                                     f"time.sleep({delay})\n"
                                      "attr = a[a.index('--flake') + 1][2:]\n"
                                      f"for n in {names!r}.get(attr, []):\n"
                                      f"    if n in {list(missing)!r}: continue\n"
-                                     f"    print(json.dumps({{'attr': n, 'attrPath': [n], 'error': 'error: seeded ' + n}} if n in {list(errors)!r} else\n"
-                                     "                     {'attr': n, 'attrPath': [n], 'drvPath': '/nix/store/x-' + attr + '.' + n + '.drv'}))\n"
+                                     f"    print(json.dumps({{'attr': n, 'attrPath': [n], 'error': 'error: seeded ' + n, 'fatal': False, 'stats': {{'wallMs': 9}}}} if n in {list(errors)!r} else\n"
+                                     "                     {'attr': n, 'attrPath': [n], 'drvPath': '/nix/store/x-' + attr + '.' + n + '.drv', 'stats': {'allocBytes': 1, 'wallMs': 1500}}))\n"
                                      f"sys.exit({rc})\n")
     (t / "nix-eval-jobs").chmod(0o755)
 
 names = {"nixosConfigurations": [], "formatter": [], "packages": [], "checks": ["x86_64-linux"],
          "checks.x86_64-linux": ["deploy-schema-asus-b460m", "plain"]}
-# a node's two deploy checks are evaluated in one process, and its host's toplevel only inside them: "lone" has no node
+# each system's checks in one nix-eval-jobs run, and a host's toplevel only inside its deploy checks: "lone" has no node
 pair_names = {"nixosConfigurations": ["acer-swift", "pi", "lone"], "formatter": [], "packages": [],
               "checks": ["x86_64-linux", "aarch64-linux"],
               "checks.x86_64-linux": ["deploy-activate-acer-swift", "deploy-schema-acer-swift", "plain"],
@@ -175,8 +174,7 @@ for mode, dryrun in dryruns.items():
                                      '"-q --references "*-activatable-*) echo /nix/store/y-nixos-system-acer-swift-26.11-activate-rs.drv\n'
                                      '  echo /nix/store/y-nixos-system-acer-swift-26.11.drv; exit 0 ;; esac\n')
                                      + '[ "$2" = -qR ] && exit 0\necho /nix/store/c-cuda13.4-cuda_cudart-13.4.drv\n')
-        eval_jobs(t, pair_names if mode.startswith('pair') else names, errors=["deploy-schema-acer-swift"] if mode == "pairfail" else (),
-                  delay=1 if mode == "pair" else 0)
+        eval_jobs(t, pair_names if mode.startswith('pair') else names, errors=["deploy-schema-acer-swift"] if mode == "pairfail" else ())
         (t / "uname").write_text(f"#!/usr/bin/env bash\necho {'asus-b460m' if mode.startswith('owner') else 'acer-swift'}\n")
         (t / "record").write_text(f'#!/usr/bin/env bash\necho "$*" >> "{rec}"\n')
         for f in ("nix", "nix-store", "uname", "record"):
@@ -213,7 +211,7 @@ for mode, dryrun in dryruns.items():
             jobs = (t / "jobs").read_text().splitlines() if (t / "jobs").exists() else []
             alone = [l for l in lines if l.startswith("eval --raw") and l.endswith(".drvPath")]
             check(r.returncode == 0 and sorted(j.split()[1] for j in jobs) == [".#checks.aarch64-linux", ".#checks.x86_64-linux"]
-                  and all("--workers 2 --max-memory-size 2048" in j for j in jobs) and not any("checks." in l for l in alone),
+                  and all("--workers 2 --max-memory-size 2048 --gc-roots-dir " in j for j in jobs) and not any("checks." in l for l in alone),
                   f"each system's checks are evaluated in one nix-eval-jobs run, none in a nix process of its own ({r.returncode}, {jobs}, {alone}, {r.stderr[-300:]!r})")
             check(not any("nixosConfigurations.acer-swift." in l for l in alone)
                   and any("nixosConfigurations.lone.config.system.build.toplevel" in l for l in alone),
@@ -233,8 +231,8 @@ for mode, dryrun in dryruns.items():
                       for c in ("deploy-activate", "deploy-schema")),
                   f"both checks of the pair are recorded, each with its own drv ({recs})")
             secs = [int(x) for l in recs for x in re.findall(r" eval_seconds=(\d+) ", l)]
-            check(len(recs) == 3 and all(" eval_with=nix-eval-jobs:checks.x86_64-linux " in l for l in recs) and secs[0] >= 1 and secs[1:] == [0, 0],
-                  f"the run's seconds are on the first check recorded, 0 on the rest, each naming the run in eval_with ({recs})")
+            check(len(recs) == 3 and all(" eval_with=nix-eval-jobs:checks.x86_64-linux " in l for l in recs) and secs == [2, 2, 2],
+                  f"each check's eval_seconds is its own wallMs from the run, each record naming the run in eval_with ({recs})")
         elif mode == "pairbare":
             tops = (t / "toplevels").read_text().splitlines()
             check(r.returncode == 0 and not any(l.startswith("acer-swift ") for l in tops)
@@ -243,7 +241,7 @@ for mode, dryrun in dryruns.items():
         elif mode == "pairfail":
             built = [c for c in built if "deploy-" in c]
             fails = [l for l in rec.read_text().splitlines() if "result=fail" in l] if rec.exists() else []
-            check(r.returncode != 0 and not built and "checks.x86_64-linux.deploy-schema-acer-swift failed to evaluate: error: seeded deploy-schema-acer-swift" in r.stderr
+            check(r.returncode != 0 and not built and "checks.x86_64-linux.deploy-schema-acer-swift failed to evaluate" in r.stderr
                   and len(fails) == 1 and "check=checks.x86_64-linux.deploy-schema-acer-swift " in fails[0],
                   f"seeded: one check's error line fails the step before any deploy check is built, named ({r.returncode}, {built}, {fails}, {r.stderr[-300:]!r})")
         elif mode == "ownerdry":
@@ -329,7 +327,8 @@ for mode, (dryrun, build_rc) in plain_runs.items():
 
 # the checks' one nix-eval-jobs run: an error line, a run that exits non-zero, or a check it printed nothing for fails
 # the step before anything is built, and names the check (or the run's attribute set)
-jobs_runs = {"error": dict(errors=["broken"]), "exit": dict(rc=1), "missing": dict(missing=["broken"])}
+jobs_runs = {"error": dict(errors=["broken"]), "exit": dict(rc=1), "missing": dict(missing=["broken"]),
+             "exit-error": dict(errors=["broken"], rc=1)}
 for mode, how in jobs_runs.items():
     with tempfile.TemporaryDirectory() as t:
         t = pathlib.Path(t)
@@ -359,8 +358,9 @@ for mode, how in jobs_runs.items():
                            env={**os.environ, "PATH": f"{t}:{os.environ['PATH']}", "NIXOS_QA_HEAD": "0123abc"})
         lines = rec.read_text().splitlines() if rec.exists() else []
         built = [c for c in calls.read_text().splitlines() if c.startswith("build ")]
-        named = {"error": "checks.x86_64-linux.broken failed to evaluate: error: seeded broken",
-                 "exit": "nix-eval-jobs over checks.x86_64-linux exited 1", "missing": "nix-eval-jobs printed no drvPath for checks.x86_64-linux.broken"}[mode]
+        named = {"error": "checks.x86_64-linux.broken failed to evaluate", "exit": "nix-eval-jobs over checks.x86_64-linux exited 1",
+                 "missing": "nix-eval-jobs printed no drvPath for checks.x86_64-linux.broken",
+                 "exit-error": "nix-eval-jobs printed no drvPath for checks.x86_64-linux.broken"}[mode]
         want = "check=checks.x86_64-linux " if mode == "exit" else "check=checks.x86_64-linux.broken "
         check(r.returncode != 0 and not built and named in r.stderr
               and len(lines) == 1 and want in lines[0] and "result=fail" in lines[0] and "head=0123abc" in lines[0],

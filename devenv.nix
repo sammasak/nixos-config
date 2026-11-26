@@ -109,11 +109,11 @@ let
       '';
 
   # What `nix flake check --all-systems` checks: each system's checks in one nix-eval-jobs run, every other output in
-  # a nix process of its own (in one process it holds every host and is killed under a 4G cap). Builds every x86 host (its deploy-activate check holds the toplevel)
+  # a nix process of its own. Builds every x86 host (its deploy-activate check holds the toplevel)
   # and evaluates the aarch64 Pis: the one place a host build is checked. An output kind not listed here
   # fails the step, so a new kind cannot go unchecked.
   # GC_FREE_SPACE_DIVISOR=16 (Boehm default 3) collects more often: acer-swift deploy check 2809 MiB, not
-  # 3174 MiB, under the 4G cap, for about +40% evaluation time on that process (#359).
+  # 3174 MiB, for about +40% evaluation time on that process (#359).
   # what a gate step built off its own node would compile against: CUDA or the NVIDIA driver (#502); one pattern for the
   # flake check and scripts/gate_defer.py (GATE_HEAVY)
   gateHeavy = "-cuda[0-9._]*-|cuda_|nvidia-x11";
@@ -177,6 +177,7 @@ let
         cur=""
         failed_output() {
           local rc=$?
+          rm -rf "''${roots:-}"
           [ "$rc" -eq 0 ] || [ -z "$cur" ] \
             || ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check="$cur" owner="$me" seconds=0 result=fail head="''${NIXOS_QA_HEAD:-}"
         }
@@ -231,35 +232,38 @@ let
             case $c in checks.*.deploy-activate-"$h") echo "$c" && return ;; esac
           done
         }
-        # Every check of a system is evaluated in one nix-eval-jobs run: its workers share nixpkgs and the fleet's modules
-        # that a process per check read again (1102 s in the 26 Nov 03:20 gate). A worker over --max-memory-size MiB is
-        # replaced after its job, so the peak is about two workers each holding one host (acer's deploy check 2.8 GiB)
-        # inside acer's 9G pool budget. nix-eval-jobs times no attribute: the run's seconds are the eval_seconds of the
-        # first check recorded, 0 on the rest, and every record names the run in eval_with=.
-        # Sets d to the check's drvPath and with to its run.
-        declare -A pre=() ran=() runsecs=()
+        # Every check of a system is evaluated in one nix-eval-jobs run, whose workers share nixpkgs and the fleet's
+        # modules until a worker over --max-memory-size MiB is replaced after its job; a job itself is not capped, so the
+        # peak is a host evaluation (acer's deploy check 2.8 GiB) per worker. eval_seconds is the check's own wallMs; a
+        # node's two deploy checks may each evaluate its host, on either worker. The roots keep every drv the run wrote
+        # until the step ends: the builds come hours after the evaluation.
+        # Sets d to the check's drvPath, ev to its eval seconds and with to its run.
+        declare -A pre=() evs=() ran=()
+        roots=$(mktemp -d)
         evaljobs() {
-          local s=$1 t=$SECONDS out lines a v bad="" rc=0
+          local s=$1 t=$SECONDS out lines a v e bad="" rc=0
           echo "nixos-flake-check: eval checks.$s in one nix-eval-jobs run" >&2
           cur=checks.$s
-          out=$(nix-eval-jobs --flake ".#checks.$s" --workers 2 --max-memory-size 2048) || rc=$?
-          jq -r 'select(.error) | "nixos-flake-check: checks.'"$s"'.\(.attr) failed to evaluate: \(.error)"' <<<"$out" >&2
-          [ "$rc" -eq 0 ] || { echo "nixos-flake-check: nix-eval-jobs over checks.$s exited $rc" >&2; exit 1; }
-          lines=$(jq -r 'select(.drvPath) | "\(.attr) \(.drvPath)"' <<<"$out")
-          while read -r a v; do [ -z "$a" ] || pre[checks.$s.$a]=$v; done <<<"$lines"
+          out=$(nix-eval-jobs --flake ".#checks.$s" --workers 2 --max-memory-size 2048 --gc-roots-dir "$roots") || rc=$?
+          jq -r 'select(.error) | "nixos-flake-check: checks.'"$s"'.\(.attrPath[0]) failed to evaluate"' <<<"$out" >&2
+          lines=$(jq -r 'select(.drvPath) | "\(.attrPath[0]) \(.drvPath) \((.stats.wallMs // 0) / 1000 | round)"' <<<"$out")
+          while read -r a v e; do [ -z "$a" ] || { pre[checks.$s.$a]=$v; evs[checks.$s.$a]=$e; }; done <<<"$lines"
           for a in "''${all[@]}"; do
             case $a in checks."$s".*) [ -n "''${pre[$a]:-}" ] || bad+=" $a" ;; esac
           done
-          cur=""
+          if [ "$rc" -ne 0 ]; then echo "nixos-flake-check: nix-eval-jobs over checks.$s exited $rc" >&2; fi
           if [ -n "$bad" ]; then
             echo "nixos-flake-check: nix-eval-jobs printed no drvPath for$bad" >&2
+            cur=""
             for a in $bad; do
               ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check="$a" owner="$me" seconds=0 result=fail head="''${NIXOS_QA_HEAD:-}"
             done
             exit 1
           fi
+          # a non-zero exit with every check printed still fails, the run named
+          [ "$rc" -eq 0 ] || exit 1
+          cur=""
           ran[$s]=1
-          runsecs[$s]=$((SECONDS - t))
           took "eval checks.$s (nix-eval-jobs)" "$t"
         }
         drvpath() {
@@ -267,6 +271,7 @@ let
           s=''${s%%.*}
           [ -n "''${ran[$s]:-}" ] || evaljobs "$s"
           d=''${pre[$1]}
+          ev=''${evs[$1]}
           with=nix-eval-jobs:checks.$s
         }
         listed nixosConfigurations
@@ -289,8 +294,6 @@ let
             c=checks.$s.$o
             drvpath "$c"
             cur=$c
-            ev=''${runsecs[$s]}
-            runsecs[$s]=0
             # a failed dry-run fails the step: read as "nothing to build" it would hide the check (nix 2.34 also
             # exits 0 on "don't know how to build")
             if ! dry=$(nix build --dry-run --no-link "$d^*" 2>&1) || grep -q "know how to build" <<<"$dry"; then
