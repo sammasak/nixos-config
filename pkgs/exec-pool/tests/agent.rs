@@ -36,7 +36,7 @@ fn every_agent_is_told_to_push_its_own_branch_alone() {
     for rule in [
         "on branch pool/t-655",
         "`Why:` line",
-        "git push origin pool/t-655",
+        "Elsewhere, `git push origin pool/t-655`",
         "commit and push only through its shell",
         "devenv shell -- git commit",
         "devenv shell -- git push origin pool/t-655",

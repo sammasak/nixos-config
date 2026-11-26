@@ -36,8 +36,8 @@ pub const PREFIX: &str = "You run as an execution pool task in a throwaway check
 code, commit on {branch} with a message whose body has a `Why:` line and push that branch alone. Where the \
 repository has a devenv.nix, commit and push only through its shell, `devenv shell -- git commit ...` and \
 `devenv shell -- git push origin {branch}`: entering it installs the hooks, and a plain `git commit` or `git push` \
-in a fresh clone runs none. Elsewhere, `git push origin {branch}`. Never push main or any other branch, never force-push, never skip a hook (no --no-verify, no \
-SKIP=); if a hook refuses the push, say why in your answer. The task:\n\n";
+in a fresh clone runs none. Elsewhere, `git push origin {branch}`. Never push main or any other branch, never \
+force-push, never skip a hook (no --no-verify, no SKIP=); if a hook refuses the push, say why in your answer. The task:\n\n";
 
 /// What an agent on a GitHub repository is also told, before "The task:" of [`PREFIX`].
 ///
