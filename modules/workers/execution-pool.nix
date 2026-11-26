@@ -158,6 +158,7 @@ in
                 case $r:$a in
                   :tasks) r=t ;;
                   t:run) r=r ;;
+                  t:-*) ;;
                   t:*) r= ;;
                   ${lib.concatStrings (
                     lib.mapAttrsToList (t: need: ''
