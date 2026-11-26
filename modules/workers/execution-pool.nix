@@ -179,7 +179,8 @@ in
                   [ ''${#src[@]} -eq 0 ] || fallback='d.outputs or [ d.outputName ]'
                   apply="d: if builtins.isAttrs d && d.type or null == \"derivation\" then d.drvPath + \"^\" + builtins.concatStringsSep \",\" (if d.outputSpecified or false then [ d.outputName ] else d.meta.outputsToInstall or $fallback) else \"\""
                   [ ''${#attrs[@]} -gt 0 ] || attrs=("")
-                  # every evaluation in one hold, so no drv waits unrooted on the lock for the next
+                  # every evaluation in one hold, not a wait on the lock per attribute. A drv is unrooted from its
+                  # evaluation to the build (a guest's roots dangle on the host): a host collection between them fails it.
                   picks=$(light ${pkgs.bash}/bin/bash -c '
                     nix=$1 apply=$2 k=$3; shift 3; flags=("''${@:1:k}"); shift "$k"; s=$1; shift; src=("''${@:1:s}"); shift "$s"
                     for a; do
@@ -198,13 +199,17 @@ in
             (lane "nix-instantiate" "${config.nix.package}/bin/nix-instantiate" ''
               light ${config.nix.package}/bin/nix-instantiate "$@"; exit
             '')
-            # its drvs instantiated under the lock and rooted until built (with --add-root nix-instantiate prints the
-            # roots, a drv!output for an output not out), then nix-build on them: the same out-links and output paths
+            # its drvs instantiated under the lock, then nix-build on them: the same out-links and output paths. --add-root
+            # only silences nix-instantiate's warning (a guest's roots dangle on the host); it prints the roots, a
+            # drv!output for an output not out
             (lane "nix-build" "${config.nix.package}/bin/nix-build" ''
               inst=() flags=()
               for ((i = 1; i <= $#; i++)); do
                 j=$((i + 1)) k=$((i + 2))
+                # a value missing: nix-build's own refusal
                 case ''${!i} in
+                  -A | --attr | -I | --include | -o | --out-link | -j | --max-jobs | --cores) [ "$j" -le $# ] || exec ${config.nix.package}/bin/nix-build "$@" ;;&
+                  --arg | --argstr | --option) [ "$k" -le $# ] || exec ${config.nix.package}/bin/nix-build "$@" ;;&
                   -A | --attr | -I | --include) inst+=("''${!i}" "''${!j:-}"); i=$j ;;
                   --arg | --argstr) inst+=("''${!i}" "''${!j:-}" "''${!k:-}"); i=$k ;;
                   --option) inst+=("''${!i}" "''${!j:-}" "''${!k:-}"); flags+=("''${!i}" "''${!j:-}" "''${!k:-}"); i=$k ;;

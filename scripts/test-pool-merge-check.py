@@ -190,6 +190,8 @@ with tempfile.TemporaryDirectory() as tmp:
     (d / "x.drv").symlink_to("/nix/store/x.drv")
     r = runs(str(d / "x.drv"), exe="nix-build")
     check(r == [f"nix-build {d}/x.drv free"], f"nix-build of a drv is passed through whole ({r})")
+    r = runs("default.nix", "-A", exe="nix-build")
+    check(r == ["nix-build default.nix -A free"], f"nix-build with a flag missing its value is passed through whole ({r})")
     r = runs("--check", "default.nix", exe="nix-build")
     check(r == ["nix-build --check default.nix free"], f"nix-build with another flag is passed through whole ({r})")
     r = runs("--option", "cores", "1", "eval", "--raw", ".#x")
