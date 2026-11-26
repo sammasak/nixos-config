@@ -172,7 +172,8 @@ failure retried by hand today (the record says `failed=land`).
    `nix --option k v` reads the subcommand after it, and `nix-instantiate` runs under light. Signal:
    `exec_pool_memory_kills_total` flat on acer for a day after that deploy. Follow-ups, still unlocked: `nix flake
    check`, `nix build` with another option, `--file` or `--expr` with an attribute, `nix-build`, the tests'
-   `gate_probe.py` sections built without GATE_PROBE (devenv's nix), and a devenv evaluation a warm `shell` does not
+   `gate_probe.py` sections built without GATE_PROBE (devenv's nix), the wrapper's evaluated `.drv` unrooted until
+   its build (a GC between them fails it), and a devenv evaluation a warm `shell` does not
    cache (another `-O` option); acer's 7G stays (15 GiB, ollama 4G).
 7. msi's `ownRefsOnly` push filter (PR #805) is live only after the msi deploy; read acer's push filter journal (one
    `passed`, one `refused`) before it.

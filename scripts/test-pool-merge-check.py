@@ -123,7 +123,7 @@ with tempfile.TemporaryDirectory() as tmp:
     (d / "stub/flock").write_text('#!/usr/bin/env bash\nwhile [ "${1#-}" != "$1" ] || [ "$1" = 900 ] || [ "$1" = 75 ]; do shift; done\n'
                              'shift; IN_LOCK=locked exec "$@"\n')
     (d / "stub/nix").write_text(f'#!/usr/bin/env bash\necho "$* ${{IN_LOCK:-free}}" >>{d}/log\n'
-                                '[ "$1" != eval ] || echo /nix/store/x.drv\n')
+                                '[ "$1" != eval ] || echo /nix/store/x.drv^out\n')
     for f in ("flock", "nix"):
         (d / "stub" / f).chmod(0o755)
     wrappers = {"nix": lane("nix", "nix", d), "nix-instantiate": lane("nix-instantiate", '"${config.nix.package}/bin/nix-instantiate"', d)}
@@ -134,21 +134,24 @@ with tempfile.TemporaryDirectory() as tmp:
         return (d / "log").read_text().splitlines()
 
     probe = "(import ./scripts/gate-probe.nix { }).json"
+    APPLY = 'd: d.drvPath + "^" + builtins.concatStringsSep "," (d.meta.outputsToInstall or [ d.outputName ])'
     r = runs("build", "--impure", "--no-link", "--print-out-paths", "--expr", probe)
-    check(r == [f"eval --impure --raw --expr ({probe}).drvPath locked", "build --impure --no-link --print-out-paths /nix/store/x.drv^* free"],
+    check(r == [f"eval --impure --raw --expr {probe}", f" --apply {APPLY} locked", "build --impure --no-link --print-out-paths /nix/store/x.drv^out free"],
           f"a slot's nix build --expr evaluates its drvPath under the light lock and builds outside it ({r})")
     r = runs("build", "--no-link", ".#a", ".#b")
-    check(r == ["eval --raw .#a.drvPath locked", "eval --raw .#b.drvPath locked", "build --no-link /nix/store/x.drv^* /nix/store/x.drv^* free"],
+    check(r == [f"eval --raw .#a --apply {APPLY} locked", f"eval --raw .#b --apply {APPLY} locked", "build --no-link /nix/store/x.drv^out /nix/store/x.drv^out free"],
           f"each flake attribute likewise ({r})")
     r = runs("build", "--expr", "e", "attr")
     check(r == ["build --expr e attr free"], f"--expr with an attribute is passed through whole ({r})")
     r = runs("--option", "cores", "1", "eval", "--raw", ".#x")
     check(r == ["--option cores 1 eval --raw .#x locked"], f"a global option before eval: still under the lock ({r})")
     r = runs("--option", "cores", "1", "build", ".#x")
-    check(r == ["eval --option cores 1 --raw .#x.drvPath locked", "build --option cores 1 /nix/store/x.drv^* free"],
+    check(r == [f"eval --option cores 1 --raw .#x --apply {APPLY} locked", "build --option cores 1 /nix/store/x.drv^out free"],
           f"a global option before build goes to its evaluation and its build ({r})")
     r = runs("-A", "x", "default.nix", exe="nix-instantiate")
     check(r == ["-A x default.nix locked"], f"nix-instantiate runs under the lock ({r})")
+    r = runs("build", ".#")
+    check(r == ["build .# free"], f"the default package (an empty fragment) is passed through whole ({r})")
     r = runs("store", "gc")
     check(r == ["store gc free"], f"another subcommand runs unlocked ({r})")
 

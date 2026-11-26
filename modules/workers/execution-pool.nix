@@ -143,7 +143,7 @@ in
                       --impure | --show-trace | --no-write-lock-file) flags+=("$1"); evalflags+=("$1") ;;
                       --no-link | -L | --print-build-logs | --print-out-paths | --keep-going | -k | --json | --rebuild | --dry-run) flags+=("$1") ;;
                       -*) whole=1 ;;
-                      *^*) whole=1 ;;
+                      *^* | *'#') whole=1 ;;
                       *'#'*) drvs+=("$1") ;;
                       *) whole=1 ;;
                     esac
@@ -152,14 +152,16 @@ in
                   # with --expr a positional is an attribute of it, not a flake reference
                   [ ''${#exprs[@]} -eq 0 ] || { [ ''${#exprs[@]} -eq 1 ] && [ ''${#drvs[@]} -eq 0 ]; } || whole=1
                   [ -z "$whole" ] && [ $((''${#drvs[@]} + ''${#exprs[@]})) -gt 0 ] || exec ${nix} "''${all[@]}"
+                  # drv^ its default outputs, as nix build would pick them, not ^* (every output)
+                  apply='d: d.drvPath + "^" + builtins.concatStringsSep "," (d.meta.outputsToInstall or [ d.outputName ])'
                   set -- build "''${flags[@]}"
                   for e in "''${exprs[@]}"; do
-                    drv=$(light ${nix} eval "''${evalflags[@]}" --raw --expr "($e).drvPath") || exit
-                    set -- "$@" "$drv^*"
+                    drv=$(light ${nix} eval "''${evalflags[@]}" --raw --expr "$e"$'\n' --apply "$apply") || exit
+                    set -- "$@" "$drv"
                   done
                   for i in "''${drvs[@]}"; do
-                    drv=$(light ${nix} eval "''${evalflags[@]}" --raw "$i.drvPath") || exit
-                    set -- "$@" "$drv^*"
+                    drv=$(light ${nix} eval "''${evalflags[@]}" --raw "$i" --apply "$apply") || exit
+                    set -- "$@" "$drv"
                   done
                   exec ${nix} "$@" ;;
               esac
