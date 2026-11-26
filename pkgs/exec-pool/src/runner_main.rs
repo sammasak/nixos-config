@@ -55,7 +55,7 @@ const CANCEL: &str = "cancel";
 /// Beside the manifest: a live session turn's [`TurnHint`], renewed every heartbeat.
 const TURN_HINT: &str = "turn.json";
 /// The idle grace before the first hint arrives: `homelab.execPool.idleGraceSecs`'s default.
-const GRACE_SECS: u64 = 600;
+const GRACE_SECS: u64 = 120;
 /// Why the runner stops a run whose host powers off before it could end; it writes [`Manifest::drain_token`].
 const HOST_DRAINING: &str = "host_draining";
 /// The slot home the last admitted attempt ran in, beside the slot's run directories.

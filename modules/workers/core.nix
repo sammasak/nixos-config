@@ -252,6 +252,8 @@ let
     exit "$rc"
   '';
   ownCache = w: w.rootInGuest || w.ownNixCache;
+  # a docked instance's sessions get their pane from whoever moves them in, per turn: a standing one would sit empty
+  surfaced = w: cfg.sessionSurface != null && !w.sessionDock;
   aliasOf = w: if w.rootInGuest then "${w.name}.${keyAlias}" else keyAlias;
   hostKeyOf =
     w:
@@ -740,7 +742,7 @@ let
       sessionDock = mkOption {
         type = types.bool;
         default = false;
-        description = "A read-write /session from the host's .sessions/dock/<name>, root's, where a session's home and work tree are moved in for one turn; adding it restarts the container once.";
+        description = "A read-write /session from the host's .sessions/dock/<name>, root's, where a session's home and work tree are moved in for one turn, its pane opened by whoever moves it in (no session surface); adding it restarts the container once.";
       };
       ownNixCache = mkOption {
         type = types.bool;
@@ -1443,6 +1445,10 @@ in
               message = "${i}.prompt needs a sessionSurface to deliver it.";
             }
             {
+              assertion = !w.sessionDock || w.agent == "none";
+              message = "${i}.sessionDock is set but agent is not \"none\": a docked instance gets no session surface to start it.";
+            }
+            {
               assertion = w.credentials == null || lib.all (n: cfg.credentials ? ${n}) w.credentials;
               message = "${i}.credentials names one that ${p}.credentials does not declare.";
             }
@@ -1557,9 +1563,7 @@ in
           w:
           [
             (lib.nameValuePair "container@${w.name}" {
-              wants = lib.optional (
-                cfg.sessionSurface != null
-              ) "${cfg.unitPrefix}-${cfg.sessionSurface.name}-${w.name}.service";
+              wants = lib.optional (surfaced w) "${cfg.unitPrefix}-${cfg.sessionSurface.name}-${w.name}.service";
               # A changed guest (any guest module, nixpkgs) switches live through the stock ExecReload, which runs the new
               # system's switch-to-configuration inside: the agent's ssh session keeps running. Changed memory and CPU
               # properties take effect at the daemon-reload, also without a restart.
@@ -1614,7 +1618,7 @@ in
               };
             })
           ]
-          ++ lib.optional (cfg.sessionSurface != null) (
+          ++ lib.optional (surfaced w) (
             lib.nameValuePair "${cfg.unitPrefix}-${cfg.sessionSurface.name}-${w.name}" (
               let
                 surface = cfg.sessionSurface.script (w // { ctl = lib.getExe (ctl w); });
