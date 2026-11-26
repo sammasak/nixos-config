@@ -47,7 +47,7 @@ Readings at 25 Nov 22:15 UTC from black-pi's Prometheus and Loki (a slot reads t
 | 1 | Gate speed, and every worker build lands in the cache ([#835](https://github.com/sammasak/nixos-config/issues/835)); carries the red gate (#828 is the fix) | "No dedicated benchmarks, no long test rituals" | 7 d of gate-step records (measured 25 Nov): flake check mean 13.7 min, worst 28.8; gate probe 3.9; seventh-host test 3.2; workers-eval test 2.0; inside the flake check evaluation 8 to 18 min against building 3 to 13 min per run, 100 to 330 compiled and 20 to 100 fetched; merge check host evaluation 47 s mean, 189 min in the week. `homelab_scheduled_gate_red` = 1, head `05c028bbad89`, step `nixos-flake-check`. Where the time goes and the store upload (#839): Check tuning | the step's own record on the 26 Nov 03:20 scheduled run |
 | 2 | Alert investigations end with a cause ([#624](https://github.com/sammasak/nixos-config/issues/624); [#825](https://github.com/sammasak/nixos-config/issues/825), [#826](https://github.com/sammasak/nixos-config/issues/826), [#827](https://github.com/sammasak/nixos-config/issues/827)) | "Alerts are few and each one says what to do" | `AlertInvestigationFailed` firing. 24 h outcomes: ScheduledGateRed 2 failed (both sessions `cancelled`), 1 reported; RetroDueStepFailsRepeat 1 reported, ExecPoolSlotMemoryKills 1 reported, both without a cause ("the cause is unproven"). PR #840 (lenovo deploy) counts a session cancelled after its finished turn as reported, starts no second investigation of a name within 6 h of its report, and points the prompt at the slot's read-only routes; after the deploy failed stays 2 | the rule fixture tests; the next ScheduledGateRed report names its cause or its fix PR |
 | 3 | Internal and outside service names ([#836](https://github.com/sammasak/nixos-config/issues/836), folds in [#14](https://github.com/sammasak/nixos-config/issues/14)): "we need to have internal dns names for services inside the cluster and outside; authentik is needed for real outside traffic but on our cluster it should not" | "DNS stays up"; "Upstream modules before home-made services" | services with an internal name answering without an Authentik redirect: unread (no series yet) | `adguard-dns-test`, one curl per internal name from the LAN |
-| 4 | Check minutes from records ([#837](https://github.com/sammasak/nixos-config/issues/837)) | "Every change ships ... with a comparable metric" | rows in Check tuning still unknown: most. pool-merge-check records do reach Loki: 369 in 24 h, 224 host evaluations at a mean of 52 s (193 min) | the script's fixture test, seconds |
+| 4 | Check minutes from records ([#837](https://github.com/sammasak/nixos-config/issues/837)) | "Every change ships ... with a comparable metric" | Check tuning's minutes are 7 d of records (26 Nov): none unknown. Slot records reach Loki: a docked session's XDG_STATE_HOME is the slot's home, the spool dev-env-records ships (acer-pool1 to pool3 about 130 each in 24 h). Two slowest: host evaluation and grafana-dashboards, a cut for each in this PR | the script's fixture test, seconds |
 | 5 | Top open pool finding: slot memory kills ([#827](https://github.com/sammasak/nixos-config/issues/827), epic [#646](https://github.com/sammasak/nixos-config/issues/646)) | "Agents run in disposable sandboxes" that finish their work | `increase(exec_pool_memory_kills_total[24h])`: acer pool1 5, pool2 1, pool3 2; msi 0. #830 and #833 put a slot's evaluations under the light lock, live after acer-swift's deploy; signal: the counter flat on acer for a day after it | `just pool-merge-check BRANCH` |
 | 6 | The biggest MoE on asus ([#838](https://github.com/sammasak/nixos-config/issues/838); paddock branch `asus/biggest-moe`, Qwen3.5 122B then 397B): "lets test what the biggest MoE model we can run" | "a large model can run on modest hardware" | largest model answering a tool call through the gateway, and its tokens per second: unread. The branch's last commit (25 Nov 19:49) needs the GPU for the 122B serve; asus is up Mon to Fri 08:30 to 21:00 | one tool call on model `local` through the gateway |
 | 7 | skills [#170](https://github.com/sammasak/skills/issues/170): independent review of skills PR 169 (Shunt routing lessons) | "Only safety, or \"does not fix the problem\", blocks a change"; "The owner decides direction" | review posted: no (0 comments). PR 169 stays an unmerged draft until the owner approves (needs-owner) | the review comment on #170 |
@@ -131,21 +131,30 @@ writes one gate-step record per check.
 
 | Check or step | Typical minutes | Real defects caught (commit or PR) | Depends on |
 |---|---|---|---|
-| Whole scheduled gate | 37.6 (24 Nov); "40 min build time is crazy" | 4 reds: `shunt-metrics-test` (#759), `execution-pool-vm` evaluation (#795), `grafana-dashboards` (#814), `legacyPackages` output kind (#828) | everything |
+| Whole scheduled gate | 26.0 mean over 7 runs, 90.1 worst (26 Nov 03:20); "40 min build time is crazy" | 4 reds: `shunt-metrics-test` (#759), `execution-pool-vm` evaluation (#795), `grafana-dashboards` (#814), `legacyPackages` output kind (#828) | everything |
 | lint-comments, lint-shell, deploy-rs-pins | seconds (3 to 4 s in records) | lint-comments 9d7cec2a (#800); shellcheck d947c2a2 (#795) | `.nix`, `.sh`, `.py`; `scripts/*.sh`; devenv and flake locks |
 | fmt-check | 4 s in records | 747a1f71 (#684) | every `.nix` |
-| secrets-verify | seconds | none traced | `secrets/` |
-| nixos-push-eval (`nix flake show`) | about 1.5 (90 s, 3.9 GiB, acer) | 24cb9892 (#797) | every flake output's attribute set |
-| gate probe | 3.9 mean (7 d) | none traced | every host |
-| nixos-flake-check | 13.7 mean, 28.8 worst (7 d) | `execution-pool-vm` (#795); ruff E501 (#787); exec-pool clippy and rustfmt; `legacyPackages` (#828) | every check and every x86 host |
-| workers-eval-test | 2.0 mean (7 d) | 0b90b42d (#781), f4fac5f5 (#736) | gate probe, `modules/workers/` |
+| secrets-verify | 0 s in records | none traced | `secrets/` |
+| nixos-push-eval (`nix flake show`) | 2.3 mean over 264 (7 d; 3.9 GiB, acer) | 24cb9892 (#797) | every flake output's attribute set |
+| gate probe | 4.2 mean over 90, 378 min (7 d) | none traced | every host |
+| nixos-flake-check | 14.7 mean over 91, 64.6 worst (7 d) | `execution-pool-vm` (#795); ruff E501 (#787); exec-pool clippy and rustfmt; `legacyPackages` (#828) | every check and every x86 host |
+| workers-eval-test | 2.1 mean (7 d) | 0b90b42d (#781), f4fac5f5 (#736) | gate probe, `modules/workers/` |
 | workers-eval-test on acer (escape, #825) | 2.0 mean (7 d) | passed in slots and off acer, failed in acer's scheduled gate: `<nixpkgs>` with no NIX_PATH, and the push-filter case reached acer's live filter socket (ExecPoolPushesRefused fired for pool1 to pool3); the test now reads no host state outside its temp dir | the host it runs on |
 | seventh-host-test | 3.2 mean (7 d) | none traced | hosts.nix, fleet.nix, every host |
-| shunt-metrics-test | unknown | df0f5007 (#759) | probe, `scripts/shunt-metrics.py` |
-| deploy-recipes-test | about 0.05 | fails on a `github:` private input since #803 | Justfile, flake.lock |
-| The other tests in `tests` (devenv.nix) | unknown | none traced | most read the gate probe |
-| pool-merge-check: host evaluation | 47 s mean per host, 189 min in 7 d; 52 s over 224 in the last 24 h | lenovo's sam.memory budget (#794, #799) | the host's modules and `hosts/<dir>/` |
+| shunt-metrics-test | 0.1 (7 s mean over 28) | df0f5007 (#759) | probe, `scripts/shunt-metrics.py` |
+| deploy-recipes-test | 0.03 (1.9 s mean) | fails on a `github:` private input since #803 | Justfile, flake.lock |
+| The other tests in `tests` (devenv.nix) | 3.8 summed over 45 steps; alloy-otlp 0.6, worker-permissions 0.5, qa-push 0.5, the rest under 0.4 | none traced | most read the gate probe |
+| grafana-dashboards (in the flake check and pool-merge-check) | 2.6 mean built (57 of 83 flake-check runs), 4.8 in pool-merge-check (23); 265 min in 7 d | #814 | black-pi's dashboards and rules, every source it reads |
+| pool-merge-check: host evaluation | 67 s mean over 319 evaluations, 354 min in 7 d | lenovo's sam.memory budget (#794, #799) | the host's modules and `hosts/<dir>/` |
 | pool-merge-check: package build | 195 s mean over 22 builds in 24 h | c15a3024 (#795) | `pkgs/<dir>/` |
+
+The two slowest, by minutes in 7 d (26 Nov):
+1. Host evaluation, the gate probe's 378 min and pool-merge-check's 354. Cut, path scoping: a `scripts/test-*` change
+   evaluates no host in pool-merge-check (no host module reads one, held by `scripts/test-pool-merge-check.py`);
+   `scripts/test-workers-eval.py` alone was in 55 commits that week, each 6 host evaluations (about 7 min).
+2. grafana-dashboards, 265 min. Cut, caching: its build interpolated all of `modules/` and `scripts/` for one
+   `rg` over the textfile writers, so every edit there rebuilt it; the names are now read at evaluation, and it
+   rebuilds only when what it reads moves.
 
 ### Where the time goes, and what a cache can save (Loki, read from a slot on 25 Nov)
 
