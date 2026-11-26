@@ -355,11 +355,22 @@ let
       '';
 
   # The values the tests below assert on, from one evaluation (scripts/gate-probe.nix); a test task run on
-  # its own builds only its section. GC_FREE_SPACE_DIVISOR as for flakeCheck: the probe holds acer too.
-  probe = gate "nixos-gate-probe" [ pkgs.nix ] ''
-    export GC_FREE_SPACE_DIVISOR=16
-    nix build --impure --no-link --print-out-paths --expr '(import ./scripts/gate-probe.nix { }).json'
-  '';
+  # its own builds only its section. GC_FREE_SPACE_DIVISOR as for flakeCheck: the probe holds acer too. The light
+  # lane where there is one (#827): the push hook's doc tests run it, and its nix is this one, not a slot's wrapper.
+  probe =
+    gate "nixos-gate-probe"
+      (with pkgs; [
+        nix
+        util-linux
+      ])
+      ''
+        export GC_FREE_SPACE_DIVISOR=16
+        lock=()
+        if [ -z "''${WORK_LOCKS_HELD:-}" ] && [ -e /run/work-locks/light-work.lock ]; then
+          lock=(flock -o -w 900 /run/work-locks/light-work.lock)
+        fi
+        WORK_LOCKS_HELD=1 "''${lock[@]}" nix build --impure --no-link --print-out-paths --expr '(import ./scripts/gate-probe.nix { }).json'
+      '';
 
   claudeSettingsTest =
     gate "claude-settings-test"

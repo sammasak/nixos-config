@@ -164,10 +164,16 @@ failure retried by hand today (the record says `failed=land`).
    that may take heavy holds light; pool-merge-check and the push evaluation set `WORK_LOCKS_HELD=1` so their nix
    skips it. Reading, 25 Nov 21:27Z, before that deploy: kills over 24 h pool1 5, pool2 1, pool3 2 (pool1's last
    about 21:17Z, after PR #830's merge), msi 0; `max_over_time(homelab_guest_memory_peak_bytes[1d])` pool1 5.3 GiB,
-   pool2 1.8, pool3 5.4. Signal: the counter flat on acer for a day after the deploy. Follow-ups, still unlocked:
-   `nix flake check`, `nix build` with another option or a non-flake installable, `nix-build`, `nix-instantiate`, a
-   global option before the subcommand, and a devenv evaluation a warm `shell` does not cache (another `-O` option);
-   acer's 7G stays (15 GiB, ollama 4G).
+   pool2 1.8, pool3 5.4. Signal: the counter flat on acer for a day after the deploy. A kill at 23:25:38 on 25 Nov
+   (pool2 nix 3.9 GiB beside one at 2.5) came after that deploy: the push hook's doc tests run the gate probe's
+   `nix build --expr` with devenv's own nix, so no slot wrapper sees it and it took no lock. Fixed on
+   pool/cli-e3660c5fe1ce695c (live after acer's deploy; the probe's lock on merge): the probe takes light itself where
+   the lock exists (unless WORK_LOCKS_HELD), and in a slot `nix build --expr E` evaluates `(E).drvPath` under light,
+   `nix --option k v` reads the subcommand after it, and `nix-instantiate` runs under light. Signal:
+   `exec_pool_memory_kills_total` flat on acer for a day after that deploy. Follow-ups, still unlocked: `nix flake
+   check`, `nix build` with another option, `--file` or `--expr` with an attribute, `nix-build`, the tests'
+   `gate_probe.py` sections built without GATE_PROBE (devenv's nix), and a devenv evaluation a warm `shell` does not
+   cache (another `-O` option); acer's 7G stays (15 GiB, ollama 4G).
 7. msi's `ownRefsOnly` push filter (PR #805) is live only after the msi deploy; read acer's push filter journal (one
    `passed`, one `refused`) before it.
 
