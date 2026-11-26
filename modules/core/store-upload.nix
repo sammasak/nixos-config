@@ -205,9 +205,14 @@ in
         description = "Hand this host's built paths to ${receiver}'s store";
         after = [ "network-online.target" ];
         wants = [ "network-online.target" ];
+        # the path unit starts it again after every send while a build burst refills the queue: systemd's default
+        # limit (5 starts in 10 s) would refuse it and fail store-upload.path with unit-start-limit-hit
+        startLimitIntervalSec = 0;
         serviceConfig = {
           Type = "oneshot";
           ExecStart = lib.getExe send;
+          # the rate floor instead: a send failing before it empties the queue (a full /var) would restart at once
+          ExecStopPost = "${pkgs.coreutils}/bin/sleep 2";
           Nice = 10;
         };
       };

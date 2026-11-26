@@ -144,4 +144,17 @@ check(both in F["quietWithWindow"], f"seeded: msi both windowed and quiet fails 
 check(pi in F["quietPi"], f"seeded: a quiet black-pi fails ({F['quietPi']})")
 check(any(m.startswith(pstate) for m in F["quietNoPstate"]), f"seeded: acer with intel_pstate=disable fails ({F['quietNoPstate']})")
 
+# a sleeping store cache's upload (modules/core/store-upload.nix): a build burst refills the queue after every send, so
+# the path unit restarts the service within seconds; a start limit on it fails store-upload.path and degrades the host
+uploaders = sorted(h for h, us in units.items() if "store-upload.path" in us)
+check(set(windowed) <= set(uploaders), f"msi-ms7758 and asus-b460m queue their builds for upload ({uploaders})")
+for host in uploaders:
+    service = units[host].get("store-upload.service", "")
+    path = units[host]["store-upload.path"]
+    check("PathExists=/var/lib/store-upload/queue" in path, f"{host}'s store-upload.path starts the send while the queue exists")
+    check("StartLimitIntervalSec=0" in service.split("[Service]")[0],
+          f"{host}'s store-upload.service has no start limit, so a burst of queue writes cannot fail store-upload.path")
+    check(re.search(r"^ExecStopPost=\S+/bin/sleep [1-9]", service, re.M) is not None,
+          f"{host}'s store-upload.service waits after each run, so a send that keeps failing cannot restart in a hot loop")
+
 finish()
