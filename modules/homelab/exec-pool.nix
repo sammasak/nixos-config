@@ -167,11 +167,12 @@ in
         timerConfig.OnCalendar = "minutely";
       };
 
-      # One journal line per session whose pull request merged, which the pool dashboard's merged-sessions table reads
-      # from Loki: the ids stay in the line, out of every metric label. As the owner, an exec_pool_submit client whose
-      # gh login finds the pull requests; the listing in its state directory makes each session one line.
+      # One journal line per merged pull request of a session's branch, which the pool dashboard's merged-sessions
+      # table reads from Loki: the ids stay in the line, out of every metric label. As the owner, an exec_pool_submit
+      # client whose gh login finds the pull requests; the listing in its state directory makes each pull request one
+      # line.
       systemd.services.exec-pool-session-report = {
-        description = "Log each execution pool session whose pull request merged, for the dashboard";
+        description = "Log each merged pull request of an execution pool session, for the dashboard";
         after = [
           "exec-pool-migrate.service"
           "network-online.target"
@@ -189,8 +190,8 @@ in
           User = user;
           ExecStart = "${lib.getExe' pkg "exec-pool"} sessions --limit 200 --report /var/lib/exec-pool-session-report/reported";
           StateDirectory = "exec-pool-session-report";
-          # one gh call per out-of-pool session of the 200, reported ones too: 200 x 0.77 s (median gap between
-          # report lines) is about 155 s, so 600 s leaves nearly 4x; a stalled gh call still eats it all
+          # one gh call per out-of-pool session of the 200, reported ones too; even at 0.77 s a call (the median gap
+          # between report lines, an upper bound) 200 take about 155 s, under a third; a stalled gh call eats it all
           TimeoutStartSec = 600;
           MemoryMax = "64M";
           Nice = 10;
