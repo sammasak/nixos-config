@@ -627,7 +627,7 @@
         },
         "overrides": []
       },
-      "description": "The row \"systemd collector failed\" stands for every unit of this host while its systemd collector fails: none can be read (NodeSystemdCollectorFailed).",
+      "description": "The row \"systemd collector failed\" is added while this host's systemd collector fails; its units cannot all be read then, but real failed units it still reported can appear with that row (NodeSystemdCollectorFailed).",
       "transformations": [
         {
           "id": "organize",
