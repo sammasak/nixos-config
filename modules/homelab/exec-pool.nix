@@ -189,7 +189,8 @@ in
           User = user;
           ExecStart = "${lib.getExe' pkg "exec-pool"} sessions --limit 200 --report /var/lib/exec-pool-session-report/reported";
           StateDirectory = "exec-pool-session-report";
-          # one gh call per unreported session
+          # one gh call per out-of-pool session of the 200, reported ones too: 200 x 0.77 s (median gap between
+          # report lines) is about 155 s, so 600 s leaves nearly 4x; a stalled gh call still eats it all
           TimeoutStartSec = 600;
           MemoryMax = "64M";
           Nice = 10;
