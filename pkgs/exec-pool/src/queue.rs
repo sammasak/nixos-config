@@ -2501,8 +2501,7 @@ fn usage(tx: &mut Transaction<'_>, out: &mut String, hosts: &[String]) -> Result
          count(*) FILTER (WHERE EXISTS (SELECT FROM events e WHERE e.attempt_id = u.attempt_id \
          AND e.lease_epoch = u.lease_epoch AND e.to_status = 'waiting' \
          AND e.reason IN ('turn_error', 'turn_timeout', 'turn_memory_kill'))), \
-         coalesce(sum(u.subagent_calls), 0)::bigint, count(u.subagent_calls), \
-         coalesce(sum(u.cost_usd::numeric), 0)::float8 \
+         coalesce(sum(u.subagent_calls), 0)::bigint, count(u.subagent_calls), coalesce(sum(u.cost_usd::numeric), 0)::float8 \
          FROM turns u JOIN attempts a ON a.id = u.attempt_id JOIN tasks t ON t.id = a.task_id GROUP BY 1, 2, 3, 4",
         &[],
     )?;
