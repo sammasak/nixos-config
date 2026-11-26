@@ -1463,7 +1463,7 @@ def check_slot_devenv():
             return r.returncode, r.stdout.strip(), r.stderr.strip()
 
         for args in (["tasks", "run", "nixos:seventh-host-test"], ["shell", "--", "devenv", "tasks", "run", "nixos:qa"],
-                     ["tasks", "run", "nixos:fmt-check", "nixos:workers-eval-test"]):
+                     ["tasks", "run", "nixos:fmt-check", "nixos:seventh-host-test"]):
             rc, so, se = run("pool4", *args)
             task = args[-1]
             check(rc == 77 and so == "" and len(se.splitlines()) == 1 and f"{task} refused in pool4, a light slot reserving 1G" in se

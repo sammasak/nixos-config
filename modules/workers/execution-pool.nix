@@ -146,7 +146,6 @@ in
           # each task's measured need, which no light slot's reserve covers
           heavyTasks = {
             "nixos:seventh-host-test" = "5.6 GB (its slot's peak, one host's evaluation 4.8 GiB)";
-            "nixos:workers-eval-test" = "WEVAL";
             "nixos:qa" = "the 5.6 GB of nixos:seventh-host-test, one of its gates";
           };
           # The slots share environments.slice (#827): in a light slot one of these is refused at once, not killed
