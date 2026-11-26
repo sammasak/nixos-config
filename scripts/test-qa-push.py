@@ -4,7 +4,8 @@ runs the full gate and reads no clock: a tree a full gate passed (recorded under
 generation, as scripts/qa-green.sh writes it), or it plus documentation, gets the lints; anything else, a damaged,
 missing or unreadable record included, gets the fast set (the push lints, the push eval and its gate-step) and a
 result=owed mode=fast gate record, and records no green tree. Through a real git push, a linked worktree is judged on
-the pushed commit, not on its own HEAD."""
+the pushed commit, not on its own HEAD. The push eval runs under the light-work lock, its record's wait apart from
+its run (seeded: a held lock)."""
 import json
 import os
 import pathlib
@@ -13,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 failed = 0
@@ -30,9 +32,13 @@ m = re.search(r"\n  qaPush =\s+gate\s+\"nixos-qa-push\".*?''\n(.*?)\n *'';\n", s
 if not m:
     sys.exit("FAIL (scripts/test-qa-push.py): qaPush not found in devenv.nix")
 BODY = textwrap.dedent(m.group(1)).replace("'''", "\0q").replace("''${", "\0d")
+lh = re.search(r"\n  lightHeld = ''\n(.*?)\n  '';\n", src, re.DOTALL)
+if not lh:
+    sys.exit("FAIL (scripts/test-qa-push.py): lightHeld not found in devenv.nix")
+LIGHT_HELD = textwrap.dedent(lh.group(1)).replace("''${", "\0d").replace("${pkgs.util-linux}/bin/flock", "flock")
 
 
-def render(qa, lints, gen, docs, fresh, push_lints, ev, record):
+def render(qa, lints, gen, docs, fresh, push_lints, ev, record, light):
     """The hook as writeShellApplication would build it, with qa (its store path keys a green), the lints, the push's
     lints and eval, the record helper, the doc readers' tests, the devenv-fresh guard and /run/current-system replaced."""
     if re.search(r"\bdate\b", BODY):
@@ -40,7 +46,8 @@ def render(qa, lints, gen, docs, fresh, push_lints, ev, record):
     text = (BODY.replace("${lib.getExe qa}", str(qa)).replace("${run lints}", str(lints)).replace("${lib.getExe docTests}", str(docs))
             .replace("${lib.getExe devenvFresh}", str(fresh)).replace("${run pushLints}", str(push_lints))
             .replace("${lib.getExe pushEval}", str(ev)).replace("${pushEval.name}", "nixos-push-eval")
-            .replace("${lib.getExe record}", str(record)))
+            .replace("${lib.getExe record}", str(record))
+            .replace("${lightHeld}", LIGHT_HELD.replace("/run/work-locks/light-work.lock", str(light))))
     left = re.findall(r"\$\{[^}]*\}", text)
     if left:
         sys.exit(f"FAIL (scripts/test-qa-push.py): Nix interpolations the test does not stub: {left}")
@@ -63,7 +70,12 @@ with tempfile.TemporaryDirectory() as t:
     push_lints = t / "push-lints"
     push_lints.write_text(f'#!/usr/bin/env bash\necho PUSHLINTS >> "{log}"\nexit "${{PUSHLINT_RC:-0}}"\n')
     ev = t / "push-eval"
-    ev.write_text(f'#!/usr/bin/env bash\necho EVAL >> "{log}"\nexit "${{EVAL_RC:-0}}"\n')
+    light = t / "light-work.lock"
+    light.touch()
+    # the eval as it runs: whether it can take the light lock (held, or free) and its WORK_LOCKS_HELD
+    ev.write_text(f'#!/usr/bin/env bash\necho EVAL >> "{log}"\n'
+                  f'{{ flock -n "{light}" true && echo free || echo held; echo "${{WORK_LOCKS_HELD:-}}"; }} | paste -sd" " > "{t}/eval-lock"\n'
+                  'exit "${EVAL_RC:-0}"\n')
     records = t / "records"
     record = t / "record"
     record.write_text(f'#!/usr/bin/env bash\necho "$PLATFORM_RECORD_STRICT $*" >> "{records}"\n')
@@ -75,12 +87,12 @@ with tempfile.TemporaryDirectory() as t:
         # the hook never runs the full gate: FULL in the log is a failure of every case
         qa.write_text(f'#!/usr/bin/env bash\necho FULL >> "{log}"\n')
         gates[name] = t / f"gate-{name}.sh"
-        gates[name].write_text(render(qa, lints, gen, docs, fresh, push_lints, ev, record))
+        gates[name].write_text(render(qa, lints, gen, docs, fresh, push_lints, ev, record, light))
     for f in (lints, docs, fresh, push_lints, ev, record, t / "qa", t / "qa-other", *gates.values()):
         f.chmod(0o755)
 
     env = {k: v for k, v in os.environ.items()
-           if not k.startswith(("GIT_", "PRE_COMMIT_")) and k not in ("NIXOS_QA_TIMES", "GATE_PROBE")}
+           if not k.startswith(("GIT_", "PRE_COMMIT_")) and k not in ("NIXOS_QA_TIMES", "GATE_PROBE", "WORK_LOCKS_HELD")}
     env.update(HOME=str(t), GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null", GIT_AUTHOR_NAME="t",
                GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
     repo, bare = t / "repo", t / "bare.git"
@@ -132,8 +144,9 @@ with tempfile.TemporaryDirectory() as t:
     records.write_text("")
     case("A first push of a code change: the fast set", a, "FAST")
     step, _, rec = records.read_text().partition("\n")
-    check(re.fullmatch(rf" gate-step gate=nixos-qa-push step=nixos-push-eval seconds=\d+ result=pass sha={a[:7]}", step),
-          f"A the push eval's gate-step record ({step!r})")
+    check(re.fullmatch(rf" gate-step gate=nixos-qa-push step=nixos-push-eval seconds=\d+ wait_seconds=0 result=pass sha={a[:7]}", step)
+          and (t / "eval-lock").read_text().split() == ["held", "1"],
+          f"A the push eval's gate-step record, the eval under the light lock and marked as holding it ({step!r})")
     check(re.fullmatch(rf"1 gate gate=nixos-qa-push seconds=\d+ result=owed sha={a[:7]} mode=fast head={a} checkout=clean\n", rec)
           and f"full QA not run for {a}, owed to the scheduled gate on main" in times.read_text(),
           f"A one strict owed gate record and the owed line in nixos-qa-times ({rec.strip()!r})")
@@ -327,8 +340,28 @@ with tempfile.TemporaryDirectory() as t:
     check(records.read_text() == "", "WF a failed push writes no owed record")
     case("WE a failing push eval fails the push", n, "FAST(rc=1)", EVAL_RC="1")
     rec = records.read_text()
-    check(re.fullmatch(rf" gate-step gate=nixos-qa-push step=nixos-push-eval seconds=\d+ result=fail sha={n[:7]}\n", rec),
+    check(re.fullmatch(rf" gate-step gate=nixos-qa-push step=nixos-push-eval seconds=\d+ wait_seconds=0 result=fail sha={n[:7]}\n", rec),
           f"WE a failed push eval records its failed step and no owed gate ({rec!r})")
+    holder = subprocess.Popen(["flock", str(light), "sleep", "2"])
+    while subprocess.run(["flock", "-n", str(light), "true"], check=False).returncode == 0:
+        time.sleep(0.05)
+    records.write_text("")
+    case("LW the push eval waits for a held light lock", n, "FAST")
+    holder.wait()
+    step = records.read_text().partition("\n")[0]
+    check(re.fullmatch(rf" gate-step gate=nixos-qa-push step=nixos-push-eval seconds=[01] wait_seconds=[123] result=pass sha={n[:7]}", step),
+          f"LW seeded: its record counts the wait apart from the run ({step!r})")
+    records.write_text("")
+    case("LH under a caller's light hold", n, "FAST", WORK_LOCKS_HELD="1")
+    step = records.read_text().partition("\n")[0]
+    check(" wait_seconds=unknown result=pass" in step and (t / "eval-lock").read_text().split() == ["free", "1"],
+          f"LH a caller's hold is not taken again, its wait unknown ({step!r})")
+    light.unlink()
+    records.write_text("")
+    case("LN no light lock on this host", n, "FAST")
+    step = records.read_text().partition("\n")[0]
+    check(" wait_seconds=0 result=pass" in step, f"LN no lock file: the eval unlocked, no wait ({step!r})")
+    light.touch()
 
     # a hook built before the pushed tree's devenv files changed (a shell entered before a merge) is refused before
     # any gate, lints-only and green paths included; it records nothing

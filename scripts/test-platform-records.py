@@ -23,12 +23,12 @@ SCHEMA = json.loads((ROOT / "metrics/records.json").read_text())["kinds"]
 DASHBOARDS = {d: ROOT / f"modules/homelab/monitoring/dashboards/{d}.json" for d in ("platform-health", "pi-agents")}
 PARITY = json.loads((ROOT / "scripts/fixtures/platform-record-parity.json").read_text())["cases"]
 CALLERS = ["devenv.nix", "Justfile", "scripts/system-checks.sh", "modules/programs/cli/coordinator-wakeup.nix",
-           "modules/workers/core.nix"]
+           "modules/workers/core.nix", "modules/workers/execution-pool.nix"]
 STREAM = {"job", "kind", "host"}
 
 fields = {k: set(v["fields"]) | set(v.get("optional", [])) for k, v in SCHEMA.items()}
 required = {k: set(v["fields"]) for k, v in SCHEMA.items()}
-check({"review", "research", "offload", "local-lane", "usage", "release", "bench"} <= set(SCHEMA) and len(SCHEMA) == 15,
+check({"review", "research", "offload", "local-lane", "usage", "release", "bench", "lock"} <= set(SCHEMA) and len(SCHEMA) == 16,
       f"the schema lists every kind ({sorted(SCHEMA)})")
 check(fields["review"] == {"repo", "head", "round", "grade", "reviewer", "author", "seconds", "findings"}
       and fields["research"] == {"issue", "claims_checked", "claims_corrected", "hours", "adopted", "spiked", "rejected"},

@@ -5,7 +5,9 @@ Usage: check-tuning.py --records FILE | [--loki URL] [--since 7d]
 --records reads one record per line (a Loki line as `logcli -o raw` prints it, or a spool line `STAMP KIND fields`, of
 which only gate-step lines count: the others are counted as other kinds); --loki (default $LOKI_ADDR) queries Loki
 one day at a time, newest first, back to exactly --since. Prints one markdown row per (gate, step, check): runs, mean
-and worst minutes, fails (result=fail). A record of a check that did not run (result=skipped, deferred or dry, written
+and worst minutes, the mean minutes waited for a work lock, fails (result=fail). Minutes are seconds=, the run alone:
+a step that waits for a lock (the push eval, the probe, pool-merge-*) records that wait apart as wait_seconds=, which
+the wait column averages over the runs that carry a number ("-" when none does; unknown is not one). A record of a check that did not run (result=skipped, deferred or dry, written
 with seconds=0) is counted as not run, and one without step or a whole number of seconds as skipped; a failed run
 recorded with seconds=0 (the flake check's exit trap, its time unmeasured) counts as a run and a fail but has no
 minutes. None is read as a 0-second run. Exit 0 with the table; 2 when no run is recorded, the records cannot be read,
@@ -37,11 +39,13 @@ class Record:
     check: str
     seconds: int
     result: str
+    wait: int | None
 
 
 @dataclass
 class Row:
     seconds: list[int] = field(default_factory=list)
+    waits: list[int] = field(default_factory=list)
     runs: int = 0
     fails: int = 0
 
@@ -52,8 +56,9 @@ def parse(line: str) -> Record | None:
     step, seconds = fields.get("step", ""), fields.get("seconds", "")
     if not step or not SECONDS.fullmatch(seconds):
         return None
+    wait = fields.get("wait_seconds", "")
     return Record(fields.get("gate") or "-", step, fields.get("check") or "-", int(seconds),
-                  fields.get("result", ""))
+                  fields.get("result", ""), int(wait) if SECONDS.fullmatch(wait) else None)
 
 
 def other_kind(line: str) -> bool:
@@ -102,11 +107,16 @@ def table(lines: Iterable[str]) -> tuple[list[str], Counts]:
         row.fails += rec.result == "fail"
         if rec.seconds or rec.result != "fail":
             row.seconds.append(rec.seconds)
-    out = ["| gate | step | check | runs | mean min | worst min | fails |", "|---|---|---|---|---|---|---|"]
+        if rec.wait is not None:
+            row.waits.append(rec.wait)
+    out = ["| gate | step | check | runs | mean min | worst min | mean wait min | fails |",
+           "|---|---|---|---|---|---|---|---|"]
     for (gate, step, check), row in sorted(rows.items()):
         mean, worst = ((f"{sum(row.seconds) / len(row.seconds) / 60:.1f}", f"{max(row.seconds) / 60:.1f}")
                        if row.seconds else ("-", "-"))
-        out.append(f"| {cell(gate)} | {cell(step)} | {cell(check)} | {row.runs} | {mean} | {worst} | {row.fails} |")
+        wait = f"{sum(row.waits) / len(row.waits) / 60:.1f}" if row.waits else "-"
+        out.append(f"| {cell(gate)} | {cell(step)} | {cell(check)} | {row.runs} | {mean} | {worst} | {wait} "
+                   f"| {row.fails} |")
     return out, n
 
 

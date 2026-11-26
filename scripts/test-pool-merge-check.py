@@ -5,9 +5,12 @@ scripts/, modules/workers/ and metrics/records.json the guest-records test, modu
 evaluation, flake.lock and any unmapped path every host, and a path that feeds a flake output the push hook's nix flake
 show of the merge (seeded: a merge whose flake show fails fails; a rule change beside an unmapped path still evaluates every
 host; two migrations on one number, and a gap, fail). Every evaluation takes the heavy lock, then the light one the
-push hook's evaluation takes, and a build compiles under the heavy one alone. A slot's nix wrapper, from the module's
-text with flock and nix stubbed: build --expr, --file and flake attributes evaluate under light and build outside it,
-nix-build instantiates under light and builds outside it, and flake check runs under light. A slot's cargo has no lane and
+push hook's evaluation takes, and a build compiles under the heavy one alone; a step's record carries its wait for them
+apart from its run (seeded: a held light lock). A slot's nix wrapper, from the module's text with nix and the record
+stubbed: build --expr, --file and flake attributes evaluate under light and build outside it, nix-build instantiates
+under light and builds outside it, and flake check runs under light; the command never inherits the lock, and each hold
+is one lock record of its wait apart from its hold, in the spool the host ships whatever the caller's HOME (seeded: a
+held light lock). A slot's cargo has no lane and
 CARGO_BUILD_JOBS from its reserve."""
 
 import importlib.util
@@ -18,6 +21,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 
 HERE = pathlib.Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("pool_merge_check", HERE / "pool_merge_check.py")
@@ -109,38 +113,62 @@ with tempfile.TemporaryDirectory() as t:
     p = pmc.migrations_problem(d)
     check(p is not None and "0003" in p, f"seeded: a gap at 0003 fails ({p})")
 tree = pathlib.Path("/t")
-for kind, target in (("eval", "msi-ms7758"), ("evalcheck", "execution-pool-vm"), ("build", "exec-pool"), ("check", "grafana-dashboards")):
-    argv = pmc.command(pmc.Check(kind, target), tree)
-    if kind in ("eval", "evalcheck"):
-        locks, evals_first = [argv[i + 2] for i, a in enumerate(argv) if a == "flock"], argv[argv.index("nix") + 1] == "eval"
-    else:
-        # bash -c BUILD $0 LIGHT ATTR: the light lock is the script's $1, taken inside the one heavy hold
-        locks = [argv[2], argv[-2]] if argv[3:5] == ["bash", "-c"] and argv[5] == pmc.BUILD else []
-        evals_first = pmc.BUILD.index('flock -o "$1" nix eval') < pmc.BUILD.index("nix build") and argv[-1].endswith(".drvPath")
-    check(locks == [str(pmc.LOCK), str(pmc.LIGHT)] and evals_first,
-          f"{kind} {target}: evaluated under the heavy lock, then the light one ({argv})")
 sh = pmc.command(pmc.Check("show", "nixos-push-eval"), tree) or []
-check([sh[i + 2] for i, a in enumerate(sh) if a == "flock"] == [str(pmc.LOCK), str(pmc.LIGHT)]
-      and sh[sh.index("nix"):] == ["nix", "flake", "show", "--json", "--all-systems", "--no-write-lock-file", "/t"]
+check(sh[sh.index("nix"):] == ["nix", "flake", "show", "--json", "--all-systems", "--no-write-lock-file", "/t"]
       and {"WORK_LOCKS_HELD=1", "GC_FREE_SPACE_DIVISOR=16"} <= set(sh[sh.index("env"):sh.index("nix")]),
-      f"show: the push hook's nix flake show of the merge, under the heavy lock, then the light one ({sh})")
+      f"show: the push hook's nix flake show of the merge ({sh})")
 a = (pmc.command(pmc.Check("evalcheck", "execution-pool-vm"), tree) or [""])[-1]
 check(a == "/t#checks.x86_64-linux.execution-pool-vm.drvPath", f"evalcheck: the check's drvPath, nothing built ({a})")
-check("WORK_LOCKS_HELD=1" in pmc.EVAL and pmc.BUILD.startswith("export WORK_LOCKS_HELD=1;"),
+check("WORK_LOCKS_HELD=1" in pmc.EVAL and "WORK_LOCKS_HELD=1" in pmc.BUILD,
       "its nix runs marked as holding its locks, or a pool slot's nix waits on the light hold it is under")
+
+# each nix process with the locks it runs under: a stub nix that tries both (held, or free) and names an inherited one
+with tempfile.TemporaryDirectory() as tmp:
+    d = pathlib.Path(tmp)
+    (d / "bin").mkdir()
+    heavy, light = d / "heavy", d / "light"
+    heavy.touch(), light.touch()
+    (d / "bin/nix").write_text(
+        "#!/usr/bin/env bash\nst() { flock -n \"$1\" true && echo free || echo held; }\n"
+        f'inh=; for f in /proc/self/fd/*; do case $(readlink "$f") in {heavy} | {light}) inh=inherited ;; esac; done\n'
+        f'echo "$1 heavy=$(st {heavy}) light=$(st {light}) $WORK_LOCKS_HELD $inh" >>{d}/log\n'
+        '[ "$1" != eval ] || echo /nix/store/x.drv\n')
+    (d / "bin/nix").chmod(0o755)
+    saved = (os.environ["PATH"], pmc.LOCK, pmc.LIGHT)
+    os.environ["PATH"] = f"{d / 'bin'}:{os.environ['PATH']}"
+    pmc.LOCK, pmc.LIGHT = heavy, light
+    try:
+        for kind, target in (("eval", "msi-ms7758"), ("evalcheck", "execution-pool-vm"), ("show", "nixos-push-eval"),
+                             ("build", "exec-pool"), ("check", "grafana-dashboards")):
+            (d / "log").write_text("")
+            ok, waited = pmc.run(pmc.Check(kind, target), d)
+            r = (d / "log").read_text().splitlines()
+            first = "flake" if kind == "show" else "eval"
+            want = [f"{first} heavy=held light=held 1 "] + (["build heavy=held light=free 1 "] if kind in ("build", "check") else [])
+            check(ok and waited < 1 and r == want,
+                  f"{kind} {target}: evaluated under the heavy lock, then the light one, neither inherited"
+                  f"{', built under the heavy one alone' if len(want) > 1 else ''} ({r}, {waited:.1f} s waited)")
+        holder = subprocess.Popen(["flock", str(light), "sleep", "2"])
+        while subprocess.run(["flock", "-n", str(light), "true"], check=False).returncode == 0:
+            time.sleep(0.05)
+        ok, waited = pmc.run(pmc.Check("eval", "lenovo"), d)
+        holder.wait()
+        check(ok and 1.2 <= waited < 5, f"seeded: a held light lock is measured as the step's wait ({waited:.1f} s)")
+    finally:
+        os.environ["PATH"], pmc.LOCK, pmc.LIGHT = saved
 check(pmc.LIGHT.name == "light-work.lock" and "light-work.lock" in (HERE.parent / "devenv.nix").read_text(),
       "the light lock is the one the push hook's nix flake show takes")
 
 
 def lane(name: str, real: str, d: pathlib.Path) -> pathlib.Path:
-    """A slot's `name` wrapper (modules/workers/execution-pool.nix) as bash, its flock, nix and lock file stubbed."""
+    """A slot's `name` wrapper (modules/workers/execution-pool.nix) as bash, its nix, record and lock files stubbed."""
     src = (HERE.parent / "modules/workers/execution-pool.nix").read_text()
     template = src.split("pkgs.writeShellScriptBin name ''\n", 1)[1].split("\n              ''\n", 1)[0]
     head = f'(lane "{name}" {real} \'\'\n'
     check(head in src, f"the module has a {name} lane")
     body = src.split(head, 1)[1].split("\n            '')\n", 1)[0] if head in src else ""
     text = template.replace("${text}", body).replace("${real}", "${nix}")
-    for k, v in {"${pkgs.util-linux}/bin/flock": f"{d}/stub/flock", "/run/work-locks/light-work.lock": f"{d}/light", "/run/work-locks/scheduled-gate.lock": f"{d}/gate",
+    for k, v in {"${pkgs.util-linux}/bin/flock": "flock", "${lib.getExe record}": f"{d}/stub/record", "${spool}": f"{d}/spool", "/run/work-locks/light-work.lock": f"{d}/light", "/run/work-locks/scheduled-gate.lock": f"{d}/gate",
                  "${config.nix.package}/bin/nix-instantiate": f"{d}/stub/nix-instantiate",
                  "${config.nix.package}/bin/nix-build": f"{d}/stub/nix-build", "${pkgs.coreutils}/bin/": "", "${pkgs.bash}/bin/bash": "bash",
                  "${nix}": f"{d}/stub/nix", "${name}": name, "''$": "$"}.items():
@@ -167,24 +195,28 @@ with tempfile.TemporaryDirectory() as tmp:
     d = pathlib.Path(tmp)
     (d / "light").touch()
     (d / "stub").mkdir()
-    # the scheduled gate's lock is a real one, its holder this test; the light lock always free
-    (d / "stub/flock").write_text(f'#!/usr/bin/env bash\nfor a; do [ "$a" != {d}/gate ] || exec flock "$@"; done\n'
-                                  'while [ "${1#-}" != "$1" ] || [[ $1 =~ ^[0-9]+$ ]]; do shift; done\n'
-                                  'shift; IN_LOCK=locked exec "$@"\n')
-    (d / "stub/nix").write_text(f'#!/usr/bin/env bash\necho "$* ${{IN_LOCK:-free}}" >>{d}/log\n'
-                                '[ "$1" != eval ] || [[ $* == *fn.nix* ]] || echo /nix/store/x.drv^out\n')
+    # both locks real ones, their holder this test or the wrapper: a stub reports the light one locked when it cannot take
+    # it, and inherited when it got the wrapper's descriptor
+    (d / "stub/state").write_text(f'#!/usr/bin/env bash\nfor f in /proc/self/fd/*; do [ "$(readlink "$f")" != {d}/light ] || {{ echo inherited; exit; }}; done\n'
+                                  f'flock -n {d}/light true && echo free || echo locked\n')
+    (d / "stub/nix").write_text(f'#!/usr/bin/env bash\necho "$* $({d}/stub/state)" >>{d}/log\n'
+                                '[ "$1" != eval ] || [[ $* == *fn.nix* ]] || echo /nix/store/x.drv^out\nexit "${NIX_RC:-0}"\n')
     # nix-instantiate --add-root R: two roots, the second one's output bin, as the real one prints them
     (d / "stub/nix-instantiate").write_text(
-        f'#!/usr/bin/env bash\necho "instantiate $* ${{IN_LOCK:-free}}" >>{d}/log\n'
+        f'#!/usr/bin/env bash\necho "instantiate $* $({d}/stub/state)" >>{d}/log\n'
         '[ "$1" = --add-root ] || exit 0\nln -s /nix/store/x.drv "$2"; ln -s /nix/store/y.drv "$2-2"; echo "$2"; echo "$2-2!bin"\n')
-    (d / "stub/nix-build").write_text(f'#!/usr/bin/env bash\necho "nix-build $* ${{IN_LOCK:-free}}" >>{d}/log\n'
+    (d / "stub/nix-build").write_text(f'#!/usr/bin/env bash\necho "nix-build $* $({d}/stub/state)" >>{d}/log\n'
                                       'echo /nix/store/x-out\nexit "${NB_RC:-0}"\n')
-    for f in ("flock", "nix", "nix-instantiate", "nix-build"):
+    # the spool the host ships, whatever HOME the caller has
+    (d / "stub/record").write_text(f'#!/usr/bin/env bash\n[ "$PLATFORM_RECORD_SPOOL" = {d}/spool ] || exit 0\n'
+                                   f'echo "$PLATFORM_RECORD_SHIPPER $*" >>{d}/records\n')
+    for f in ("state", "nix", "nix-instantiate", "nix-build", "record"):
         (d / "stub" / f).chmod(0o755)
     wrappers = {"nix": lane("nix", "nix", d), "nix-instantiate": lane("nix-instantiate", '"${config.nix.package}/bin/nix-instantiate"', d),
                 "nix-build": lane("nix-build", '"${config.nix.package}/bin/nix-build"', d)}
     (d / "tmp").mkdir()
-    env = {k: v for k, v in os.environ.items() if k != "WORK_LOCKS_HELD"} | {"TMPDIR": str(d / "tmp")}
+    # a runner step's HOME is its attempt's, not the guest user's
+    env = {k: v for k, v in os.environ.items() if k != "WORK_LOCKS_HELD"} | {"TMPDIR": str(d / "tmp"), "HOME": str(d / "tmp")}
 
     def runs(*argv: str, exe: str = "nix", **extra: str) -> list[str]:
         (d / "log").write_text("")
@@ -260,6 +292,43 @@ with tempfile.TemporaryDirectory() as tmp:
     holder.wait()
     check(waited >= 1.2 and "waiting for the scheduled gate" in w.stderr and (d / "log").read_text().splitlines() == ["eval --raw .#x locked"],
           f"while the scheduled gate holds its lock a slot's evaluation waits it out, saying so ({waited:.1f} s, {w.stderr.strip()!r})")
+    rec = (d / "records").read_text().splitlines()[-1:]
+    check(rec and re.fullmatch(r"host lock lane=light class=nix-eval wait_seconds=[123] seconds=[01] rc=0", rec[0]) is not None,
+          f"its lock record counts the gate's wait as the hold's, the host shipping it ({rec})")
+    (d / "gate").unlink()
+
+    def recorded(*argv: str, **extra: str) -> tuple[int, list[str], list[str]]:
+        (d / "records").write_text("")
+        r = runs(*argv, **extra)
+        rc = subprocess.run([str(wrappers["nix"]), *argv], env=env | extra, check=False, stdout=subprocess.DEVNULL).returncode
+        return rc, r, (d / "records").read_text().splitlines()
+
+    rc, r, rec = recorded("eval", "--raw", ".#x")
+    check(rc == 0 and r == ["eval --raw .#x locked"] and len(rec) == 2
+          and all(re.fullmatch(r"host lock lane=light class=nix-eval wait_seconds=[01] seconds=[01] rc=0", x) for x in rec),
+          f"a free light lock: the command under it, never inheriting it, and one lock record per hold, shipped by the host ({r}, {rec})")
+    rc, r, rec = recorded("flake", "show", "--json")
+    check(re.fullmatch(r"host lock lane=light class=nix-flake-show wait_seconds=[01] seconds=[01] rc=0", rec[0] if rec else "") is not None,
+          f"the class names the subcommand ({rec})")
+    rc, r, rec = recorded("eval", ".#x", NIX_RC="3")
+    check(rc == 3 and re.fullmatch(r"host lock lane=light class=nix-eval wait_seconds=[01] seconds=[01] rc=3", rec[0] if rec else "") is not None,
+          f"the command's exit status is the wrapper's and its record's ({rc}, {rec})")
+    rc, r, rec = recorded("build", "--no-link", ".#a")
+    check(rc == 0 and re.fullmatch(r"host lock lane=light class=nix-build-eval wait_seconds=[01] seconds=[01] rc=0", rec[0] if rec else "") is not None
+          and r[-1] == "build --no-link /nix/store/x.drv^out free",
+          f"nix build: its evaluation's hold recorded, the record kept out of the drvs it picked ({r}, {rec})")
+    holder = subprocess.Popen(["flock", str(d / "light"), "sleep", "2"])
+    while subprocess.run(["flock", "-n", str(d / "light"), "true"], check=False).returncode == 0:
+        time.sleep(0.05)
+    (d / "records").write_text("")
+    start = time.monotonic()
+    w = subprocess.run([str(wrappers["nix-instantiate"]), "-A", "x", "default.nix"], env=env, capture_output=True, text=True, check=False)
+    waited = time.monotonic() - start
+    holder.wait()
+    rec = (d / "records").read_text().splitlines()
+    check(w.returncode == 0 and waited >= 1.2 and len(rec) == 1
+          and re.fullmatch(r"host lock lane=light class=nix-instantiate wait_seconds=[123] seconds=[01] rc=0", rec[0]) is not None,
+          f"seeded: a held light lock is waited for and recorded as the wait, not the hold ({waited:.1f} s, {rec})")
 
 # seeded: two branches that each evaluate merge into a tree whose flake show fails (#793 and #796, a duplicate definition)
 with tempfile.TemporaryDirectory() as tmp:
@@ -290,10 +359,11 @@ with tempfile.TemporaryDirectory() as tmp:
     merge = subprocess.run([*g, "commit-tree", "-p", base, "-p", head, "-m", "merge", moved],
                            check=True, capture_output=True, text=True).stdout.strip()
     subprocess.run([*g, "reset", "--quiet", "--hard", head], check=True)
-    saved = (os.getcwd(), os.environ["PATH"], pmc.RECORD)
+    saved = (os.getcwd(), os.environ["PATH"], pmc.RECORD, pmc.LOCK, pmc.LIGHT)
     os.chdir(repo)
     os.environ["PATH"] = f"{d / 'bin'}:{os.environ['PATH']}"
-    pmc.RECORD = d / "record.py"
+    pmc.RECORD, pmc.LOCK, pmc.LIGHT = d / "record.py", d / "heavy", d / "light"
+    pmc.LOCK.touch(), pmc.LIGHT.touch()
     try:
         results = {}
         for rc in ("0", "1", "pushed", "moved"):
@@ -304,11 +374,24 @@ with tempfile.TemporaryDirectory() as tmp:
                 (d / f).write_text("")
             results[rc] = (pmc.check_tree(repo, "b", head, base, merge if rc == "moved" else head),
                            (d / "nix.log").read_text(), (d / "record.log").read_text())
+        # a step that took 32 s, 30 of them waiting for its locks: its record's seconds are its run alone
+        run_, time_ = pmc.run, pmc.time
+        clock = iter(range(0, 1000, 32))
+        pmc.run = lambda c, tree: (True, 30.0)
+        pmc.time = types.SimpleNamespace(monotonic=lambda: next(clock))
+        (d / "record.log").write_text("")
+        pmc.check_tree(repo, "b", head, base, merge)
+        waited = (d / "record.log").read_text()
+        pmc.run, pmc.time = run_, time_
     finally:
         os.chdir(saved[0])
         os.environ["PATH"] = saved[1]
         os.environ.pop("SHOW_RC", None)
-        pmc.RECORD = saved[2]
+        pmc.RECORD, pmc.LOCK, pmc.LIGHT = saved[2:]
+    steps = [l for l in waited.splitlines() if "result=pass" in l]
+    check(steps != [] and all(re.search(r" seconds=2 wait_seconds=30 ", l) for l in steps)
+          and all(" wait_seconds=0 " in l for l in waited.splitlines() if "result=skipped" in l),
+          f"a step's record has its lock wait apart from its run, a skipped one's 0 ({waited})")
     ok, bad = results["0"], results["1"]
 
     def shown(r: tuple[int, str, str], result: str) -> bool:
