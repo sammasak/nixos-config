@@ -283,8 +283,8 @@ groups:
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#guestrecordsnotshipping"
 
       # store-upload (modules/core/store-upload.nix) zeroes the queue gauge on every send acer takes, so a nonzero one
-      # is a failed last try; the age clause keeps one slow retry from counting. A sender never sent has last success
-      # 0 and an empty queue, so it stays silent. acer down is its own alert, and the retry timer drains the queue
+      # is a failed last try; the age clause lets a sender that took a batch within the hour keep draining. A sender
+      # never sent has last success 0 and an empty queue, so it stays silent. acer down is its own alert, and the retry timer drains the queue
       # within 10 minutes of it coming back. The queue is the first operand, so it is $value.
       - alert: StoreUploadStuck
         expr: |

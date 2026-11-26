@@ -163,10 +163,13 @@ Fires: a sleeping store cache (msi-ms7758, asus-b460m) has built paths queued fo
 (`store_upload_last_success_timestamp_seconds`, 0 if never), for 30 minutes while the sender and acer-swift are
 both up. A successful send zeroes the queue, so a nonzero one means the last try failed. Those paths are only in the
 sender's store and leave the cache at its next power-off. An asleep sender has no series; acer down does not fire.
-First: on the sender, `systemctl status store-upload.path store-upload.timer store-upload` and
-`journalctl -u store-upload -n 20`: `store-upload: acer-swift did not take N paths` is the ssh to
-`store-upload@acer-swift` or acer's pull from the sender's cache failing (its `copied N, failed M` line lands in
-the sender's journal too); on acer, `journalctl -u sshd --grep store-upload` for a refused login.
+The gauges are written after each try, so a pull still running shows the last failed try's values.
+First: on the sender, `systemctl status store-upload.path store-upload.timer store-upload` (`active (running)` is a
+transfer in progress) and `journalctl -u store-upload -n 20`: `store-upload: acer-swift did not take N paths` is the
+ssh to `store-upload@acer-swift` refused or timed out, or acer unable to reach the sender's cache at
+`http://<sender>:5000` (nix's error from `nix store info` precedes it; check the sender's harmonia). A
+`copied N, failed M` line is a send that succeeded: paths acer could not pull are dropped, counted in acer's
+`store_upload_received_paths_total{result="failed"}`, not in this alert.
 Do not: delete `/var/lib/store-upload/queue.sending` on the sender; the next try sends it. Issue #835.
 
 ## BackupStale
