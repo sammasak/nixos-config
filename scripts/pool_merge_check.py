@@ -31,9 +31,12 @@ evaluation here beside another slot's push evaluation filled acer's 7G twice. A 
 both locks and built under the heavy one alone, so a push never waits on a compile.
 
 It prints each check run with its seconds, and each one skipped, and records both per check as gate-step records
-(gate=pool-merge-check, step=pool-merge-<kind>, result=pass|fail|skipped; pkgs/platform-record), so the tally in
+(gate=pool-merge-check, step=pool-merge-<kind>, result=pass|fail|skipped|cached; pkgs/platform-record), so the tally in
 goals.md can be read back from Loki: seconds= its run, wait_seconds= its waits for the locks, which this process takes
 itself to time them. No gate record: the platform dashboard's gate pass rate is the full gate's.
+
+A host evaluation or the flake show this user's eval record (scripts/eval_record.py) holds for the merge's tree under
+this nix is not run again (result=cached), and each one that passes here goes into that record.
 
 Usage: pool_merge_check.py BRANCH
        pool_merge_check.py --plan PATH...    the checks those changed paths map to, one per line (tests)"""
@@ -53,6 +56,8 @@ import tempfile
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
+
+import eval_record
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 RECORD = ROOT / "pkgs/platform-record/platform_record.py"
@@ -209,19 +214,19 @@ def command(check: Check, tree: pathlib.Path) -> list[str] | None:
 EVALS = ("eval", "evalcheck")
 
 
-def run(check: Check, tree: pathlib.Path) -> tuple[bool, float]:
-    """Whether the check passed, and its seconds waiting for the locks."""
+def run(check: Check, tree: pathlib.Path) -> tuple[bool, float, str]:
+    """Whether the check passed, its seconds waiting for the locks, and an evaluation's or the flake show's stdout."""
     argv = command(check, tree)
     if argv is None:
         problem = migrations_problem(tree / check.target)
         if problem:
             say(f"{check.target}: {problem}", err=True)
-        return problem is None, 0.0
+        return problem is None, 0.0, ""
     if check.kind == "script":
-        return subprocess.run(argv, cwd=tree, check=False).returncode == 0, 0.0
+        return subprocess.run(argv, cwd=tree, check=False).returncode == 0, 0.0, ""
     waits: list[float] = []
     builds = check.kind in ("build", "check")
-    stdout = subprocess.PIPE if check.kind in EVALS or builds else subprocess.DEVNULL if check.kind == "show" else None
+    stdout = subprocess.PIPE if check.kind in (*EVALS, "show") or builds else None
     # heavy, then light: the push hook takes light alone, so the order never deadlocks. One heavy hold over a build's
     # evaluation and build: released between them, a long wait could let a GC delete the evaluated .drv
     with held(LOCK, waits):
@@ -231,7 +236,22 @@ def run(check: Check, tree: pathlib.Path) -> tuple[bool, float]:
             out = subprocess.run([*BUILD, f"{out.stdout.strip()}^*"], cwd=tree, check=False)
     if out.returncode == 0 and check.kind in EVALS:
         say(f"{check.target} evaluates to {out.stdout.strip()}")
-    return out.returncode == 0, sum(waits)
+    return out.returncode == 0, sum(waits), (out.stdout or "") if check.kind in (*EVALS, "show") else ""
+
+
+def remember(check: Check, tree: pathlib.Path, began: str | None, stdout: str) -> None:
+    """A passing host evaluation's drvPath or flake show's output kinds into the merge tree's eval record."""
+    if not began or check.kind not in ("eval", "show"):
+        return
+    if check.kind == "eval":
+        eval_record.put(tree, began, tops={check.target: stdout.strip()})
+        return
+    try:
+        kinds = eval_record.kinds_of(stdout)
+    except (ValueError, TypeError):
+        say("flake show printed no JSON object: its kinds not recorded", err=True)
+        return
+    eval_record.put(tree, began, flake_kinds=kinds)
 
 
 def main() -> int:
@@ -293,21 +313,31 @@ def check_tree(tree: pathlib.Path, branch: str, head: str, main_: str, commit: s
     sha = commit[:12]
     skipped = [Check("eval", h) for h in hosts if Check("eval", h) not in checks]
     show = Check("show", SHOW)
+    # the merge's own tree, clean as just added: the key of its eval record (scripts/eval_record.py)
+    began = eval_record.clean_tree(tree)
+    since = f"tree {(began or '')[:12]} passed it before under this nix (eval record; NIXOS_EVAL_RECORD=0 runs it)"
+    why: dict[Check, tuple[str, str]] = {}
     if show in checks and push_eval_passed(head, commit):
-        checks.remove(show)
-        why = {show: f"the push hook passed it on {head}, whose tree this merge is"}
-    else:
-        why = {}
+        why[show] = (f"the push hook passed it on {head}, whose tree this merge is", "skipped")
+    elif show in checks and began and eval_record.flake_show(tree):
+        why[show] = (since, "cached")
+    tops = eval_record.toplevels(tree) if began and any(c.kind == "eval" for c in checks) else {}
+    why.update({c: (f"{since}, to {tops[c.target]}", "cached") for c in checks if c.kind == "eval" and c.target in tops})
+    checks = [c for c in checks if c not in why]
     skipped += [show] if show not in checks else []
+    skipped += [c for c in why if c.kind == "eval"]
     say(f"{len(paths)} changed path(s); {len(checks)} check(s) to run, {len(skipped)} skipped")
     for c in skipped:
-        say(f"skipped: {c.kind} {c.target} ({why.get(c, 'no changed path maps to it')})")
-        record(c, 0, 0, "skipped", sha, head)
+        reason, result = why.get(c, ("no changed path maps to it", "skipped"))
+        say(f"skipped: {c.kind} {c.target} ({reason})")
+        record(c, 0, 0, result, sha, head)
     times: list[tuple[Check, int, bool]] = []
     for c in checks:
         start = time.monotonic()
-        ok, waited = run(c, tree)
+        ok, waited, stdout = run(c, tree)
         secs, wait = round(time.monotonic() - start - waited), round(waited)
+        if ok:
+            remember(c, tree, began, stdout)
         times.append((c, secs, ok))
         say(f"{'passed' if ok else 'FAILED'}: {c.kind} {c.target} ({secs} s, after {wait} s waiting for the locks)",
             err=not ok)
