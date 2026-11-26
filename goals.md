@@ -101,9 +101,13 @@ With asus off every command exits 3 with "no local model up" and submits nothing
 ## Open pool findings (item 5 and epic #646, in pick-up order)
 
 1. Slot memory kills: the slots share one `environments.slice` limit (acer 7G of 15 GiB, ollama 4G). #830 and #833
-   put a slot's evaluations under the light lock and builds outside it, live after acer-swift's deploy. Still
-   unlocked: `nix flake check`, `nix build` with another option or a non-flake installable, `nix-build`,
-   `nix-instantiate`, a global option before the subcommand, and a devenv evaluation a warm `shell` does not cache.
+   put a slot's evaluations under the light lock and builds outside it, live after acer-swift's deploy. The push
+   hook's gate probe (`nix build --expr` with devenv's own nix) took no lock and no slot wrapper saw it: #843 has it
+   take light itself (live on merge), and in a slot `nix build --expr`, `nix --option k v <sub>` and
+   `nix-instantiate` evaluate under light, building the default outputs (live after acer's deploy). Signal:
+   `exec_pool_memory_kills_total` flat on acer for a day after it. Still unlocked: `nix flake check`, `nix build`
+   with another option, `--file` or `--expr` with an attribute, `nix-build`, the evaluated `.drv` unrooted until its
+   build, and a devenv evaluation a warm `shell` does not cache.
    A goals.md-only push ran `scripts/test-pool-merge-check.py` (it named goals.md), which needs the gate probe; the
    probe was killed 5 times in acer pool2 on 25 Nov. The test now uses placeholder doc names (this PR).
 2. lenovo cannot push nixos-config (stale devenv gate); its root rebuild trigger needs a GitHub SSH key for root.

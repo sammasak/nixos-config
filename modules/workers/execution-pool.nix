@@ -123,36 +123,51 @@ in
         lib.mkIf (lib.elem devEnvironment.name slotNames) {
           environment.systemPackages = [
             poolWait
-            # a global option before the subcommand is not read: `nix --option k v eval` runs unlocked
             (lane "nix" nix ''
-              case ''${1:-} in
+              # the subcommand after any `--option k v`, which goes on to the evaluation
+              n=1
+              while [ "''${!n:-}" = --option ]; do n=$((n + 3)); done
+              m=$((n + 1))
+              case ''${!n:-} in
                 eval | path-info | derivation) light ${nix} "$@"; exit ;;
-                flake) case ''${2:-} in show | metadata | info) light ${nix} "$@"; exit ;; esac ;;
+                flake) case ''${!m:-} in show | metadata | info) light ${nix} "$@"; exit ;; esac ;;
                 build)
                   all=("$@")
-                  # each flake attribute's drvPath under the lock, its build outside; another form runs unlocked
-                  shift
-                  flags=() evalflags=() drvs=() whole=
+                  # each flake attribute's or --expr's drvPath under the lock, its build outside; another form runs unlocked
+                  flags=("''${@:1:n-1}") evalflags=("''${@:1:n-1}") drvs=() exprs=() whole=
+                  shift "$n"
                   while [ $# -gt 0 ]; do
                     case $1 in
                       -o | --out-link) flags+=("$1" "''${2:-}"); shift ;;
+                      --expr) exprs+=("''${2:-}"); shift ;;
                       --impure | --show-trace | --no-write-lock-file) flags+=("$1"); evalflags+=("$1") ;;
                       --no-link | -L | --print-build-logs | --print-out-paths | --keep-going | -k | --json | --rebuild | --dry-run) flags+=("$1") ;;
                       -*) whole=1 ;;
-                      *^*) whole=1 ;;
+                      *^* | *'#') whole=1 ;;
                       *'#'*) drvs+=("$1") ;;
                       *) whole=1 ;;
                     esac
                     shift
                   done
-                  [ -z "$whole" ] && [ ''${#drvs[@]} -gt 0 ] || exec ${nix} "''${all[@]}"
+                  # with --expr a positional is an attribute of it, not a flake reference
+                  [ ''${#exprs[@]} -eq 0 ] || { [ ''${#exprs[@]} -eq 1 ] && [ ''${#drvs[@]} -eq 0 ]; } || whole=1
+                  [ -z "$whole" ] && [ $((''${#drvs[@]} + ''${#exprs[@]})) -gt 0 ] || exec ${nix} "''${all[@]}"
+                  # drv^ its default outputs, as nix build would pick them, not ^* (every output)
+                  apply='d: d.drvPath + "^" + builtins.concatStringsSep "," (d.meta.outputsToInstall or [ d.outputName ])'
                   set -- build "''${flags[@]}"
+                  for e in "''${exprs[@]}"; do
+                    drv=$(light ${nix} eval "''${evalflags[@]}" --raw --expr "$e"$'\n' --apply "$apply") || exit
+                    set -- "$@" "$drv"
+                  done
                   for i in "''${drvs[@]}"; do
-                    drv=$(light ${nix} eval "''${evalflags[@]}" --raw "$i.drvPath") || exit
-                    set -- "$@" "$drv^*"
+                    drv=$(light ${nix} eval "''${evalflags[@]}" --raw "$i" --apply "$apply") || exit
+                    set -- "$@" "$drv"
                   done
                   exec ${nix} "$@" ;;
               esac
+            '')
+            (lane "nix-instantiate" "${config.nix.package}/bin/nix-instantiate" ''
+              light ${config.nix.package}/bin/nix-instantiate "$@"; exit
             '')
             # devenv evaluates in-process and caches it: under the lock its eval, or a warm `shell -- true` for a
             # command that runs a task or a shell, which then evaluates from that cache

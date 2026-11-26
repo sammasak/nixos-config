@@ -3,10 +3,13 @@
 change runs nothing, a rule or dashboard change its own checks and no host, exec-pool its build and the pool's hosts,
 flake.lock and any unmapped path every host (seeded: a rule change beside an unmapped path still evaluates every
 host; two migrations on one number, and a gap, fail). Every evaluation takes the heavy lock, then the light one the
-push hook's evaluation takes, and a build compiles under the heavy one alone."""
+push hook's evaluation takes, and a build compiles under the heavy one alone. A slot's nix wrapper, from the module's
+text with flock and nix stubbed: build --expr and flake attributes evaluate under light and build outside it."""
 
 import importlib.util
+import os
 import pathlib
+import subprocess
 import sys
 import tempfile
 
@@ -95,6 +98,64 @@ check("WORK_LOCKS_HELD=1" in pmc.EVAL and pmc.BUILD.startswith("export WORK_LOCK
       "its nix runs marked as holding its locks, or a pool slot's nix waits on the light hold it is under")
 check(pmc.LIGHT.name == "light-work.lock" and "light-work.lock" in (HERE.parent / "devenv.nix").read_text(),
       "the light lock is the one the push hook's nix flake show takes")
+
+
+def lane(name: str, real: str, d: pathlib.Path) -> pathlib.Path:
+    """A slot's `name` wrapper (modules/workers/execution-pool.nix) as bash, its flock, nix and lock file stubbed."""
+    src = (HERE.parent / "modules/workers/execution-pool.nix").read_text()
+    template = src.split("pkgs.writeShellScriptBin name ''\n", 1)[1].split("\n              ''\n", 1)[0]
+    body = src.split(f'(lane "{name}" {real} \'\'\n', 1)[1].split("\n            '')\n", 1)[0]
+    text = template.replace("${text}", body).replace("${real}", "${nix}")
+    for k, v in {"${pkgs.util-linux}/bin/flock": f"{d}/stub/flock", "/run/work-locks/light-work.lock": f"{d}/light",
+                 "${config.nix.package}/bin/nix-instantiate": f"{d}/stub/nix", "${nix}": f"{d}/stub/nix", "${name}": name,
+                 "''$": "$"}.items():
+        text = text.replace(k, v)
+    out = d / name
+    out.write_text("#!/usr/bin/env bash\n" + text + "\n")
+    out.chmod(0o755)
+    return out
+
+
+# each run of the stub nix as `argv locked|free`: an evaluation prints a drv, as nix eval --raw would
+with tempfile.TemporaryDirectory() as tmp:
+    d = pathlib.Path(tmp)
+    (d / "light").touch()
+    (d / "stub").mkdir()
+    (d / "stub/flock").write_text('#!/usr/bin/env bash\nwhile [ "${1#-}" != "$1" ] || [ "$1" = 900 ] || [ "$1" = 75 ]; do shift; done\n'
+                             'shift; IN_LOCK=locked exec "$@"\n')
+    (d / "stub/nix").write_text(f'#!/usr/bin/env bash\necho "$* ${{IN_LOCK:-free}}" >>{d}/log\n'
+                                '[ "$1" != eval ] || echo /nix/store/x.drv^out\n')
+    for f in ("flock", "nix"):
+        (d / "stub" / f).chmod(0o755)
+    wrappers = {"nix": lane("nix", "nix", d), "nix-instantiate": lane("nix-instantiate", '"${config.nix.package}/bin/nix-instantiate"', d)}
+
+    def runs(*argv: str, exe: str = "nix") -> list[str]:
+        (d / "log").write_text("")
+        subprocess.run([str(wrappers[exe]), *argv], env={k: v for k, v in os.environ.items() if k != "WORK_LOCKS_HELD"}, check=False)
+        return (d / "log").read_text().splitlines()
+
+    probe = "(import ./scripts/gate-probe.nix { }).json"
+    APPLY = 'd: d.drvPath + "^" + builtins.concatStringsSep "," (d.meta.outputsToInstall or [ d.outputName ])'
+    r = runs("build", "--impure", "--no-link", "--print-out-paths", "--expr", probe)
+    check(r == [f"eval --impure --raw --expr {probe}", f" --apply {APPLY} locked", "build --impure --no-link --print-out-paths /nix/store/x.drv^out free"],
+          f"a slot's nix build --expr evaluates its drvPath under the light lock and builds outside it ({r})")
+    r = runs("build", "--no-link", ".#a", ".#b")
+    check(r == [f"eval --raw .#a --apply {APPLY} locked", f"eval --raw .#b --apply {APPLY} locked", "build --no-link /nix/store/x.drv^out /nix/store/x.drv^out free"],
+          f"each flake attribute likewise ({r})")
+    r = runs("build", "--expr", "e", "attr")
+    check(r == ["build --expr e attr free"], f"--expr with an attribute is passed through whole ({r})")
+    r = runs("--option", "cores", "1", "eval", "--raw", ".#x")
+    check(r == ["--option cores 1 eval --raw .#x locked"], f"a global option before eval: still under the lock ({r})")
+    r = runs("--option", "cores", "1", "build", ".#x")
+    check(r == [f"eval --option cores 1 --raw .#x --apply {APPLY} locked", "build --option cores 1 /nix/store/x.drv^out free"],
+          f"a global option before build goes to its evaluation and its build ({r})")
+    r = runs("-A", "x", "default.nix", exe="nix-instantiate")
+    check(r == ["-A x default.nix locked"], f"nix-instantiate runs under the lock ({r})")
+    r = runs("build", ".#")
+    check(r == ["build .# free"], f"the default package (an empty fragment) is passed through whole ({r})")
+    r = runs("store", "gc")
+    check(r == ["store gc free"], f"another subcommand runs unlocked ({r})")
+
 repo = HERE.parent / "pkgs/exec-pool/migrations"
 check(pmc.migrations_problem(repo) is None, f"this tree's exec-pool migrations ({pmc.migrations_problem(repo)})")
 
