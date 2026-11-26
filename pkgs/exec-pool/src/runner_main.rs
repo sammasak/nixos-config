@@ -2700,7 +2700,7 @@ impl MemoryWatch {
                     Err(mpsc::RecvTimeoutError::Timeout)
                 );
                 if let Some(now) = Self::kills(&events).filter(|&n| n > counted) {
-                    count(now - counted);
+                    count(now.saturating_sub(counted));
                     counted = now;
                 }
                 if ended {
