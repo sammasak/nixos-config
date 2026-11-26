@@ -1399,8 +1399,8 @@ def check_runner():
               and lim.get("resets") == [{"overrideStrategy": "asDropin", "text": "[Unit]\nStartLimitIntervalSec=0\n"}] * n,
               f"{host}: each slot's container@ keeps the core's 600 s / 3 starts, which dev-env-reset@ clears before it starts the container; exec-pool-exec@ and each slot's dev-env-reset@ have no start limit, the shared reset template keeps its own ({lim or out.stderr.strip()[-300:]})")
     check(got.get("light") == [{"CPUWeight": 200, "MemoryMin": 2 << 30, "quota": None}, {"CPUWeight": 100, "MemoryMin": 1 << 30, "quota": "200%"}]
-          and got.get("pool") == 7 << 30,
-          f"acer's pool4 is light: weight 100 against 200, a 1G reserve and a 200% CPUQuota, inside the same 7G pool ({got.get('light')}, {got.get('pool')})")
+          and got.get("pool") == 9 << 30,
+          f"acer's pool4 is light: weight 100 against 200, a 1G reserve and a 200% CPUQuota, in a pool raised to 9G ({got.get('light')}, {got.get('pool')})")
     check(got.get("namedLimit") == {"StartLimitIntervalSec": "600", "StartLimitBurst": "3"},
           f"a named worker's container keeps the core's start limit ({got.get('namedLimit') or out.stderr.strip()[-300:]})")
     want = [f"acer-{n}" for n in acer_slots] + [f"msi-{n}" for n in msi_slots]

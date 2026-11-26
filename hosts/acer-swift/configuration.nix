@@ -48,10 +48,11 @@
     pi = true;
     nativeOtel = true;
   };
-  # A 7G pool: pool1 to pool3 reserve 2G each, light pool4 the last 1G (docs/nspawn-workers.md, Sizing).
+  # pool1 to pool3 reserve 2G each, light pool4 1G; 9G, not 7G: three slots alone filled 7G twice on 25 Nov
+  # (docs/nspawn-workers.md, Sizing).
   sam.workers = {
     labelPrefix = "acer";
-    pool.memory = "7G";
+    pool.memory = "9G";
     ghHostsFile = "/home/${config.sam.profile.username}/.config/gh/hosts.yml";
     # the owner's own `codex login`; codex is offered while it holds one (docs/records/execution-pool-credentials.md)
     codexAuthFile = "/home/${config.sam.profile.username}/.codex/auth.json";
@@ -152,6 +153,14 @@
     # num_ctx: longer prompts are cut to fit, and a request's options.num_ctx still overrides it.
     environmentVariables.OLLAMA_CONTEXT_LENGTH = "4096";
   };
+  # the pool full, ollama at its cap and 2.5G for the queue, Authentik and the rest (1.8G with three slots busy, 25 Nov)
+  # inside the 15.6 GiB the kernel reports
+  assertions = [
+    {
+      assertion = (config.sam.workers.pool.memory + 4 * 1073741824) / 1048576 + 2560 <= 15974;
+      message = "hosts/acer-swift: the workers' pool.memory, Ollama's 4G and 2.5G for the host exceed its 15.6 GiB of RAM.";
+    }
+  ];
   # One loaded model: llama3.2:3b peaked at 3.1G at a 16K context; 4K needs less.
   systemd.services.ollama.serviceConfig = {
     MemoryMax = "4G";

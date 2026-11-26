@@ -117,7 +117,7 @@ CPU-throttled 947 s of 1275 s used while cores sat idle; msi `skills91`
 
 | Host | Pool | Prefix | Host's own use | At most (by reserve) | Recommended |
 |------|------|--------|----------------|----------------------|-------------|
-| acer-swift | 7G, 8 cores | `acer` | host services and system about 7.5G (measured before the k3s removal, an upper bound) | 3, plus light `pool4` at 1G | 2 |
+| acer-swift | 9G, 8 cores | `acer` | host services and system 1.8G with three slots busy (25 Nov), Ollama capped at 4G; asserted with 2.5G for the host | 4, the last light `pool4` at 1G | 2 |
 | msi-ms7758 | 10G, 8 cores | `msi` | about 2.8G | 5 | 3 |
 | asus-b460m | 20G, 10 cores | `asus` | not measured yet (32 GB RAM) | 10 | 4 |
 

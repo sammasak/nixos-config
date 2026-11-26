@@ -286,7 +286,7 @@ Placement order: acer, then msi, asus last (it carries ollama, Paddock and the G
 
 | Host | Slots | Note |
 |------|-------|------|
-| acer-swift | `pool1` to `pool4` | Shunt on for `pool1`, a 300K compaction window for `pool2`; `pool4` light (1G reserve, CPUWeight 100 against 200, CPUQuota 200%); offers claude and pi, and codex while the owner's ChatGPT login exists |
+| acer-swift | `pool1` to `pool4` | Shunt on for `pool1`, a 300K compaction window for `pool2`; `pool4` light (1G reserve, CPUWeight 100 against 200, CPUQuota 200%), the slice raised from 7G to 9G (three slots filled 7G twice on 25 Nov, kills at 22:01 and 23:25); offers claude and pi, and codex while the owner's ChatGPT login exists |
 | msi-ms7758 | `pool1` to `pool4` | offers claude; off 21:00 to 08:30 |
 | asus-b460m | none | ollama (one resident model, 130 W cap), agent `paddock`; off 21:00 to 08:30 |
 
