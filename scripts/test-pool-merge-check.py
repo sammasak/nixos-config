@@ -5,11 +5,13 @@ scripts/, modules/workers/ and metrics/records.json the guest-records test, modu
 evaluation, flake.lock and any unmapped path every host (seeded: a rule change beside an unmapped path still evaluates every
 host; two migrations on one number, and a gap, fail). Every evaluation takes the heavy lock, then the light one the
 push hook's evaluation takes, and a build compiles under the heavy one alone. A slot's nix wrapper, from the module's
-text with flock and nix stubbed: build --expr and flake attributes evaluate under light and build outside it."""
+text with flock and nix stubbed: build --expr, --file and flake attributes evaluate under light and build outside it,
+nix-build instantiates under light and builds outside it, and flake check runs under light."""
 
 import importlib.util
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -119,11 +121,14 @@ def lane(name: str, real: str, d: pathlib.Path) -> pathlib.Path:
     """A slot's `name` wrapper (modules/workers/execution-pool.nix) as bash, its flock, nix and lock file stubbed."""
     src = (HERE.parent / "modules/workers/execution-pool.nix").read_text()
     template = src.split("pkgs.writeShellScriptBin name ''\n", 1)[1].split("\n              ''\n", 1)[0]
-    body = src.split(f'(lane "{name}" {real} \'\'\n', 1)[1].split("\n            '')\n", 1)[0]
+    head = f'(lane "{name}" {real} \'\'\n'
+    check(head in src, f"the module has a {name} lane")
+    body = src.split(head, 1)[1].split("\n            '')\n", 1)[0] if head in src else ""
     text = template.replace("${text}", body).replace("${real}", "${nix}")
     for k, v in {"${pkgs.util-linux}/bin/flock": f"{d}/stub/flock", "/run/work-locks/light-work.lock": f"{d}/light",
-                 "${config.nix.package}/bin/nix-instantiate": f"{d}/stub/nix", "${nix}": f"{d}/stub/nix", "${name}": name,
-                 "''$": "$"}.items():
+                 "${config.nix.package}/bin/nix-instantiate": f"{d}/stub/nix-instantiate",
+                 "${config.nix.package}/bin/nix-build": f"{d}/stub/nix-build", "${pkgs.coreutils}/bin/": "", "${pkgs.bash}/bin/bash": "bash",
+                 "${nix}": f"{d}/stub/nix", "${name}": name, "''$": "$"}.items():
         text = text.replace(k, v)
     out = d / name
     out.write_text("#!/usr/bin/env bash\n" + text + "\n")
@@ -139,33 +144,74 @@ with tempfile.TemporaryDirectory() as tmp:
     (d / "stub/flock").write_text('#!/usr/bin/env bash\nwhile [ "${1#-}" != "$1" ] || [ "$1" = 900 ] || [ "$1" = 75 ]; do shift; done\n'
                              'shift; IN_LOCK=locked exec "$@"\n')
     (d / "stub/nix").write_text(f'#!/usr/bin/env bash\necho "$* ${{IN_LOCK:-free}}" >>{d}/log\n'
-                                '[ "$1" != eval ] || echo /nix/store/x.drv^out\n')
-    for f in ("flock", "nix"):
+                                '[ "$1" != eval ] || [[ $* == *fn.nix* ]] || echo /nix/store/x.drv^out\n')
+    # nix-instantiate --add-root R: two roots, the second one's output bin, as the real one prints them
+    (d / "stub/nix-instantiate").write_text(
+        f'#!/usr/bin/env bash\necho "instantiate $* ${{IN_LOCK:-free}}" >>{d}/log\n'
+        '[ "$1" = --add-root ] || exit 0\nln -s /nix/store/x.drv "$2"; ln -s /nix/store/y.drv "$2-2"; echo "$2"; echo "$2-2!bin"\n')
+    (d / "stub/nix-build").write_text(f'#!/usr/bin/env bash\necho "nix-build $* ${{IN_LOCK:-free}}" >>{d}/log\n'
+                                      'echo /nix/store/x-out\nexit "${NB_RC:-0}"\n')
+    for f in ("flock", "nix", "nix-instantiate", "nix-build"):
         (d / "stub" / f).chmod(0o755)
-    wrappers = {"nix": lane("nix", "nix", d), "nix-instantiate": lane("nix-instantiate", '"${config.nix.package}/bin/nix-instantiate"', d)}
+    wrappers = {"nix": lane("nix", "nix", d), "nix-instantiate": lane("nix-instantiate", '"${config.nix.package}/bin/nix-instantiate"', d),
+                "nix-build": lane("nix-build", '"${config.nix.package}/bin/nix-build"', d)}
+    (d / "tmp").mkdir()
+    env = {k: v for k, v in os.environ.items() if k != "WORK_LOCKS_HELD"} | {"TMPDIR": str(d / "tmp")}
 
-    def runs(*argv: str, exe: str = "nix") -> list[str]:
+    def runs(*argv: str, exe: str = "nix", **extra: str) -> list[str]:
         (d / "log").write_text("")
-        subprocess.run([str(wrappers[exe]), *argv], env={k: v for k, v in os.environ.items() if k != "WORK_LOCKS_HELD"}, check=False)
-        return (d / "log").read_text().splitlines()
+        subprocess.run([str(wrappers[exe]), *argv], env=env | extra, check=False, stdout=subprocess.DEVNULL)
+        return [re.sub(rf"{re.escape(str(d / 'tmp'))}/[^ ]+/drv", "ROOT", line) for line in (d / "log").read_text().splitlines()]
 
     probe = "(import ./scripts/gate-probe.nix { }).json"
-    APPLY = 'd: d.drvPath + "^" + builtins.concatStringsSep "," (d.meta.outputsToInstall or [ d.outputName ])'
+    PICK = ('d: if builtins.isAttrs d && d.type or null == "derivation" then d.drvPath + "^" + builtins.concatStringsSep "," '
+            '(if d.outputSpecified or false then [ d.outputName ] else d.meta.outputsToInstall or ')
+    APPLY, FILE = PICK + '[ "out" ]) else ""', PICK + 'd.outputs or [ d.outputName ]) else ""'
     r = runs("build", "--impure", "--no-link", "--print-out-paths", "--expr", probe)
-    check(r == [f"eval --impure --raw --expr {probe}", f" --apply {APPLY} locked", "build --impure --no-link --print-out-paths /nix/store/x.drv^out free"],
+    check(r == [f"eval --impure --raw --expr {probe}", f"  --apply {FILE} locked", "build --impure --no-link --print-out-paths /nix/store/x.drv^out free"],
           f"a slot's nix build --expr evaluates its drvPath under the light lock and builds outside it ({r})")
     r = runs("build", "--no-link", ".#a", ".#b")
     check(r == [f"eval --raw .#a --apply {APPLY} locked", f"eval --raw .#b --apply {APPLY} locked", "build --no-link /nix/store/x.drv^out /nix/store/x.drv^out free"],
           f"each flake attribute likewise ({r})")
-    r = runs("build", "--expr", "e", "attr")
-    check(r == ["build --expr e attr free"], f"--expr with an attribute is passed through whole ({r})")
+    r = runs("build", "--expr", "e", "a", "b")
+    check(r == ["eval --raw --expr e", f" a --apply {FILE} locked", "eval --raw --expr e", f" b --apply {FILE} locked",
+                "build /nix/store/x.drv^out /nix/store/x.drv^out free"],
+          f"each attribute of an --expr evaluates under the lock, the build outside it ({r})")
+    r = runs("build", "--no-link", "-f", "default.nix", "--arg", "x", "1", "hello")
+    check(r == [f"eval --arg x 1 --raw --file default.nix hello --apply {FILE} locked", "build --no-link /nix/store/x.drv^out free"],
+          f"an attribute of a --file likewise, its --arg on the evaluation only ({r})")
+    r = runs("build", "--file", "default.nix")
+    check(r == [f"eval --raw --file default.nix  --apply {FILE} locked", "build /nix/store/x.drv^out free"],
+          f"a --file without an attribute: the file's value ({r})")
+    r = runs("build", "-f", "fn.nix", "--arg", "x", "1")
+    check(r == [f"eval --arg x 1 --raw --file fn.nix  --apply {FILE} locked", "build -f fn.nix --arg x 1 free"],
+          f"a value that is no one derivation (a function to call) is built whole, as nix build would ({r})")
+    r = runs("build", "--no-link", "-o")
+    check(r == ["build --no-link -o free"], f"a flag missing its value is passed through whole, for nix to refuse ({r})")
+    r = runs("build", "--file", "default.nix", ".#x")
+    check(r == ["build --file default.nix .#x free"], f"a flake reference with --file is passed through whole ({r})")
+    r = runs("flake", "check", "--no-build")
+    check(r == ["flake check --no-build locked"], f"nix flake check runs wholly under the lock ({r})")
+    r = runs("-A", "x", "-o", "res", "--arg", "a", "1", "--no-out-link", "default.nix", exe="nix-build")
+    check(r == ["instantiate --add-root ROOT -A x --arg a 1 default.nix locked", "nix-build -o res --no-out-link /nix/store/x.drv /nix/store/y.drv!bin free"],
+          f"nix-build instantiates under the lock and builds the rooted drvs outside it, out-link flags on the build ({r})")
+    check(list((d / "tmp").iterdir()) == [], "nix-build removes its roots once built")
+    b = subprocess.run([str(wrappers["nix-build"]), "default.nix"], env=env | {"NB_RC": "3"}, capture_output=True, text=True, check=False)
+    check(b.returncode == 3 and b.stdout == "/nix/store/x-out\n", f"nix-build's exit status and stdout are the build's ({b.returncode}, {b.stdout!r})")
+    (d / "x.drv").symlink_to("/nix/store/x.drv")
+    r = runs(str(d / "x.drv"), exe="nix-build")
+    check(r == [f"nix-build {d}/x.drv free"], f"nix-build of a drv is passed through whole ({r})")
+    r = runs("default.nix", "-A", exe="nix-build")
+    check(r == ["nix-build default.nix -A free"], f"nix-build with a flag missing its value is passed through whole ({r})")
+    r = runs("--check", "default.nix", exe="nix-build")
+    check(r == ["nix-build --check default.nix free"], f"nix-build with another flag is passed through whole ({r})")
     r = runs("--option", "cores", "1", "eval", "--raw", ".#x")
     check(r == ["--option cores 1 eval --raw .#x locked"], f"a global option before eval: still under the lock ({r})")
     r = runs("--option", "cores", "1", "build", ".#x")
     check(r == [f"eval --option cores 1 --raw .#x --apply {APPLY} locked", "build --option cores 1 /nix/store/x.drv^out free"],
           f"a global option before build goes to its evaluation and its build ({r})")
     r = runs("-A", "x", "default.nix", exe="nix-instantiate")
-    check(r == ["-A x default.nix locked"], f"nix-instantiate runs under the lock ({r})")
+    check(r == ["instantiate -A x default.nix locked"], f"nix-instantiate runs under the lock ({r})")
     r = runs("build", ".#")
     check(r == ["build .# free"], f"the default package (an empty fragment) is passed through whole ({r})")
     r = runs("store", "gc")
