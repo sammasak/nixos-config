@@ -11,6 +11,10 @@ A path maps to checks only where the gate's history shows what it can break (goa
   pkgs/exec-pool/              its package build (crate tests, clippy, rustfmt) and the evaluation of the pool's hosts;
                                a migration also its numbering, one name per number and no gap
   scripts/test-*               nothing: no host reads one, and the push hook and the full gate run it
+  hosts/asus-b460m/, modules/homelab/ollama-host.nix, modules/homelab/paddock.nix, flake.lock
+                               also scripts/test-ollama-gpu.py on its gate-probe section (asus as deployed and seeded):
+                               an asus or Ollama change can break a seeded case the host's own evaluation never runs;
+                               off asus its CUDA builds are deferred and pass unrecorded, so it proves the evaluation
   other scripts/, modules/workers/, metrics/records.json
                                also scripts/test-guest-records.py: a guest's record kinds are records.json's
   modules/workers/             also the execution-pool-vm check's evaluation, its drvPath only (no build)
@@ -75,11 +79,14 @@ MIGRATION = re.compile(r"(\d{4})_([a-z0-9_]+)\.(up|down)\.sql")
 FLAKE_FILES = ("flake.nix", "flake.lock")
 FLAKE_DIRS = ("flake-modules/", "tests/", "pkgs/", "modules/workers/", "templates/", "apps/", "lib/app-manifest/")
 SHOW = "nixos-push-eval"
+# the paths whose change can move the test's gate-probe section; the section evaluates asus alone
+OLLAMA_GPU = ("hosts/asus-b460m/", "modules/homelab/ollama-host.nix", "modules/homelab/paddock.nix", "flake.lock")
+PROBE_SECTIONS = {"scripts/test-ollama-gpu.py": "ollama-gpu"}
 
 
 @dataclass(frozen=True, order=True)
 class Check:
-    kind: str  # eval, evalcheck, show, build, check, script, migrations
+    kind: str  # eval, evalcheck, show, build, check, script, probe, migrations
     target: str
 
 
@@ -100,6 +107,8 @@ def plan(paths: list[str], hosts: list[str], pkgdirs: list[str]) -> list[Check]:
             want.add(Check("script", GUEST_RECORDS))
         if p.startswith("modules/workers/"):
             want.add(Check("evalcheck", "execution-pool-vm"))
+        if p.startswith(OLLAMA_GPU):
+            want.add(Check("probe", "scripts/test-ollama-gpu.py"))
         if RULES.fullmatch(p):
             want.update(Check("check", c) for c in RULE_CHECKS)
         elif DASHBOARDS.fullmatch(p):
@@ -169,6 +178,20 @@ FLAKE_SHOW = [*HEAVY, "flock", "-o", str(LIGHT), "env", "WORK_LOCKS_HELD=1", "GC
               "show", "--json", "--all-systems", "--no-write-lock-file"]
 # one heavy hold over both steps: released between them, a long wait could let a GC delete the evaluated .drv
 BUILD = 'export WORK_LOCKS_HELD=1; drv=$(flock -o "$1" nix eval --raw "$2") && nix build --no-link -L "$drv^*"'
+# a probe test: its section's drvPath under both locks (the divisor as devenv.nix's probe: asus evaluated nine times),
+# then the probe built and the test run on it. The test's own nix (a re-evaluation once a GC took the .drv files) is
+# not marked as holding the light lock, so a pool slot's nix takes it.
+PROBE = ('export WORK_LOCKS_HELD=1 GC_FREE_SPACE_DIVISOR=16; drv=$(flock -o "$1" nix eval --impure --raw --expr '
+         '"(import ./scripts/gate-probe.nix { only = [ \\"$2\\" ]; }).json.drvPath") && '
+         'out=$(nix build --no-link -L --print-out-paths "$drv^*") && unset WORK_LOCKS_HELD && GATE_PROBE=$out exec "$3" "$4"')
+
+
+def gate_heavy(tree: pathlib.Path) -> str:
+    """devenv.nix's gateHeavy, the pattern scripts/gate_defer.py defers a CUDA build by (it fails without one)."""
+    m = re.search(r'^  gateHeavy = "([^"]+)";$', (tree / "devenv.nix").read_text(), re.M)
+    if not m:
+        raise SystemExit(f"{tree / 'devenv.nix'}: no gateHeavy")
+    return m.group(1)
 
 
 def command(check: Check, tree: pathlib.Path) -> list[str] | None:
@@ -185,6 +208,9 @@ def command(check: Check, tree: pathlib.Path) -> list[str] | None:
         return [*HEAVY, "bash", "-c", BUILD, "build", str(LIGHT), f"{tree}#{attr}.drvPath"]
     if check.kind == "script":
         return [sys.executable, check.target]
+    if check.kind == "probe":
+        return [*HEAVY, "env", f"GATE_HEAVY={gate_heavy(tree)}", "bash", "-c", PROBE, "probe", str(LIGHT),
+                PROBE_SECTIONS[check.target], sys.executable, check.target]
     return None
 
 
@@ -192,7 +218,11 @@ EVALS = ("eval", "evalcheck")
 
 
 def run(check: Check, tree: pathlib.Path) -> bool:
-    argv = command(check, tree)
+    try:
+        argv = command(check, tree)
+    except SystemExit as e:
+        say(str(e), err=True)
+        return False
     if argv is None:
         problem = migrations_problem(tree / check.target)
         if problem:

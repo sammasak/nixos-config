@@ -2,8 +2,9 @@
 """scripts/pool_merge_check.py's choice of checks from changed paths, and its migration numbering, without Nix: a docs
 change runs nothing, a rule or dashboard change its own checks and no host, exec-pool its build and the pool's hosts,
 scripts/, modules/workers/ and metrics/records.json the guest-records test, modules/workers/ also execution-pool-vm's
-evaluation, flake.lock and any unmapped path every host, and a path that feeds a flake output the push hook's nix flake
-show of the merge (seeded: a merge whose flake show fails fails; a rule change beside an unmapped path still evaluates every
+evaluation, flake.lock and any unmapped path every host, asus's host dir and the ollama and paddock modules the ollama-gpu test on
+its probe section (its drvPath under both locks, the build and the test under the heavy one alone, GATE_HEAVY from
+devenv.nix; seeded: a failed evaluation runs no test, a devenv.nix without gateHeavy fails that check alone), and a path that feeds a flake output the push hook's nix flake show of the merge (seeded: a merge whose flake show fails fails; a rule change beside an unmapped path still evaluates every
 host; two migrations on one number, and a gap, fail). Every evaluation takes the heavy lock, then the light one the
 push hook's evaluation takes, and a build compiles under the heavy one alone. A slot's nix wrapper, from the module's
 text with flock and nix stubbed: build --expr, --file and flake attributes evaluate under light and build outside it,
@@ -92,6 +93,18 @@ s = got("pkgs/scheduled-gate/scheduled_gate.py")
 check(("build", "scheduled-gate") in s and evals(s) == set(HOSTS), "another package: its build and every host")
 check(evals(got("pkgs/patches/x.patch")) == set(HOSTS) and not any(k == "build" for k, _ in got("pkgs/patches/x.patch")),
       "a pkgs dir with no package of its own: every host, no build")
+og = ("probe", "scripts/test-ollama-gpu.py")
+for path in ("hosts/asus-b460m/configuration.nix", "modules/homelab/ollama-host.nix", "modules/homelab/paddock.nix", "flake.lock"):
+    o = got(path)
+    check(og in o and evals(o) == set(HOSTS), f"{path}: the ollama-gpu test on its probe section, and every host ({sorted(o)})")
+for path in ("docs/ollama.md", "hosts/acer-swift/configuration.nix", "modules/homelab/ollama-pull-pinned.sh", "scripts/test-ollama-gpu.py"):
+    check(og not in got(path), f"{path}: no ollama-gpu test")
+check(set(pmc.PROBE_SECTIONS) == {t for k, t in got(*pmc.OLLAMA_GPU) if k == "probe"} and all(
+      f'gate_probe.section("{sec}")' in (HERE.parent / t).read_text() for t, sec in pmc.PROBE_SECTIONS.items()),
+      f"each probe check names the section its test reads ({pmc.PROBE_SECTIONS})")
+heavy = pmc.gate_heavy(HERE.parent)
+check(re.search(heavy, "/nix/store/x-cuda_cudart-12.8") is not None and re.search(heavy, "/nix/store/x-python3-3.13") is None,
+      f"GATE_HEAVY is devenv.nix's gateHeavy ({heavy})")
 mixed = got("modules/homelab/monitoring/rules/homelab.yaml", "modules/core/fleet.nix")
 check(evals(mixed) == set(HOSTS) and ("check", "monitoring-rules-tests") in mixed,
       "seeded: a rule change beside an unmapped path still evaluates every host")
@@ -124,6 +137,35 @@ check([sh[i + 2] for i, a in enumerate(sh) if a == "flock"] == [str(pmc.LOCK), s
       and sh[sh.index("nix"):] == ["nix", "flake", "show", "--json", "--all-systems", "--no-write-lock-file", "/t"]
       and {"WORK_LOCKS_HELD=1", "GC_FREE_SPACE_DIVISOR=16"} <= set(sh[sh.index("env"):sh.index("nix")]),
       f"show: the push hook's nix flake show of the merge, under the heavy lock, then the light one ({sh})")
+with tempfile.TemporaryDirectory() as tmp:
+    d = pathlib.Path(tmp)
+    (d / "bin").mkdir()
+    (d / "scripts").mkdir()
+    (d / "devenv.nix").write_text('{\n  gateHeavy = "-cuda-";\n}\n')
+    (d / "bin/flock").write_text('#!/usr/bin/env bash\nwhile [ "${1#-}" != "$1" ]; do shift; done\n'
+                                 'l=$1; shift; LOCKS="$LOCKS ${l##*/}" exec "$@"\n')
+    (d / "bin/nix").write_text(f'#!/usr/bin/env bash\necho "$* |$LOCKS" >>{d}/log\n[ "$1" != eval ] || [ -z "$EVAL_RC" ] || exit "$EVAL_RC"\n'
+                               '[ "$1" = eval ] && echo /nix/store/p.drv || echo /nix/store/p-out\n')
+    for f in ("flock", "nix"):
+        (d / "bin" / f).chmod(0o755)
+    (d / "scripts/test-ollama-gpu.py").write_text(
+        f"import os\nopen({str(d / 'log')!r}, 'a').write(' '.join(f'{{k}}={{os.environ.get(k)}}' for k in "
+        "('GATE_PROBE', 'GATE_HEAVY', 'WORK_LOCKS_HELD')) + ' |' + os.environ.get('LOCKS', '') + '\\n')\n")
+    argv = pmc.command(pmc.Check("probe", "scripts/test-ollama-gpu.py"), d)
+    rc = subprocess.run(argv, cwd=d, env=os.environ | {"PATH": f"{d / 'bin'}:{os.environ['PATH']}"}, check=False).returncode
+    log = (d / "log").read_text().splitlines()
+    lk, li = pmc.LOCK.name, pmc.LIGHT.name
+    check(rc == 0 and log == [
+        'eval --impure --raw --expr (import ./scripts/gate-probe.nix { only = [ "ollama-gpu" ]; }).json.drvPath | ' + f"{lk} {li}",
+        f"build --no-link -L --print-out-paths /nix/store/p.drv^* | {lk}",
+        f"GATE_PROBE=/nix/store/p-out GATE_HEAVY=-cuda- WORK_LOCKS_HELD=None | {lk}"],
+        f"probe: the section's drvPath under the heavy lock, then the light one; its build and the test under the heavy one alone, on that probe ({rc}, {log})")
+    (d / "log").write_text("")
+    rc = subprocess.run(argv, cwd=d, env=os.environ | {"PATH": f"{d / 'bin'}:{os.environ['PATH']}", "EVAL_RC": "3"}, check=False).returncode
+    log = (d / "log").read_text().splitlines()
+    check(rc != 0 and len(log) == 1 and log[0].startswith("eval "), f"seeded: a failed probe evaluation fails the check, nothing built or run ({rc}, {log})")
+    (d / "devenv.nix").write_text("{ }\n")
+    check(pmc.run(pmc.Check("probe", "scripts/test-ollama-gpu.py"), d) is False, "seeded: no gateHeavy in devenv.nix fails the probe check")
 a = (pmc.command(pmc.Check("evalcheck", "execution-pool-vm"), tree) or [""])[-1]
 check(a == "/t#checks.x86_64-linux.execution-pool-vm.drvPath", f"evalcheck: the check's drvPath, nothing built ({a})")
 check("WORK_LOCKS_HELD=1" in pmc.EVAL and pmc.BUILD.startswith("export WORK_LOCKS_HELD=1;"),
