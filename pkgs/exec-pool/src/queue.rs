@@ -26,7 +26,7 @@ pub const DOWN: &str = include_str!("../migrations/0001_queue.down.sql");
 /// From 7 each records its floor, the oldest VERSION whose reads and writes stay correct on it: an additive one keeps
 /// the previous floor, so a binary rolled back across it still serves; one an older binary would misread or break by
 /// its writes records its own version.
-const STEPS: [(i32, &str); 28] = [
+const STEPS: [(i32, &str); 29] = [
     (1, UP),
     (2, include_str!("../migrations/0002_submitter.up.sql")),
     (3, include_str!("../migrations/0003_result.up.sql")),
@@ -70,6 +70,7 @@ const STEPS: [(i32, &str); 28] = [
     (26, include_str!("../migrations/0026_cancel_review.up.sql")),
     (27, include_str!("../migrations/0027_result_head.up.sql")),
     (28, include_str!("../migrations/0028_requires.up.sql")),
+    (29, include_str!("../migrations/0029_subagent_calls.up.sql")),
 ];
 const DOWN_SUBMITTER: &str = include_str!("../migrations/0002_submitter.down.sql");
 const DOWN_RESULT: &str = include_str!("../migrations/0003_result.down.sql");
@@ -89,7 +90,7 @@ const DOWN_SESSION_SUMMARIES: &str = include_str!("../migrations/0020_session_su
 const DOWN_TURN_ARM: &str = include_str!("../migrations/0021_turn_arm.down.sql");
 const DOWN_CONTINUE_BODY: &str = include_str!("../migrations/0023_continue_body.down.sql");
 const DOWN_HOLD_INPUT: &str = include_str!("../migrations/0025_hold_input.down.sql");
-const VERSION: i32 = 28;
+const VERSION: i32 = 29;
 /// The fence's SQLSTATE, raised by `attempts_fence`.
 const FENCED: &str = "XP409";
 /// `submit_task`'s SQLSTATE for capabilities no recent slot offers (`0028_requires.up.sql`).
@@ -1573,7 +1574,9 @@ impl Store {
                 &format!(
                     "SELECT {SUMMARY} || jsonb_build_object('result', CASE WHEN r.attempt_id IS NOT NULL THEN \
                      jsonb_build_object('lease_epoch', r.lease_epoch, 'outcome', r.outcome, \
-                     'exit_code', r.exit_code, 'output', r.output, 'branch', r.branch, 'recorded_at', r.recorded_at) END) \
+                     'exit_code', r.exit_code, 'output', r.output, 'branch', r.branch, 'recorded_at', r.recorded_at, \
+                     'subagent_calls', to_jsonb(r)->'subagent_calls', \
+                     'subagent_call_count', to_jsonb(r)->'subagent_call_count') END) \
                      FROM task_summaries t JOIN attempts a ON a.task_id = t.id \
                      LEFT JOIN results r ON r.attempt_id = a.id AND (r.lease_epoch = a.lease_epoch OR t.session) WHERE t.id = $1 OR a.id = $1"
                 ),
@@ -1771,19 +1774,24 @@ fn insert_result(
         ],
     )?;
     // a remote runner may record into a queue its host has not migrated to 27 yet: the head is left out there
-    if n == 1
-        && tx
-            .query_one(
-                "SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema = current_schema() \
-                 AND table_name = 'results' AND column_name = 'head')",
-                &[],
-            )?
-            .try_get::<_, bool>(0)?
-    {
+    if n == 1 && has_column(tx, "results", "head")? {
         tx.execute(
             // a session's turn that pushed nothing keeps the commit its last push left
             "UPDATE results SET head = coalesce($2, head) WHERE attempt_id = $1",
             &[&attempt, &result.head],
+        )?;
+    }
+    // and to 29: the subagent calls are left out there
+    if n == 1 && has_column(tx, "results", "subagent_calls")? {
+        let calls = result
+            .subagent_calls
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()?;
+        let count = result.subagent_call_count.map(i64::from);
+        tx.execute(
+            "UPDATE results SET subagent_calls = $2, subagent_call_count = $3::bigint WHERE attempt_id = $1",
+            &[&attempt, &calls, &count],
         )?;
     }
     Ok(n == 1)
@@ -2405,6 +2413,17 @@ fn session_totals(
     usage(tx, out, hosts)
 }
 
+/// Whether the queue's `table` has `column`: a remote runner's queue host may not have migrated to it yet.
+fn has_column(tx: &mut Transaction<'_>, table: &str, column: &str) -> Result<bool, QueueError> {
+    Ok(tx
+        .query_one(
+            "SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema = current_schema() \
+             AND table_name = $1 AND column_name = $2)",
+            &[&table, &column],
+        )?
+        .try_get(0)?)
+}
+
 /// The turns row of a park: its usage, whether its branch holds the tree, and the slot's arm.
 fn insert_turn(
     tx: &mut Transaction<'_>,
@@ -2418,14 +2437,7 @@ fn insert_turn(
         usage.as_ref().map(|u| i64_of("tokens", f(u))).transpose()
     };
     // a remote runner may park into a queue its host has not migrated to 21 yet: the arm is left out there
-    let armed = park.arm.is_some()
-        && tx
-            .query_one(
-                "SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema = current_schema() \
-                 AND table_name = 'turns' AND column_name = 'variant')",
-                &[],
-            )?
-            .try_get::<_, bool>(0)?;
+    let armed = park.arm.is_some() && has_column(tx, "turns", "variant")?;
     let (input, output, read, creation) = (
         tokens(|u| u.input_tokens)?,
         tokens(|u| u.output_tokens)?,
@@ -2458,6 +2470,13 @@ fn insert_turn(
          cache_creation_tokens, cost_usd, handed_back, delivered) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
     };
     tx.execute(sql, &row)?;
+    let calls = park.result.subagent_call_count.map(i64::from);
+    if calls.is_some() && has_column(tx, "turns", "subagent_calls")? {
+        tx.execute(
+            "UPDATE turns SET subagent_calls = $3::bigint WHERE attempt_id = $1 AND lease_epoch = $2",
+            &[&attempt, &epoch, &calls],
+        )?;
+    }
     Ok(())
 }
 
@@ -2479,7 +2498,7 @@ fn usage(tx: &mut Transaction<'_>, out: &mut String, hosts: &[String]) -> Result
          count(*) FILTER (WHERE EXISTS (SELECT FROM events e WHERE e.attempt_id = u.attempt_id \
          AND e.lease_epoch = u.lease_epoch AND e.to_status = 'waiting' \
          AND e.reason IN ('turn_error', 'turn_timeout', 'turn_memory_kill'))), \
-         coalesce(sum(u.cost_usd::numeric), 0)::float8 \
+         coalesce(sum(u.subagent_calls), 0)::bigint, coalesce(sum(u.cost_usd::numeric), 0)::float8 \
          FROM turns u JOIN attempts a ON a.id = u.attempt_id JOIN tasks t ON t.id = a.task_id GROUP BY 1, 2, 3, 4",
         &[],
     )?;
@@ -2508,6 +2527,8 @@ fn usage(tx: &mut Transaction<'_>, out: &mut String, hosts: &[String]) -> Result
          # TYPE exec_pool_sessions_reported_last_day gauge\n",
         "# HELP exec_pool_session_turn_errors_total Session turns that parked as turn_error, turn_timeout or turn_memory_kill, by host, arm and agent kind.\n\
          # TYPE exec_pool_session_turn_errors_total counter\n",
+        "# HELP exec_pool_session_subagent_calls_total Subagent calls session turns made, as their transcripts showed, by host, arm and agent kind.\n\
+         # TYPE exec_pool_session_subagent_calls_total counter\n",
     ];
     let row_of = |(host, variant, shunt): &(String, String, String), agent: &str| {
         rows.iter().find(|r| {
@@ -2542,7 +2563,7 @@ fn usage(tx: &mut Transaction<'_>, out: &mut String, hosts: &[String]) -> Result
         let (host, variant, shunt) = arm;
         for agent in AGENTS {
             let cost: f64 = row_of(arm, agent)
-                .map(|r| r.try_get(11))
+                .map(|r| r.try_get(12))
                 .transpose()?
                 .unwrap_or(0.0);
             let _ = writeln!(
