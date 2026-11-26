@@ -30,7 +30,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import textwrap
 import time
 import types
 
@@ -518,20 +517,18 @@ def eval_record_cases(d: pathlib.Path, repo: pathlib.Path, head: str, base: str,
     (repo / "untracked.txt").unlink()
     out.append((rc == 0 and ran(log) == (True, True) and "toplevel" not in json.loads(rec.read_text()),
                 f"seeded: a dirty checkout (an untracked file) neither reads its tree's record nor writes it ({log})"))
-    # seventh-host-check's baselines when run on its own (NIXOS_QA_TOPLEVELS unset), its own two lines run here on a
-    # record holding lenovo alone, as a pool-merge-check of a dashboard or exec-pool change records some hosts
+    # seventh-host-check's baselines when run on its own (NIXOS_QA_TOPLEVELS unset) are eval_record.baselines of the
+    # real hosts, here on a record holding lenovo alone, as a pool-merge-check of a dashboard or exec-pool change
+    # records some hosts
     seventh = (HERE / "seventh-host-check.py").read_text()
-    pick = re.search(r'\n( *)(qa = os\.environ\.get\("NIXOS_QA_TOPLEVELS"\)\n *reused = [^\n]*)\n', seventh)
-    out.append((pick is not None, "seventh-host-check picks its reused baselines in two lines (qa =, reused =)"))
-    if pick:
-        os.environ.pop("NIXOS_QA_TOPLEVELS", None)
-        seed(**full)
-        ns: dict = {"os": os, "pathlib": pathlib, "eval_record": pmc.eval_record, "ROOT": repo, "toplevels": dict}
-        for real, want in ((["lenovo", "naked-pi"], {}), (["lenovo"], {"lenovo": DRV})):
-            exec(textwrap.dedent(pick.group(1) + pick.group(2)), {**ns, "real": real}, got_ := {})
-            out.append((got_.get("reused") == want,
-                        f"seeded: seventh-host-check reuses the record's baselines only when it holds every real host "
-                        f"({real}: {got_.get('reused')}); a partial one is not used, so its naked-pi check stays as before"))
+    picks = ("reused = toplevels(pathlib.Path(qa).read_text()) if qa is not None "
+             "else eval_record.baselines(ROOT, real)")
+    out.append((picks in seventh, "seventh-host-check takes the record's baselines through eval_record.baselines"))
+    seed(**full)
+    for real, want in ((["lenovo", "naked-pi"], {}), (["lenovo"], {"lenovo": DRV})):
+        got_ = pmc.eval_record.baselines(repo, real)
+        out.append((got_ == want, ("seeded: seventh-host-check reuses the record's baselines only when it holds every "
+                                   f"real host ({real}: {got_}); a partial one is not used, its naked-pi check as before")))
     shutil.rmtree(d / "state")
     rc, log, steps, said = go(SHOW_RC="1", EVAL_RC="1")
     out.append((rc == 1 and ran(log) == (True, True) and not state.exists(),
