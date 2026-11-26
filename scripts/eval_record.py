@@ -130,6 +130,13 @@ def toplevels(repo: pathlib.Path) -> dict[str, str]:
     return dict(rec.get("toplevel", {})) if rec else {}
 
 
+def baselines(repo: pathlib.Path, hosts: list[str]) -> dict[str, str]:
+    """The recorded toplevels of repo's tree when they cover every one of hosts, else none: a partial record (a
+    pool-merge-check that evaluated some hosts) would leave a check that compares them all short of some."""
+    tops = toplevels(repo)
+    return tops if tops and set(hosts) <= set(tops) else {}
+
+
 def kinds_of(show: str) -> str:
     """`nix flake show --json` output's kinds as `jq -c keys` prints them."""
     return json.dumps(sorted(json.loads(show)), separators=(",", ":"))

@@ -7,8 +7,10 @@ which only gate-step lines count: the others are counted as other kinds); --loki
 one day at a time, newest first, back to exactly --since. Prints one markdown row per (gate, step, check): runs, mean
 and worst minutes, the mean minutes waited for a work lock, fails (result=fail). Minutes are seconds=, the run alone:
 a step that waits for a lock (the push eval, the probe, pool-merge-*) records that wait apart as wait_seconds=, which
-the wait column averages over the runs that carry a number ("-" when none does; unknown is not one). A record of a check that did not run (result=skipped, deferred or dry, written
-with seconds=0) is counted as not run, and one without step or a whole number of seconds as skipped; a failed run
+the wait column averages over the runs that carry a number ("-" when none does; unknown is not one). A record of a
+check that did not run (result=skipped, deferred, dry or cached, the last a step an eval record let skip:
+scripts/eval_record.py; written with seconds=0) is counted as not run, and one without step or a whole number of
+seconds as skipped; a failed run
 recorded with seconds=0 (the flake check's exit trap, its time unmeasured) counts as a run and a fail but has no
 minutes. None is read as a 0-second run. Exit 0 with the table; 2 when no run is recorded, the records cannot be read,
 or a Loki day hit its limit."""
@@ -29,7 +31,7 @@ QUERY = '{job="platform",kind="gate-step"}'
 LIMIT = 5000
 SECONDS = re.compile(r"[0-9]+")
 SPOOL_STAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T")
-NOT_RUN = {"skipped", "deferred", "dry"}
+NOT_RUN = {"skipped", "deferred", "dry", "cached"}
 
 
 @dataclass(frozen=True)
@@ -80,7 +82,7 @@ class Counts:
     other: int = 0
 
     def summary(self) -> str:
-        return (f"{self.read} records read, {self.not_run} not run (skipped, deferred or dry), {self.skipped} skipped "
+        return (f"{self.read} records read, {self.not_run} not run (skipped, deferred, dry or cached), {self.skipped} skipped "
                 f"(no step, or no whole seconds), {self.other} of other kinds")
 
 

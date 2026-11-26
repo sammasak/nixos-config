@@ -205,14 +205,18 @@ let
         fi
         # scripts/test-flake-output-kinds.py compares the flake with flakeKinds in seconds, without evaluating an output
         cur=flake-output-kinds
+        cached=""
         if kinds=$(${lib.getExe evalRecord} flake-show); then
+          cached=1
           echo "nixos-flake-check: flake show skipped: tree ''${began:0:12} passed it before under this nix (eval record; NIXOS_EVAL_RECORD=0 runs it)" >&2
-          ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check=flake-output-kinds owner="$me" seconds=0 result=cached head="''${NIXOS_QA_HEAD:-}"
         else
           kinds=$(nix flake show --json --all-systems --no-write-lock-file | jq -c 'keys')
         fi
         [ "$kinds" = '${flakeKinds}' ] \
           || { echo "nixos-flake-check: flake outputs are $kinds: add the new kind to this step" >&2; exit 1; }
+        # after the comparison: recorded kinds that differ leave the fail record alone
+        [ -z "$cached" ] \
+          || ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check=flake-output-kinds owner="$me" seconds=0 result=cached head="''${NIXOS_QA_HEAD:-}"
         # flake show omits legacyPackages' contents: pkgsDir's entries are evaluated here, built only by pool-merge-check
         cur=legacyPackages
         nix eval --no-write-lock-file .#legacyPackages \
@@ -1414,7 +1418,7 @@ let
         # a tree whose flake show passed before under this nix (scripts/eval_record.py) is not evaluated again
         if ${lib.getExe evalRecord} flake-show >/dev/null; then
           r=cached light_run=0 light_wait=0
-          echo "nixos-qa: ${pushEval.name} skipped: tree $(git rev-parse --short 'HEAD^{tree}') passed it before under this nix (eval record; NIXOS_EVAL_RECORD=0 runs it)" | tee -a "$gitdir/nixos-qa-times"
+          echo "nixos-qa: ${pushEval.name} skipped: tree $(git rev-parse --short=12 'HEAD^{tree}') passed it before under this nix (eval record; NIXOS_EVAL_RECORD=0 runs it)" | tee -a "$gitdir/nixos-qa-times"
         else
           if light_held ${lib.getExe pushEval}; then r=pass; else r=fail; fi
           echo "nixos-qa: ${pushEval.name} took $light_run s, after $light_wait s waiting for light-work.lock" | tee -a "$gitdir/nixos-qa-times"

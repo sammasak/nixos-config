@@ -5,8 +5,8 @@ scripts/fixtures/seventh-host (base role, no secrets, so no .sops.yaml recipient
 Each host is its own nix eval (scripts/seventh-host-probe.nix) of the seeded copy, and for the real hosts of an
 unseeded copy of the same files. Inside nixos:qa that unseeded toplevel is the one its flake check evaluated from the
 same files (NIXOS_QA_TOPLEVELS), not evaluated again; run on its own, on a clean checkout, those its tree's eval record
-holds (scripts/eval_record.py; NIXOS_EVAL_RECORD=0 reads none). naked-pi's, the cheapest, still is evaluated, and must
-be the same drv.
+holds when it holds every real host (scripts/eval_record.py; NIXOS_EVAL_RECORD=0 reads none). naked-pi's, the
+cheapest, still is evaluated, and must be the same drv.
 
 Proved: the seed's toplevel drvPath evaluates; it is in every list derived from the fleet (deploy nodes, every host's
 ssh known_hosts, black-pi's node-exporter targets and dashboards, lenovo's AdGuard rewrites, Loki's and each store
@@ -228,9 +228,9 @@ with tempfile.TemporaryDirectory() as tmp:
     check(len(real) >= 6 and SEED not in real, f"the real hosts are read from hosts.nix ({real})")
     # "host drv" lines of this gate's flake check, which evaluated the tree these copies are of (an edit between the
     # two steps fails the moved check below, never passes it); on its own, the record of this clean checkout's tree,
-    # whose tracked files are the copies'
+    # whose tracked files are the copies', only when it has every real host (or none is used)
     qa = os.environ.get("NIXOS_QA_TOPLEVELS")
-    reused = toplevels(pathlib.Path(qa).read_text()) if qa is not None else eval_record.toplevels(ROOT)
+    reused = toplevels(pathlib.Path(qa).read_text()) if qa is not None else eval_record.baselines(ROOT, real)
     again = {"naked-pi"} | {h for h in real if h not in reused}
     print(f"seventh-host: unseeded toplevels from {'the flake check' if qa is not None else 'the eval record'}: "
           f"{sorted(set(real) - again) or 'none'}; evaluated here: {sorted(again)}", flush=True)

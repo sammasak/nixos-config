@@ -395,7 +395,7 @@ with tempfile.TemporaryDirectory() as t:
     step, _, rest = records.read_text().partition("\n")
     check(got == "PUSHLINTS" and re.fullmatch(rf" gate-step gate=nixos-qa-push step=nixos-push-eval seconds=0 wait_seconds=0 result=cached sha={rq[:7]}", step)
           and re.match(rf"1 gate gate=nixos-qa-push .*result=owed .*head={rq} ", rest)
-          and f"nixos-push-eval skipped: tree {tree_rq[:7]} passed it before under this nix" in times.read_text()
+          and f"nixos-push-eval skipped: tree {tree_rq[:12]} passed it before under this nix" in times.read_text()
           and f"full QA not run for {rq}, owed" in times.read_text(),
           f"RH the pushed tree's flake show recorded under this nix: no push eval, a cached step record, still owed ({got}, {step!r}, {rest!r})")
     case("RS NIXOS_EVAL_RECORD=0: the record is not read", rq, "FAST", NIXOS_EVAL_RECORD="0")
@@ -679,8 +679,8 @@ if pe and fc:
         check(rc == 0 and showed and rec["nix"] == "nix (Nix) 9.9", f"FC another nix's record is not used, and is replaced ({rc}, {rec})")
         rfile.write_text(json.dumps({**rec, "nix": NIXV, "flake_kinds": '["checks"]'}))
         rc, showed, rec, err, rr = run_("flake")
-        check(rc == 1 and not showed and "flake outputs are [\"checks\"]: add the new kind" in err,
-              f"FC seeded: recorded kinds that differ from the step's still fail it ({rc}, {err[-300:]!r})")
+        check(rc == 1 and not showed and "flake outputs are [\"checks\"]: add the new kind" in err and "result=cached" not in rr,
+              f"FC seeded: recorded kinds that differ from the step's still fail it, with no cached record ({rc}, {err[-300:]!r}, {rr!r})")
         rfile.write_text(json.dumps({"tree": ptree, "nix": NIXV, "flake_show": "ok", "flake_kinds": flake_kinds}))
         (pr / "flake.nix").write_text("{ dirty = 1; }\n")
         rc, showed, rec, err, rr = run_("flake")
@@ -723,6 +723,20 @@ with tempfile.TemporaryDirectory() as t:
         os.environ["WORK_LOCKS_HELD"] = "1"
         gate_probe.section("s")
         check((t / "state").read_text().split() == ["free", "1"], "under a caller's light hold the section does not take it again")
+        os.environ.pop("WORK_LOCKS_HELD", None)
+        holder = subprocess.Popen(["flock", str(lock), "sleep", "4"])
+        while subprocess.run(["flock", "-n", str(lock), "true"], check=False).returncode == 0:
+            time.sleep(0.05)
+        (t / "argv").write_text("")
+        gate_probe.LIGHT_WAIT = 1
+        try:
+            gate_probe.section("s")
+            gave_up = ""
+        except SystemExit as e:
+            gave_up = str(e)
+        holder.kill(), holder.wait()
+        check("still held after 1 s" in gave_up and (t / "argv").read_text() == "",
+              f"seeded: a light lock held past the wait gives up, saying so, and builds nothing ({gave_up!r})")
     finally:
         os.environ["PATH"], gate_probe.LIGHT = saved[0], saved[1]
         os.environ.pop("WORK_LOCKS_HELD", None)

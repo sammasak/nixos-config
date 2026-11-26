@@ -9,6 +9,7 @@ import pathlib
 import shutil
 import subprocess
 import sys
+import time
 
 failed = 0
 OWNER = "scripts/" + os.path.basename(sys.argv[0])
@@ -66,6 +67,7 @@ def section(name):
 
 
 LIGHT = "/run/work-locks/light-work.lock"
+LIGHT_WAIT = 900
 
 
 def own_section(name):
@@ -76,7 +78,17 @@ def own_section(name):
     fd = None
     if not os.environ.get("WORK_LOCKS_HELD") and os.path.exists(LIGHT):
         fd = os.open(LIGHT, os.O_RDONLY)
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        # within 900 s, as the probe's flock -w 900
+        until = time.monotonic() + LIGHT_WAIT
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() > until:
+                    os.close(fd)
+                    sys.exit(f"gate_probe: {LIGHT} still held after {LIGHT_WAIT} s")
+                time.sleep(1)
     try:
         return subprocess.run(argv, check=True, stdout=subprocess.PIPE, text=True,
                               env={**os.environ, **({"WORK_LOCKS_HELD": "1"} if fd is not None else {})}).stdout.strip()
