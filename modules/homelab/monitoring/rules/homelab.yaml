@@ -318,18 +318,20 @@ groups:
       # A try that fails before its textfile write (a full /var) leaves the last gauges served, so a queue last read 0
       # hides StoreUploadStuck. 1800 s is three missed 10-minute retries; with the 30m for, a transfer may run an hour.
       # Absent: /run is tmpfs, so after a boot no try has written it; past 30 minutes of uptime, the same grace as a
-      # stale file, so a long first send is not this. A sender is a node with the queue gauge in the last 4 days, not
-      # 1: msi and asus sleep Fri 21:00 to Mon 08:30. That also drops acer, whose retain job writes
-      # the same file hourly with no queue gauge; a stalled retain is acer's failed unit, not an upload stopping.
+      # stale file, so a long first send is not this. A sender is a node with store-upload.path loaded: the systemd
+      # collector serves it from boot, with no /var and no try, however long the host was off (the scrape keeps its
+      # state="failed" series: modules/homelab/monitoring/prometheus.nix). A switch that removes store-upload unloads
+      # it, so the file left in /run does not fire. That also drops acer, whose retain job writes the same file hourly
+      # from store-upload-retain; a stalled retain is acer's failed unit, not an upload stopping.
       - alert: StoreUploadStale
         expr: |
           (
             max by (node) (time() - node_textfile_mtime_seconds{job="node-exporter",file=~".*/store-upload[.]prom"} > 1800)
-            or max by (node) (max_over_time(store_upload_queue_paths{job="node-exporter"}[4d]))
+            or max by (node) (node_systemd_unit_state{job="node-exporter",name="store-upload.path",state="failed"})
               unless on (node) node_textfile_mtime_seconds{job="node-exporter",file=~".*/store-upload[.]prom"}
               and on (node) max by (node) (time() - node_boot_time_seconds{job="node-exporter"} > 1800)
           )
-          and on (node) max by (node) (max_over_time(store_upload_queue_paths{job="node-exporter"}[4d]))
+          and on (node) max by (node) (node_systemd_unit_state{job="node-exporter",name="store-upload.path",state="failed"})
           and on (node) max by (node) (up{job="node-exporter"} == 1)
           and on () max(up{job="node-exporter",node="acer-swift"}) == 1
         for: 30m

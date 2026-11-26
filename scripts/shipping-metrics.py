@@ -49,10 +49,13 @@ METRICS = {
     "shipping_deploy_rollbacks_open": "Per host, deploys rolled back in the last 24 h with no good deploy of that host since.",
     "shipping_deploy_lag_commits": "Commits on main the host's last good deploy does not have.",
     "shipping_deploy_lag_hours": "Hours since the oldest commit on main the host does not have was made (0 when current).",
-    "shipping_pr_phase_hours": "Hours per phase of deploy-repo PRs merged in the last 7 d, by quantile: idle (last commit to the start of its passing push gate, gate queue wait included: the records carry none), gate, gate_to_merge, merge_to_deploy (to the end of the first good deploy containing the merge).",
+    "shipping_pr_phase_hours": "Hours per phase of deploy-repo PRs merged in the last 7 d, by quantile: idle (last commit to the start of its first passing gate: a full gate, the push hook's fast set or a pool merge check; gate queue wait included: the records carry none), gate, gate_to_merge, merge_to_deploy (to the end of the first good deploy of any host containing the merge).",
     "shipping_pr_phase_prs": "Deploy-repo PRs merged in the last 7 d behind each phase's quantiles.",
-    "shipping_pr_gate_retries": "Failed push gates on a deploy-repo PR's commits before its passing one, PRs merged in the last 7 d, by quantile.",
-    "shipping_pr_phase_unmatched": "Deploy-repo PRs merged in the last 7 d with no passing push gate on their commits (no_gate), no good deploy containing their merge yet (not_deployed), or merged before deploys were recorded (before_records).",
+    "shipping_pr_gate_retries": "Failed gates (full, fast push set, pool merge check) on a deploy-repo PR's commits before its passing one, PRs merged in the last 7 d, by quantile.",
+    "shipping_pr_phase_unmatched": "Deploy-repo PRs merged in the last 7 d with no passing gate on their commits (no_gate), no good deploy containing their merge yet (not_deployed), or merged before deploys were recorded (before_records).",
+    "shipping_pr_merge_to_deploy_hours": "Hours from a deploy-repo PR's merge to the end of the host's first good deploy containing it, PRs merged in the last 7 d, by host and quantile.",
+    "shipping_pr_merge_to_deploy_prs": "Deploy-repo PRs merged in the last 7 d behind a host's merge_to_deploy quantiles, by host.",
+    "shipping_pr_not_deployed": "Deploy-repo PRs merged in the last 7 d (after deploys were recorded) that no good deploy of the host contains yet, by host.",
 }
 LABELS = ["needs-live", "needs-decision", "blocked", "approved", "ready-for-agent"]
 GRADE = re.compile(r"Grade:\s*(\d+)\s*/\s*10")
@@ -69,6 +72,11 @@ PHASES = ("idle", "gate", "gate_to_merge", "merge_to_deploy")
 DEPLOY_RECORDS_SINCE = datetime(2026, 11, 16, 12, 53, tzinfo=timezone.utc).timestamp()
 # the full gate's runs: by the pre-push hook until it ran the fast set only, then on main by the schedule (scheduled-gate.py)
 GATE_QUERY = '{job="platform",kind="gate"} |~ "mode=(push|scheduled)"'
+# what a PR passed before its merge (#902): the full gate, the push hook's fast set since 24 Nov (mode=fast, written
+# only once that set passed, as result=owed) and the pool's merge check on its head (gate-step records, no gate record)
+PHASE_GATE_QUERY = '{job="platform",kind="gate"} |~ "mode=(push|scheduled|fast)"'
+STEP_FAIL_QUERY = '{job="platform",kind="gate-step"} |= "result=fail"'
+POOL_CHECK_QUERY = '{job="platform",kind="gate-step"} |= "gate=pool-merge-check"'
 DEPLOY_QUERY = '{job="platform",kind="deploy"}'
 # a run's Loki days by (query, days back): phases re-reads the days gates and deploys fetched; main() empties it
 LOKI_READ = {}
@@ -361,7 +369,7 @@ def gates(loki, out, want):
         for q in (0.5, 0.9):
             if secs:
                 out.add("shipping_gate_seconds", quantile(secs, q), host=host, quantile=str(q))
-    records = loki_records(loki, '{job="platform",kind="gate-step"} |= "result=fail"', 7)
+    records = loki_records(loki, STEP_FAIL_QUERY, 7)
     newest = step_last_failures(records)
     for (step, check), n in sorted(step_failures(records).items()):
         out.add("shipping_gate_step_failures", n, step=step, check=check, window="7d")
@@ -431,9 +439,14 @@ def node_of(host, hostnames):
     return match[0] if len(match) == 1 else host
 
 
-def deploys(loki, gh, out, owner, repo, hostnames, now):
-    recs = loki_records(loki, DEPLOY_QUERY, LOKI_DAYS,
+def deploy_records(loki, hostnames):
+    """The deploy records back to every host's last good deploy, at most LOKI_DAYS."""
+    return loki_records(loki, DEPLOY_QUERY, LOKI_DAYS,
                         lambda r: set(hostnames) <= {node_of(d.get("node", ""), hostnames) for _, d in r if d.get("result") == "ok"})
+
+
+def deploys(loki, gh, out, owner, repo, hostnames, now):
+    recs = deploy_records(loki, hostnames)
     week = [d for t, d in recs if t >= now.timestamp() - 7 * 86400]
     by = {}
     for d in week:
@@ -476,59 +489,110 @@ def contains(gh, owner, repo, merge, sha):
         return False
 
 
-def phases(gh, loki, out, merged, owner, repo, now, cache_path):
+def gate_runs(f, gate_recs, step_fails, pool_recs):
+    """The gate runs on a PR's commits as (end, seconds or None, passed), oldest first: a full gate record (mode push or
+    scheduled, pass or fail); the push hook's fast record (mode=fast, result=owed, which it writes only once its set
+    passed); a push hook whose fast set failed (its nixos-qa-push step record: it writes no gate record then); and a
+    pool merge check of the PR head (gate-step records sharing head= the PR head and sha= that run's merge commit: it
+    passed when none failed, and ran from its first record's start to its last record)."""
+    def mine(r):
+        return bool(r.get("sha")) and any(s.startswith(r["sha"]) for s in f["shas"])
+
+    def secs(r):
+        return int(r["seconds"]) if r.get("seconds", "").isdigit() else None
+    runs = []
+    for t, r in gate_recs:
+        if not mine(r):
+            continue
+        if r.get("mode") in ("push", "scheduled") and r.get("result") in ("pass", "fail"):
+            runs.append((t, secs(r), r["result"] == "pass"))
+        elif r.get("mode") == "fast" and r.get("result") == "owed":
+            runs.append((t, secs(r), True))
+    runs += [(t, None, False) for t, r in step_fails if r.get("gate") == "nixos-qa-push" and r.get("result") == "fail" and mine(r)]
+    checks = {}
+    for t, r in pool_recs:
+        if f["shas"] and r.get("gate") == "pool-merge-check" and r.get("head") == f["shas"][-1]:
+            checks.setdefault(r.get("sha", ""), []).append((t, r))
+    for recs in checks.values():
+        end = max(t for t, _ in recs)
+        begin = min(t - (secs(r) or 0) for t, r in recs)
+        runs.append((end, round(end - begin), all(r.get("result") != "fail" for _, r in recs)))
+    return sorted(runs, key=lambda x: x[0])
+
+
+def phases(gh, loki, out, merged, owner, repo, now, cache_path, hostnames):
     """Where a deploy-repo PR's time went, from the facts prs() kept and the gate and deploy records: idle (last
-    commit to the start of the first passing push gate on one of its shas after it; queue wait included), gate,
-    gate_to_merge, merge_to_deploy (to the end of the first good deploy after the merge whose sha has it), and the
-    failed push gates on its shas before the passing one. A deploy is matched once and kept in the cache file; a
-    deploy that lacks the merge is kept as tried, so no pair is compared twice. Compare calls stop at PHASE_BUDGET;
-    a PR left unmatched by it is counted on a later run."""
+    commit to the start of the first passing gate run on its commits after it, gate_runs(); queue wait included), gate,
+    gate_to_merge, merge_to_deploy (to the end of the first good deploy of any host after the merge whose sha has it,
+    and per host), and the failed gate runs before the passing one. A host's first deploy that has the merge is kept
+    in the cache file, and so are the deployed shas that have it and those that lack it, so no pair is compared twice.
+    Compare calls stop at PHASE_BUDGET; a PR left unmatched by it is counted on a later run."""
     known = [(it, it["phase_facts"]) for it in merged if "phase_facts" in it]
     cache, kept = load_cache(cache_path), {}
 
     def days(times):
         return min(LOKI_DAYS, int((now.timestamp() - min(times)) / 86400) + 1) if times else 0
-    gate_recs = sorted(loki_records(loki, GATE_QUERY, days([f["last"] for _, f in known if f["last"]])), key=lambda x: x[0])
-    # a deploy query costs the Pi seconds a day: only back to the oldest merge not matched yet
-    open_merges = [ts(it["pull_request"]["merged_at"]).timestamp() for it, _ in known if cache.get(pr_key(it), {}).get("deployed") is None]
-    deploy_recs = sorted(((t, d) for t, d in loki_records(loki, DEPLOY_QUERY, days(open_merges)) if d.get("result") == "ok" and d.get("sha")),
-                         key=lambda x: x[0])
+    back = days([f["last"] for _, f in known if f["last"]])
+    gate_recs = loki_records(loki, PHASE_GATE_QUERY, back)
+    step_fails = loki_records(loki, STEP_FAIL_QUERY, back)
+    pool_recs = loki_records(loki, POOL_CHECK_QUERY, back)
+    # a deploy query costs the Pi seconds a day: back to the oldest merge since the deploy records began, as any PR may
+    # still lack a host (gates() and deploys() have read most of these days already this run)
+    merges = [ts(it["pull_request"]["merged_at"]).timestamp() for it, _ in known]
+    deploy_recs = sorted(((t, d) for t, d in loki_records(loki, DEPLOY_QUERY, days([m for m in merges if m >= DEPLOY_RECORDS_SINCE]))
+                          if d.get("result") == "ok" and d.get("sha")), key=lambda x: x[0])
+    # every host with a good deploy in deploys()'s days (read already), so a host that has deployed none of the PRs
+    # still shows, as not_deployed
+    nodes = sorted({d["node"] for _, d in deploy_recs + deploy_records(loki, hostnames) if d.get("result") == "ok" and d.get("node")})
     stop = time.monotonic() + PHASE_BUDGET
     hours = {p: [] for p in PHASES}
+    by_host = {n: [] for n in nodes}
+    not_deployed = {n: 0 for n in nodes}
     retries, unmatched = [], {"no_gate": 0, "not_deployed": 0, "before_records": 0}
     for it, f in known:
         merged_at = ts(it["pull_request"]["merged_at"]).timestamp()
-        mine = [(t, r) for t, r in gate_recs if r.get("sha") and any(s.startswith(r["sha"]) for s in f["shas"])]
-        passed = next(((t, r) for t, r in mine if r.get("result") == "pass" and r.get("seconds", "").isdigit()
-                       and f["last"] <= t <= merged_at), None)
+        runs = gate_runs(f, gate_recs, step_fails, pool_recs)
+        passed = next(((t, s) for t, s, ok in runs if ok and s is not None and f["last"] <= t <= merged_at), None)
         if passed:
-            t, r = passed
-            hours["idle"].append(max(t - int(r["seconds"]) - f["last"], 0) / 3600)
-            hours["gate"].append(int(r["seconds"]) / 3600)
+            t, secs = passed
+            hours["idle"].append(max(t - secs - f["last"], 0) / 3600)
+            hours["gate"].append(secs / 3600)
             hours["gate_to_merge"].append((merged_at - t) / 3600)
-            retries.append(sum(r2.get("result") == "fail" for t2, r2 in mine if t2 < t))
+            retries.append(sum(not ok for t2, _, ok in runs if t2 < t))
         else:
             unmatched["no_gate"] += 1
         if merged_at < DEPLOY_RECORDS_SINCE:
             unmatched["before_records"] += 1
             continue
         entry = kept[pr_key(it)] = cache.get(pr_key(it), {"deployed": None, "tried": []})
-        if entry["deployed"] is None:
-            for t, d in deploy_recs:
-                if t <= merged_at or d["sha"] in entry["tried"]:
+        entry.setdefault("hosts", {})
+        entry.setdefault("has", [])
+        complete = True
+        for t, d in deploy_recs:
+            node = d.get("node")
+            if t <= merged_at or d["sha"] in entry["tried"] or (entry["deployed"] is not None and (not node or node in entry["hosts"])):
+                continue
+            if not f["merge"].startswith(d["sha"]) and d["sha"] not in entry["has"]:
+                if time.monotonic() > stop:
+                    complete = False
+                    break
+                if not contains(gh, owner, repo, f["merge"], d["sha"]):
+                    entry["tried"].append(d["sha"])
                     continue
-                if not f["merge"].startswith(d["sha"]):
-                    if time.monotonic() > stop:
-                        break
-                    if not contains(gh, owner, repo, f["merge"], d["sha"]):
-                        entry["tried"].append(d["sha"])
-                        continue
+                entry["has"].append(d["sha"])
+            if entry["deployed"] is None:
                 entry["deployed"] = t
-                break
-            else:
-                unmatched["not_deployed"] += 1
+            if node:
+                entry["hosts"].setdefault(node, t)
         if entry["deployed"] is not None:
             hours["merge_to_deploy"].append((entry["deployed"] - merged_at) / 3600)
+        elif complete:
+            unmatched["not_deployed"] += 1
+        for n in nodes:
+            if n in entry["hosts"]:
+                by_host[n].append((entry["hosts"][n] - merged_at) / 3600)
+            elif complete:
+                not_deployed[n] += 1
     with open(f"{cache_path}.tmp", "w") as fh:
         json.dump(kept, fh)
     os.replace(f"{cache_path}.tmp", cache_path)
@@ -542,6 +606,12 @@ def phases(gh, loki, out, merged, owner, repo, now, cache_path):
             out.add("shipping_pr_gate_retries", quantile(retries, q), quantile=str(q))
     for reason, n in unmatched.items():
         out.add("shipping_pr_phase_unmatched", n, reason=reason)
+    for n in nodes:
+        out.add("shipping_pr_merge_to_deploy_prs", len(by_host[n]), host=n, node=node_of(n, hostnames))
+        out.add("shipping_pr_not_deployed", not_deployed[n], host=n, node=node_of(n, hostnames))
+        for q in (0.5, 0.9):
+            if by_host[n]:
+                out.add("shipping_pr_merge_to_deploy_hours", quantile(by_host[n], q), host=n, node=node_of(n, hostnames), quantile=str(q))
 
 
 def previous_success(path):
@@ -612,7 +682,7 @@ def main(argv=None):
     section("gates", lambda o: gates(a.loki, o, alerts["GateFailRateHigh"]["lastRuns"]["value"]))
     section("deploys", lambda o: deploys(a.loki, gh, o, a.owner, a.deploy_repo, hostnames, now))
     if merged is not None:
-        section("phases", lambda o: phases(gh, a.loki, o, merged, a.owner, a.deploy_repo, now, os.path.join(state, "phase-cache.json")))
+        section("phases", lambda o: phases(gh, a.loki, o, merged, a.owner, a.deploy_repo, now, os.path.join(state, "phase-cache.json"), hostnames))
     for name in ("issues", "prs", "reviews", "escapes", "gates", "deploys", "phases"):
         # a section that did not succeed this run failed, a skipped reviews or phases (no prs list) included
         out.add("shipping_collector_section_failed", failed.get(name, 1), section=name)

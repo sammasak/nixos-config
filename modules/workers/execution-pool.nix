@@ -141,7 +141,7 @@ in
                     rc=$?
                   fi
                   [ -z "$fd" ] || exec {fd}<&-
-                  PLATFORM_RECORD_SHIPPER=host ${lib.getExe record} lock lane=light class="$class" wait_seconds=$((held - start)) seconds=$((SECONDS - held)) rc="$rc" >&2 || :
+                  PLATFORM_RECORD_SHIPPER=host PLATFORM_RECORD_SPOOL=${spool} ${lib.getExe record} lock lane=light class="$class" wait_seconds=$((held - start)) seconds=$((SECONDS - held)) rc="$rc" >&2 || :
                   return "$rc"
                 }
                 if [ -z "''${WORK_LOCKS_HELD:-}" ] && [ -e /run/work-locks/light-work.lock ]; then
@@ -153,6 +153,9 @@ in
           nix = lib.getExe config.nix.package;
           devenv = lib.getExe pkgs.devenv;
           record = pkgs.callPackage ../../pkgs/platform-record/package.nix { };
+          # the spool the host ships is the guest user's own (scripts/guest-records.py), not the HOME a runner step gets
+          # (an attempt's under attempts/, a session turn's /session/cur/home: pkgs/exec-pool/src/workspace.rs)
+          spool = "${config.users.users.${dev.user}.home}/.local/state/platform-records";
           cargoJobs = toString (
             lib.max 1 (dev.instances.${devEnvironment.name}.memory.reserved / 1073741824)
           );
