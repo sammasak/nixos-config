@@ -455,6 +455,54 @@ let
           }
         ];
       }
+      {
+        name = "a step pattern clears once a scheduled gate on main passes that step after its last failure, though another step left that run red";
+        interval = "1m";
+        input_series = [
+          {
+            series = ''shipping_gate_step_failures{check="step",step="nixos-flake-check",window="7d"}'';
+            values = "${n minFails}x${n (stepFor + 40)}";
+          }
+          {
+            series = ''shipping_gate_step_last_failure_timestamp_seconds{check="step",step="nixos-flake-check"}'';
+            values = "60x${n (stepFor + 40)}";
+          }
+          {
+            series = ''shipping_gate_runs_counted{host="acer-swift"}'';
+            values = "${n lastRuns}x${n (stepFor + 40)}";
+          }
+          {
+            series = "homelab_scheduled_gate_green_timestamp_seconds{${gateNode}}";
+            values = "0x${n (stepFor + 40)}";
+          }
+          # a pass before the last failure handles nothing; the one after it does
+          {
+            series = ''shipping_gate_step_scheduled_pass_timestamp_seconds{check="step",step="nixos-flake-check"}'';
+            values = "30x${n (stepFor + 10)} ${n ((stepFor + 10) * 60)}x30";
+          }
+        ];
+        alert_rule_test = [
+          {
+            alertname = "RetroDueStepFailsRepeat";
+            eval_time = "${n (stepFor + 5)}m";
+            exp_alerts = [
+              {
+                exp_labels = {
+                  step = "nixos-flake-check";
+                  check = "step";
+                  severity = "warning";
+                  team = "shipping";
+                };
+              }
+            ];
+          }
+          {
+            alertname = "RetroDueStepFailsRepeat";
+            eval_time = "${n (stepFor + 20)}m";
+            exp_alerts = [ ];
+          }
+        ];
+      }
       (overdueCase "main moved at the start and no scheduled gate finished for the limit: overdue" 0 true
         true
       )

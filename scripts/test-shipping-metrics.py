@@ -79,7 +79,11 @@ GATES = [f"gate=nixos-qa seconds={100 + i} result={'fail' if i < 5 else 'pass'} 
     (18, f"gate=nixos-qa seconds=500 result=fail sha={sha(10, 1)[:7]} mode=push deferred=0"),
     (16, f"gate=nixos-qa seconds=3600 result=pass sha={sha(10, 1)[:7]} mode=push deferred=0"),
     (10, "gate=nixos-qa seconds=600 result=pass sha=fffffff mode=push deferred=0"),
-    (29, f"gate=nixos-qa seconds=1800 result=pass sha={sha(11, 101)[:7]} mode=push deferred=0")]
+    (29, f"gate=nixos-qa seconds=1800 result=pass sha={sha(11, 101)[:7]} mode=push deferred=0"),
+    (2, f"gate=nixos-qa seconds=900 result=fail sha=5c4ed00 mode=scheduled deferred=0 head=5c4ed00{'0' * 33}")]
+# lint passed on the scheduled head 2 h ago (its newest pass there), and on a push head since, which is not main
+STEP_PASSES = [(2, "gate=nixos-qa step=lint seconds=5 result=pass sha=5c4ed00"), (3, "gate=nixos-qa step=lint seconds=5 result=pass sha=5c4ed00"),
+               (1, "gate=nixos-qa step=lint seconds=5 result=pass sha=fffffff")]
 # merge_to_deploy: d0000000 (1.5 h ago) predates PR 10's merge, d0000001 is PR 11's merge (1.1 h after it, no
 # compare), d0000002 the first after PR 10's that has it (0.5 h); nothing after PR 13's has it (not deployed)
 DEPLOYS = ["node=lenovo result=ok seconds=9 rolled_back=0 sha=abc1234",
@@ -105,7 +109,8 @@ class Fake(http.server.BaseHTTPRequestHandler):
         if u.path.startswith("/loki/"):
             query = q["query"][0]
             lines = (GATES if 'kind="gate"' in query else DEPLOYS if 'kind="deploy"' in query
-                     else ["gate=nixos-qa step=lint result=fail"] if 'kind="gate-step"' in query else [])
+                     else ["gate=nixos-qa step=lint result=fail"] if '|= "result=fail"' in query
+                     else STEP_PASSES if 'kind="gate-step"' in query else [])
             span = range(int(q["start"][0]), int(q["end"][0]))
             # a line is i seconds old, a (hours, line) pair that many hours
             stamped = [(NOW - l[0] * 3600, l[1]) if isinstance(l, tuple) else (NOW - i, l) for i, l in enumerate(lines)]
@@ -218,6 +223,19 @@ check(sm.step_failures([check_rec(DASH, "none"), step_rec("nixos-flake-check", "
 check(sm.step_last_failures([(30, check_rec(DASH, H1)[1]), (20, step_rec("nixos-flake-check", H2)[1]), (10, check_rec(DASH, H2)[1])])
       == {("nixos-flake-check", DASH): 30},
       "seeded: a unit's newest failure is its latest record's time; an umbrella record its inner check explains is not one")
+def pass_rec(t, line):
+    return (t, rec(line)[1])
+FLAKE = ("nixos-flake-check", DASH)
+units = {FLAKE: 1, ("lint", "step"): 1}
+check(sm.step_scheduled_passes([pass_rec(40, f"gate=nixos-qa step=lint result=pass sha={H1[:8]}"),
+                                pass_rec(50, f"gate=nixos-qa step=lint result=pass sha={H2[:8]}"),
+                                pass_rec(45, f"gate=nixos-qa step=nixos-flake-check check={DASH} result=built head={H1}"),
+                                pass_rec(60, f"gate=nixos-qa step=nixos-flake-check check={DASH} result=deferred head={H1}"),
+                                pass_rec(70, f"gate=nixos-qa step=nixos-flake-check result=pass sha={H1[:8]}"),
+                                pass_rec(80, f"gate=on-demand step=lint result=pass sha={H1[:8]}")], {H1[:7]}, units)
+      == {("lint", "step"): 40, FLAKE: 45},
+      "seeded: a unit's main pass is its own pass record on a scheduled head; a deferral, the step's pass for an inner"
+      " check, another head or an on-demand run is none")
 
 
 def commit_item(msg, h, repo="nixos-config"):
@@ -273,6 +291,9 @@ with tempfile.TemporaryDirectory() as tmp:
     check(abs(m.get('shipping_gate_step_last_failure_timestamp_seconds{check="step",step="lint"}', 0) - NOW) < 1
           and sum(k.startswith("shipping_gate_step_last_failure") for k in m) == 1,
           "the step's newest failure is written beside its count, with the same labels")
+    check(abs(m.get('shipping_gate_step_scheduled_pass_timestamp_seconds{check="step",step="lint"}', 0) - (NOW - 2 * 3600)) < 1
+          and sum(k.startswith("shipping_gate_step_scheduled_pass") for k in m) == 1,
+          "a failed step's newest pass on a scheduled gate's head is written beside it; a push head's pass is not main's")
     check(m.get('shipping_gate_runs_counted{host="unknown"}') == 1
           and not any('host=""' in k for k in m),
           "a stream without a host label counts as host=\"unknown\", never as an empty host")
