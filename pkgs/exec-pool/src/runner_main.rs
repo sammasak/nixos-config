@@ -4,7 +4,7 @@
 //! loops: reconcile, claim an attempt for the slot, accept `start`, write the manifest, start `exec-pool-exec@<slot>`,
 //! then checkpoint and settle from its result, record the result, and release the slot with `dev-env-reset@<slot>`. It
 //! begins no work before `start` is accepted, and never re-sends an event whose outcome is unknown: the lease expires
-//! and `reconcile` decides. While the helper runs it renews the lease every [`HEARTBEAT`]; a cancel the heartbeat
+//! and `reconcile` decides. While the helper runs it renews the lease and reconciles every [`HEARTBEAT`]; a cancel the heartbeat
 //! reports, or a lease it finds lost, writes the cancel marker the helper stops at. A runner that dies renews nothing,
 //! and the lease expires. A reset that fails quarantines the slot, in the queue too, until an operator removes the
 //! marker. With `EXEC_POOL_OFF_TIMER` it claims only while `EXEC_POOL_CLAIM_SECS` from now ends before that timer
@@ -716,6 +716,11 @@ impl Runner {
                         beat = Instant::now();
                         stopping = self.beat(store, manifest, stopping);
                         self.put_log(store, manifest, &dir, &mut logged);
+                        // a slot inside a long turn is no idle slot: with every slot in one, no timer would wake
+                        match store.reconcile() {
+                            Ok(changes) => changes.iter().for_each(log_change),
+                            Err(e) => self.error("reconcile", &e),
+                        }
                     }
                     thread::sleep(Duration::from_secs(1));
                 };
