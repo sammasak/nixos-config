@@ -522,11 +522,11 @@
               }
             ]
           },
-          "noValue": "no systemd data"
+          "noValue": "no systemd data (systemd collector failed?)"
         },
         "overrides": []
       },
-      "description": "Failed service, socket, timer, target and path units; the exporter leaves out mounts, devices, scopes, slices and automounts."
+      "description": "Failed service, socket, timer, target and path units; the exporter leaves out mounts, devices, scopes, slices and automounts. No value while the host is up means its systemd collector failed (NodeSystemdCollectorFailed)."
     },
     {
       "id": 14,
@@ -614,7 +614,7 @@
       },
       "targets": [
         {
-          "expr": "max by (name) (node_systemd_unit_state{state=\"failed\",node=\"$node\"} == 1)",
+          "expr": "max by (name) (node_systemd_unit_state{state=\"failed\",node=\"$node\"} == 1) or label_replace(max(node_scrape_collector_success{collector=\"systemd\",node=\"$node\"} == 0), \"name\", \"systemd collector failed\", \"\", \"\")",
           "legendFormat": "{{node}}",
           "format": "table",
           "instant": true,
@@ -627,6 +627,7 @@
         },
         "overrides": []
       },
+      "description": "The row \"systemd collector failed\" stands for every unit of this host while its systemd collector fails: none can be read (NodeSystemdCollectorFailed).",
       "transformations": [
         {
           "id": "organize",
