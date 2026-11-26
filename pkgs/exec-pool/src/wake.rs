@@ -72,7 +72,7 @@ impl Wake {
     }
 }
 
-/// How long ago an `HH:MM` that passed today is refused, not read as tomorrow's.
+/// How long ago an `HH:MM` that last passed is refused, not read as the next one, a day later.
 ///
 /// Within it, the time was more likely given in another zone (UTC is one or two hours behind Europe/Stockholm) or
 /// just missed than meant as a wait of a day.
@@ -81,37 +81,43 @@ pub const RECENT_SECS: i64 = 6 * 3600;
 /// `--until` or `--at` as RFC 3339 with `now`'s offset: `HH:MM` is the next such time in `now`'s zone, after `now`.
 ///
 /// # Errors
-/// [`Error::Wake`] for neither `HH:MM` nor RFC 3339 with an offset, or an `HH:MM` that passed today less than
-/// [`RECENT_SECS`] ago, which names tomorrow's in RFC 3339 for a caller that means it.
+/// [`Error::Wake`] for neither `HH:MM` nor RFC 3339 with an offset, or an `HH:MM` that last passed less than
+/// [`RECENT_SECS`] ago (yesterday's included), which names the next one in RFC 3339 for a caller that means it.
 pub fn due_at(spec: &str, now: &ZonedDateTime) -> Result<String, Error> {
     let bad = |e: &dyn std::fmt::Display| Error::Wake(format!("{spec:?}: {e}"));
     let rfc3339 = |at: &ZonedDateTime| at.strftime("%Y-%m-%dT%H:%M:%S%:z").to_string();
     let at = match hh_mm(spec) {
         Some((h, m)) => {
+            let zoned = |t: jiff::civil::DateTime| {
+                t.to_zoned_datetime(now.time_zone().clone())
+                    .map_err(|e| bad(&e))
+            };
             let today = now.date().at(h, m, 0, 0);
-            let mut at = today
-                .to_zoned_datetime(now.time_zone().clone())
-                .map_err(|e| bad(&e))?;
+            let (last, next) = if zoned(today)?.timestamp() <= now.timestamp() {
+                (
+                    zoned(today)?,
+                    zoned(today.tomorrow().map_err(|e| bad(&e))?)?,
+                )
+            } else {
+                (
+                    zoned(today.yesterday().map_err(|e| bad(&e))?)?,
+                    zoned(today)?,
+                )
+            };
             let ago = now
                 .timestamp()
                 .as_second()
-                .saturating_sub(at.timestamp().as_second());
-            if ago >= 0 {
-                at = today
-                    .tomorrow()
-                    .and_then(|t| t.to_zoned_datetime(now.time_zone().clone()))
-                    .map_err(|e| bad(&e))?;
-                if ago < RECENT_SECS {
-                    return Err(bad(&format!(
-                        "passed {} min ago in local time ({}): for that time in another zone pass RFC 3339 with \
-                         its offset, for tomorrow's {}",
-                        ago / 60,
-                        now.strftime("%H:%M%:z"),
-                        rfc3339(&at)
-                    )));
-                }
+                .saturating_sub(last.timestamp().as_second());
+            if ago < RECENT_SECS {
+                return Err(bad(&format!(
+                    "passed {} min ago in local time ({}): for that time in another zone pass RFC 3339 with \
+                     its offset, for the next one {}",
+                    ago / 60,
+                    now.strftime("%H:%M%:z"),
+                    rfc3339(&next)
+                )));
             }
-            at
+            next
         }
         None => spec
             .parse::<Timestamp>()
@@ -165,6 +171,15 @@ mod tests {
             "this minute has begun: {err}"
         );
         assert!(due_at("09:00", &at(14, 59)).is_err());
+        let err = due_at("23:59", &at(0, 30)).unwrap_err().to_string();
+        assert!(
+            err.contains("passed 31 min ago") && err.contains("2026-11-24T23:59:00+01:00"),
+            "yesterday's, just passed: {err}"
+        );
+        assert_eq!(
+            due_at("18:00", &at(0, 30)).unwrap(),
+            "2026-11-24T18:00:00+01:00"
+        );
         assert_eq!(
             due_at("2026-12-01T06:00:00Z", &at(8, 0)).unwrap(),
             "2026-12-01T07:00:00+01:00"

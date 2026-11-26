@@ -383,7 +383,7 @@ home and the work tree with uncommitted changes. What does not: running processe
 background shells, a build in flight); a session's first turn is told so, to commit and push before it stops or waits and not rely on a background
 process across a wait.
 `exec-pool send ID --at HH:MM|RFC3339 --prompt TEXT` puts a timer row instead (`send_timer`, migration 0014),
-due at that time (HH:MM the next one, local time, and one that passed under 6 h ago refused, naming tomorrow's in
+due at that time (HH:MM the next one, local time, and one that passed under 6 h ago refused, naming the next one in
 RFC 3339: likelier a time in another zone than a wait of a day); it changes no state, and `Store::reconcile`, which every runner runs
 each loop, queues a waiting session once a row is due (one in `needs_review` stays there). In a slot,
 `pool-wait --until HH:MM|RFC3339 [--note TEXT]` (no queue credential) writes one line
