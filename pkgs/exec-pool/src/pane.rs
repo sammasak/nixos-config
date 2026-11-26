@@ -272,7 +272,7 @@ pub fn count(transcript: &str) -> usize {
 ///
 /// The result is the last assistant message's text; it is an error unless the turn `ended` settled with one. Tokens
 /// are the assistant messages' usage, each message once; the cost is what Claude's `cost-state` grew by, when one
-/// was written.
+/// was written, and unknown when it did not grow over a turn that used tokens.
 #[must_use]
 pub fn verdict(transcript: &str, from: usize, ended: bool) -> (String, bool) {
     let lines: Vec<Value> = transcript
@@ -329,6 +329,16 @@ pub fn verdict(transcript: &str, from: usize, ended: bool) -> (String, bool) {
             .unwrap_or(0.0);
         Some((total - carried).max(0.0))
     });
+    // a cost-state that did not grow over a turn that spent tokens is a restored one, not this turn's: unpriced, not free
+    let spent = [
+        "input_tokens",
+        "output_tokens",
+        "cache_read_input_tokens",
+        "cache_creation_input_tokens",
+    ]
+    .iter()
+    .any(|k| sum(k) > 0);
+    let cost = cost.filter(|c| *c > 0.0 || !spent);
     let is_error = !(ended && text.is_some());
     let result = text.unwrap_or_else(|| {
         if ended {
@@ -665,6 +675,30 @@ not json
         assert_eq!(v["total_cost_usd"], 0.25);
         let none = line(&verdict(&transcript(r#"{"type":"user","message":{}}"#), 3, true).0);
         assert_eq!(none["total_cost_usd"], Value::Null);
+    }
+
+    #[test]
+    fn a_turn_that_used_tokens_but_wrote_no_fresh_cost_is_unpriced_not_free() {
+        let used = r#"{"type":"user","message":{"role":"user","content":"now"}}
+{"type":"assistant","message":{"id":"m1","content":[{"type":"text","text":"done"}],"usage":{"output_tokens":9,"cache_read_input_tokens":800}}}"#;
+        let none = line(&verdict(&transcript(used), 3, true).0);
+        assert_eq!(none["total_cost_usd"], Value::Null);
+        // a resumed process that only restored its predecessor's state
+        let restored =
+            format!("{used}\n{{\"type\":\"cost-state\",\"totalCostUSD\":0.5,\"startTime\":1}}");
+        let v = line(&verdict(&transcript(&restored), 3, true).0);
+        assert_eq!(v["total_cost_usd"], Value::Null);
+        let grew =
+            format!("{used}\n{{\"type\":\"cost-state\",\"totalCostUSD\":0.9,\"startTime\":1}}");
+        let v = line(&verdict(&transcript(&grew), 3, true).0);
+        assert!((v["total_cost_usd"].as_f64().unwrap() - 0.4).abs() < 1e-9);
+        // no tokens and nothing grew reads 0 as before
+        let idle = transcript(
+            r#"{"type":"user","message":{"role":"user","content":"now"}}
+{"type":"assistant","message":{"id":"m1","content":[{"type":"text","text":"done"}]}}
+{"type":"cost-state","totalCostUSD":0.5,"startTime":1}"#,
+        );
+        assert_eq!(line(&verdict(&idle, 3, true).0)["total_cost_usd"], 0.0);
     }
 
     #[test]
