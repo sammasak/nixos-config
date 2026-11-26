@@ -146,16 +146,23 @@ writes one gate-step record per check.
 
 ### Where the time goes, and what a cache can save (Loki, read from a slot on 25 Nov)
 
-The latest scheduled run that reached every step: 24 Nov 15:20, head 191e1d1, 2232 s, red only on
-`shunt-metrics-test`. Its gate-step records:
+Two scheduled runs: 24 Nov 15:20 (head 191e1d1, 2232 s, every step, red only on `shunt-metrics-test`) and
+26 Nov 03:20 (head d824cc76, 5407 s, red at `workers-eval-test`, so the 40 steps after it did not run). Gate-step
+records; seconds are 24 Nov / 26 Nov:
 
-| Step | Seconds | Of which evaluation | Of which building | Derivations built / substituted / present |
+| Step | Seconds | Of which evaluation | Of which building | Derivations compiled / substituted; checks built / present / deferred |
 |---|---|---|---|---|
-| nixos-flake-check | 1373 | 531 (one `nix eval` per output, summed) | 500 over 15 checks; the other 342 s are `nix flake show`, the dry-runs and the per-output processes | 320 compiled, 0 substituted; 15 checks built, 25 already present, 2 deferred to asus |
-| workers-eval-test | 263 | all of it (its own host and guest evaluations) | 0 | none |
-| nixos-gate-probe | 206 | all of it (every host once) | 0 | none |
-| seventh-host-test | 171 | all of it (every host again, seeded) | 0 | none |
-| The other 45 steps | 208 | mostly | mostly none | none |
+| nixos-flake-check | 1373 / 3874 | 531 / 1102 (one `nix eval` per output, summed) | 500 / 2003; the rest is `nix flake show`, the dry-runs and the per-output processes | 320 / 0; 15 / 25 / 2 on 24 Nov. 419 / 38; 20 / 22 / 2 on 26 Nov |
+| nixos-gate-probe | 206 / 825 | all of it (every host once) | 0 | none |
+| workers-eval-test | 263 / 627 (red) | all of it (its own host and guest evaluations) | 0 | none |
+| seventh-host-test | 171 / not run | all of it (every host again, seeded) | 0 | none |
+| The other steps | 208 / 79 (7 ran) | mostly | mostly none | none |
+
+26 Nov ran 2.4 times slower step for step. acer runs at 60 % at night (sam.fleet quiet), and all three acer slots
+evaluated beside it: each slot's push hook ran a `nix flake show` (188 to 530 s, light lock) while the gate held the
+heavy one, and slot memory reached 4 to 5 GiB each. The gate waited 0 s for its lock, so the locks did not
+serialise it against the slots. On 26 Nov, 38 derivations were substituted, against 0 on 24 Nov. The VM tests
+dominate building: execution-pool-vm 702 s, grafana-dashboards 383 s, alert-fire-resolve 381 s.
 
 The answer to "how much would a cache save": at most the 500 s of building, 22 % of the gate. Not one path was
 substituted, because everything not built was already in acer's store. The 320 compiled derivations were the
@@ -177,7 +184,8 @@ Retention is 14 days and 100 GiB of the closures they hold, oldest dropped first
 `store_upload_roots{host}`, `store_upload_roots_bytes{host}`, `store_upload_roots_closure_bytes` and
 `store_upload_received_paths_total{host,result}` on acer.
 
-Follow-ups, in order: (1) the 26 Nov 03:20 run's numbers into the table above; (2) one evaluation of every host shared
+Follow-ups, in order: (1) the scheduled gate alone on acer: a slot's evaluations wait while it holds the heavy lock,
+or the gate moves out of the slots' hours; (2) one evaluation of every host shared
 by the probe, the flake check and seventh-host (about 400 s); (3) the flake check's per-output `nix eval` processes
 as one `nix-eval-jobs` run; (4) an alert on `store_upload_queue_paths` growing while acer is up; (5) acer's
 max-jobs and cores (2 and 2) against the memory budget.
