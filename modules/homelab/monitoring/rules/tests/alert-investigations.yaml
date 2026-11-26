@@ -19,7 +19,7 @@ tests:
       - eval_time: 50m
         alertname: AlertInvestigationFailed
         exp_alerts:
-          - exp_labels: {severity: warning, team: homelab, node: lenovo-21CB001PMX, alertname: NodeSystemdUnitFailed}
+          - exp_labels: {severity: warning, team: homelab, node: lenovo-21CB001PMX, investigated: NodeSystemdUnitFailed}
             exp_annotations:
               summary: "Alert investigations on lenovo-21CB001PMX are failing for NodeSystemdUnitFailed"
               description: "An investigation pool session started by alert-investigations on lenovo-21CB001PMX failed in the last 6 h (its start was refused, the session failed, timed out, ended without a report or pushed a branch), or the trigger has not read Alertmanager for 15 minutes, so a firing alert goes uninvestigated. Run journalctl -u alert-investigations.service there; the reason is in homelab_alert_investigation_failures_total and on the alert's issue."
@@ -29,7 +29,33 @@ tests:
         alertname: AlertInvestigationFailed
         exp_alerts: []
 
-  # Alertmanager unreachable for 15 minutes fires with no alertname; a 10-minute blip does not
+  # two names failing on one node page apart: with the name left in alertname they shared a labelset and the rule errored
+  - interval: 1m
+    input_series:
+      - series: 'homelab_alert_investigations_total{job="node-exporter",node="lenovo-21CB001PMX",alertname="ScheduledGateRed",outcome="failed"}'
+        values: '0x10 1x60'
+      - series: 'homelab_alert_investigations_total{job="node-exporter",node="lenovo-21CB001PMX",alertname="RetroDueStepFailsRepeat",outcome="failed"}'
+        values: '0x10 1x60'
+      - series: 'homelab_alert_investigations_up{job="node-exporter",node="lenovo-21CB001PMX"}'
+        values: '1x70'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: AlertInvestigationFailed
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: lenovo-21CB001PMX, investigated: ScheduledGateRed}
+            exp_annotations:
+              summary: "Alert investigations on lenovo-21CB001PMX are failing for ScheduledGateRed"
+              description: "An investigation pool session started by alert-investigations on lenovo-21CB001PMX failed in the last 6 h (its start was refused, the session failed, timed out, ended without a report or pushed a branch), or the trigger has not read Alertmanager for 15 minutes, so a firing alert goes uninvestigated. Run journalctl -u alert-investigations.service there; the reason is in homelab_alert_investigation_failures_total and on the alert's issue."
+              query: 'increase(homelab_alert_investigation_failures_total{job="node-exporter",node="lenovo-21CB001PMX"}[6h]) > 0 or homelab_alert_investigations_up{job="node-exporter",node="lenovo-21CB001PMX"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#alertinvestigationfailed"
+          - exp_labels: {severity: warning, team: homelab, node: lenovo-21CB001PMX, investigated: RetroDueStepFailsRepeat}
+            exp_annotations:
+              summary: "Alert investigations on lenovo-21CB001PMX are failing for RetroDueStepFailsRepeat"
+              description: "An investigation pool session started by alert-investigations on lenovo-21CB001PMX failed in the last 6 h (its start was refused, the session failed, timed out, ended without a report or pushed a branch), or the trigger has not read Alertmanager for 15 minutes, so a firing alert goes uninvestigated. Run journalctl -u alert-investigations.service there; the reason is in homelab_alert_investigation_failures_total and on the alert's issue."
+              query: 'increase(homelab_alert_investigation_failures_total{job="node-exporter",node="lenovo-21CB001PMX"}[6h]) > 0 or homelab_alert_investigations_up{job="node-exporter",node="lenovo-21CB001PMX"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#alertinvestigationfailed"
+
+  # Alertmanager unreachable for 15 minutes fires with no investigated; a 10-minute blip does not
   - interval: 1m
     input_series:
       - series: 'homelab_alert_investigations_up{job="node-exporter",node="lenovo-21CB001PMX"}'

@@ -147,16 +147,23 @@ writes one gate-step record per check.
 
 ### Where the time goes, and what a cache can save (Loki, read from a slot on 25 Nov)
 
-The latest scheduled run that reached every step: 24 Nov 15:20, head 191e1d1, 2232 s, red only on
-`shunt-metrics-test`. Its gate-step records:
+Two scheduled runs: 24 Nov 15:20 (head 191e1d1, 2232 s, every step, red only on `shunt-metrics-test`) and
+26 Nov 03:20 (head d824cc76, 5407 s, red at `workers-eval-test`, so the 40 steps after it did not run). Gate-step
+records; seconds are 24 Nov / 26 Nov:
 
-| Step | Seconds | Of which evaluation | Of which building | Derivations built / substituted / present |
+| Step | Seconds | Of which evaluation | Of which building | Derivations compiled / substituted; checks built / present / deferred |
 |---|---|---|---|---|
-| nixos-flake-check | 1373 | 531 (one `nix eval` per output, summed) | 500 over 15 checks; the other 342 s are `nix flake show`, the dry-runs and the per-output processes | 320 compiled, 0 substituted; 15 checks built, 25 already present, 2 deferred to asus |
-| workers-eval-test | 263 | all of it (its own host and guest evaluations) | 0 | none |
-| nixos-gate-probe | 206 | all of it (every host once) | 0 | none |
-| seventh-host-test | 171 | all of it (every host again, seeded) | 0 | none |
-| The other 45 steps | 208 | mostly | mostly none | none |
+| nixos-flake-check | 1373 / 3874 | 531 / 1102 (one `nix eval` per output, summed) | 500 / 2003; the rest is `nix flake show`, the dry-runs and the per-output processes | 320 / 0; 15 / 25 / 2 on 24 Nov. 419 / 38; 20 / 22 / 2 on 26 Nov |
+| nixos-gate-probe | 206 / 825 | all of it (every host once) | 0 | none |
+| workers-eval-test | 263 / 627 (red) | all of it (its own host and guest evaluations) | 0 | none |
+| seventh-host-test | 171 / not run | all of it (every host again, seeded) | 0 | none |
+| The other steps | 208 / 79 (7 ran) | mostly | mostly none | none |
+
+26 Nov ran 2.4 times slower step for step. acer runs at 60 % at night (sam.fleet quiet), and all three acer slots
+evaluated beside it: each slot's push hook ran a `nix flake show` (188 to 530 s, light lock) while the gate held the
+heavy one, and slot memory reached 4 to 5 GiB each. The gate waited 0 s for its lock, so the locks did not
+serialise it against the slots. On 26 Nov, 38 derivations were substituted, against 0 on 24 Nov. The VM tests
+dominate building: execution-pool-vm 702 s, grafana-dashboards 383 s, alert-fire-resolve 381 s.
 
 The answer to "how much would a cache save": at most the 500 s of building, 22 % of the gate. Not one path was
 substituted, because everything not built was already in acer's store. The 320 compiled derivations were the
@@ -178,7 +185,8 @@ Retention is 14 days and 100 GiB of the closures they hold, oldest dropped first
 `store_upload_roots{host}`, `store_upload_roots_bytes{host}`, `store_upload_roots_closure_bytes` and
 `store_upload_received_paths_total{host,result}` on acer.
 
-Follow-ups, in order: (1) the 26 Nov 03:20 run's numbers into the table above; (2) one evaluation of every host shared
+Follow-ups, in order: (1) the scheduled gate alone on acer: a slot's evaluations wait while it holds the heavy lock,
+or the gate moves out of the slots' hours; (2) one evaluation of every host shared
 by the probe, the flake check and seventh-host (about 400 s); (3) the flake check's per-output `nix eval` processes
 as one `nix-eval-jobs` run; (4) an alert on `store_upload_queue_paths` growing while acer is up; (5) acer's
 max-jobs and cores (2 and 2) against the memory budget.
@@ -234,9 +242,19 @@ take work.
 
 | Host | Slots | Note |
 |------|-------|------|
-| acer-swift | `pool1` to `pool3` | Shunt on `pool1`, 300K compaction window on `pool2`; offers claude and pi, and codex on the owner's ChatGPT login; deploy owed for #831, #832, #833 |
+| acer-swift | `pool1` to `pool4` | Shunt on `pool1`, 300K compaction window on `pool2`; `pool4` light (1G reserve, CPUWeight 100 against 200, CPUQuota 200%), the slice raised from 7G to 9G (three slots filled 7G twice on 25 Nov, kills at 22:01 and 23:25); offers claude and pi, and codex on the owner's ChatGPT login; deploy owed for #831, #832, #833 |
 | msi-ms7758 | `pool1` to `pool4` | offers claude; off 21:00 to 08:30 |
 | asus-b460m | none | ollama (one resident model, 130 W cap), `paddock.service` (Qwen3.6 35B, #817, #822), agent `paddock`; off 21:00 to 08:30 |
+
+Heat, the extra slot's price (owner, 25 Nov 23:50). Before, 25 Nov 23:50 with three acer slots busy: acer 8 cores, load
+5.0, 11.3 GiB available of 15.6, environments.slice 2.5 of 7 GiB, package 66 C now and 94 C peak in 6 h,
+node_cpu_core_throttles_total up about 888,000 in 6 h, no fan sensor; lenovo 16 cores, load 0.3, 10.9 GiB available
+of 15.7, user.slice 4.3 of 8.4 GiB, 49 C now and 100 C peak in 6 h, fans 0 rpm idle (its 65535 peak is the sensor's
+error value). After, 24 h past the pool4 deploy: acer's throttle increase over 24 h and peak temperature with four
+slots against the 24 h before that deploy with three (the Hosts dashboard's heat row;
+`sum(increase(node_cpu_core_throttles_total{node="acer-swift"}[24h]))` and `max_over_time(homelab:node:hwmon_temp_max_celsius{node="acer-swift"}[24h])`).
+If acer's throttling rises by more than half, drop pool4 again (`slots = 3`, `light.slots = 0`). lenovo's first slot is
+not in this layout yet.
 
 No slot holds a GitHub key: slots push through acer's GitHub sidecar and private clones go through the proxy.
 Gaming entries on asus and msi are merged and booted on neither host yet; the owner accepted them untested (#645).

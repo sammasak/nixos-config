@@ -76,6 +76,27 @@ the cause is fixed.
 Fires: black-pi's `cpu-thermal` zone reads 85 °C or more for 15 minutes.
 First: the Hosts dashboard's temperature panel; check the Pi's fan and airflow.
 
+## NodeHwmonTemperatureHigh
+
+Fires: a host's hottest hwmon sensor above 92 °C for 10 minutes, leaving out a sensor whose own critical mark is
+105 °C or more (msi's, which reads about 102 °C through a gate; NodeCpuThrottlingHigh still covers it).
+First: the Hosts dashboard's heat row, temperature beside the running slots; `machinectl list` on the host.
+On acer with pool4 running: goals.md "Hosts and slots" says when to drop pool4.
+
+## NodeCpuThrottlingHigh
+
+Fires: a host's summed core throttle rate (`homelab:node:cpu_core_throttles:rate5m`) above twice its 7 day mean plus
+10/s for 15 minutes.
+First: `grep . /sys/devices/system/cpu/cpu*/thermal_throttle/core_throttle_count` and `machinectl list` on the
+host; the Hosts dashboard's throttle panel against its slot count.
+
+## NodeFanStuck
+
+Fires: every fan sensor of a host reads 0 rpm (65535, the thinkpad sensor's read error, left out) while its hottest
+sensor is above 80 °C, for 5 minutes. Only lenovo and msi expose a fan.
+First: `grep . /sys/class/hwmon/hwmon*/fan*_input` on the host (lenovo: `cat /proc/acpi/ibm/fan`); check the fan
+before work lands on it.
+
 ## GpuThermalThrottling
 
 Fires: the GPU reports hardware thermal slowdown for 10 minutes.
@@ -425,12 +446,12 @@ when `exec-pool start` refuses it, the session ends `failed`, or `cancelled` or 
 without a report, the session pushed `pool/<task id>` (it is read-only), no report came within 3 h (it is cancelled),
 or the report could not be posted. A name reported less than 6 h ago starts no new investigation; a firing still
 active after that starts one. The issue is public: a posted text has secret-shaped values
-(tokens, keys, `password=`) replaced by `[redacted]`, and the session is told to quote none. With `alertname`, an investigation of that alert failed; without it, the trigger
+(tokens, keys, `password=`) replaced by `[redacted]`, and the session is told to quote none. With `investigated`, an investigation of that alert failed; without it, the trigger
 is blind.
 First: on lenovo, `journalctl -u alert-investigations.service` names the session and the reason;
 `homelab_alert_investigation_failures_total` counts them by reason. The issue holds the session id: `exec-pool result
 ID` and `exec-pool logs ID` show what it did. A pushed branch is left for the owner to read and delete. Without
-`alertname`, `curl -sf http://192.168.10.137:9093/-/ready` from lenovo.
+`investigated`, `curl -sf http://192.168.10.137:9093/-/ready` from lenovo.
 Do not: delete `/var/lib/alert-investigations/state.json` to clear it; the counters and the per-name issue numbers
 live there, and every firing still active would be investigated again.
 Rollback: `homelab.alertInvestigations.alerts = [ ];` on lenovo and deploy (or drop a name from the JSON and deploy lenovo

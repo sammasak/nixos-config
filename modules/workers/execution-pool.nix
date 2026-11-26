@@ -13,6 +13,8 @@ let
   cfg = config.homelab.execPool;
   dev = config.services.devEnvironments;
   slotNames = map (n: "pool${toString n}") (lib.range 1 cfg.slots);
+  lightSlots = lib.drop (cfg.slots - cfg.light.slots) slotNames;
+  isLight = n: lib.elem n lightSlots;
   # names any other module declares in instances (sam.workers.instances is an alias of it)
   declaredElsewhere = lib.unique (
     lib.concatMap (d: lib.attrNames d.value) (
@@ -72,9 +74,18 @@ in
       ownNixCache = true;
       # each attempt's workspace (pkgs/exec-pool/src/workspace.rs): throwaway, so its checkout never holds the reset
       scratch = [ "attempts" ];
-      memory.reserved = cfg.slot.memory;
-      cpu.reserved = cfg.slot.cpu;
+      memory.reserved = if isLight n then cfg.light.memory else cfg.slot.memory;
+      cpu.reserved = if isLight n then cfg.light.cpu else cfg.slot.cpu;
     });
+    # only a declared, running slot: a paused or forced-out one would get a unit with a quota and no ExecStart
+    systemd.services =
+      lib.genAttrs
+        (map (n: "container@${n}") (
+          lib.filter (n: dev.instances ? ${n} && !dev.instances.${n}.paused) lightSlots
+        ))
+        (_: {
+          serviceConfig.CPUQuota = cfg.light.cpuQuota;
+        });
 
     # A slot's reset runs once per task turn, seconds apart in a session; under systemd's default limit a burst of
     # refused resets (the runner retries each) fails the unit. A drop-in of the shared template's own instance: a
