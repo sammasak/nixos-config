@@ -72,7 +72,7 @@ and #835's shared host evaluation and the gate alone on acer (Check tuning's fol
 
 Anti-starvation: [#14](https://github.com/sammasak/nixos-config/issues/14) has waited longest (opened 3 Oct), item 5;
 herman#57 (13 Nov 18:40) is next oldest runnable, item 6. llm-gateway#69 (23 Oct) is blocked; skills#104 (13 Nov)
-has its change merged (skills #172).
+has its change merged (skills #172), and devenv-platform#129 (13 Nov 00:18) its step A (PR 167).
 
 In flight as pool sessions (not next): pi-harness in the pool's repository list; the turn errors row in the Agent
 harnesses table (PR #860, unblocked by #864). Merged on 26 Nov since 10:00 UTC: #861 (a slot's nix build, flake check
