@@ -1,6 +1,6 @@
 # dev-env-reset@<name> on one environment in QEMU: it refuses while a clone holds uncommitted work and while an agent
 # process runs, and otherwise leaves a fresh home with the old one in .trash and the container running again.
-# The runtime-host role's closure plus a guest: `nix build .#dev-env-reset-vm` on msi only.
+# The runtime-host role's closure plus a guest: `nix build .#checks.x86_64-linux.dev-env-reset-vm` on msi only.
 {
   pkgs,
   roleModules,

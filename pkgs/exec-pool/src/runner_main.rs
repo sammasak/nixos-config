@@ -24,7 +24,7 @@ use std::fs::{self, File};
 use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitCode, Stdio};
-use std::sync::Arc;
+use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -2644,60 +2644,108 @@ fn exec(slot: &str) -> Result<(), String> {
         let ready = (admitted, dock.is_some(), opened, resume.is_some());
         failed_preparing(slot, &mut result, ready);
     }
-    MemoryWatch::finish(memory, slot, &mut result, &note);
+    MemoryWatch::finish(memory, &mut result, &note);
     write_result(slot, &dir, result)
 }
 
 /// The slot's OOM kills as a run began: its cgroup on the host (`EXEC_POOL_SLOT_CGROUP`), its `memory.events`
-/// `oom_kill` count then, and when.
+/// `oom_kill` count then, and when; and the thread that counts each kill as its count rises.
 struct MemoryWatch {
     cgroup: String,
     kills: u64,
     since: SystemTime,
+    stop: mpsc::Sender<()>,
+    counter: thread::JoinHandle<u64>,
 }
 
+/// How often a run's slot's `memory.events` is read, so a kill is counted within this of it, not at the run's end.
+const MEMORY_POLL: Duration = Duration::from_secs(15);
+
 impl MemoryWatch {
-    /// `None` without the variable or a count to read: the run's kills go uncounted. The slot's counter is written
-    /// at 0 first, so its first kill after a boot is an increase.
+    /// `None` without the variable or a count to read: the run's kills go uncounted.
     fn start(slot: &str) -> Option<Self> {
         let cgroup = std::env::var("EXEC_POOL_SLOT_CGROUP").ok()?;
-        let kills = Self::kills(&cgroup)?;
-        Self::count(slot, 0);
+        let events = PathBuf::from(format!("/sys/fs/cgroup{cgroup}/memory.events"));
+        let textfile = std::env::var_os("EXEC_POOL_TEXTFILE")
+            .map(|d| PathBuf::from(d).join(format!("exec-pool-memory-{slot}.prom")));
+        Self::watch(cgroup, events, textfile, slot, MEMORY_POLL)
+    }
+
+    /// Counts in `textfile`, `exec_pool_memory_kills_total{slot}`, each rise of `events`' count, read every `every`
+    /// until [`Self::end`]. The counter is written at 0 first, so the slot's first kill after a boot is an increase; a
+    /// guest restarted since (a lower count) counts none until it passes the highest count read.
+    fn watch(
+        cgroup: String,
+        events: PathBuf,
+        textfile: Option<PathBuf>,
+        slot: &str,
+        every: Duration,
+    ) -> Option<Self> {
+        let kills = Self::kills(&events)?;
+        let labels = format!("slot=\"{slot}\"");
+        let count = move |n: u64| {
+            if let Some(file) = &textfile
+                && let Err(e) = textfile::bump(file, MEMORY_KILLS, &labels, n)
+            {
+                eprintln!("exec-pool-exec: {}: {e}", file.display());
+            }
+        };
+        count(0);
+        let (stop, stopped) = mpsc::channel::<()>();
+        let counter = thread::spawn(move || {
+            let mut counted = kills;
+            loop {
+                let ended = !matches!(
+                    stopped.recv_timeout(every),
+                    Err(mpsc::RecvTimeoutError::Timeout)
+                );
+                if let Some(now) = Self::kills(&events).filter(|&n| n > counted) {
+                    count(now.saturating_sub(counted));
+                    counted = now;
+                }
+                if ended {
+                    return counted;
+                }
+            }
+        });
         Some(Self {
             cgroup,
             kills,
             since: SystemTime::now(),
+            stop,
+            counter,
         })
     }
 
-    fn kills(cgroup: &str) -> Option<u64> {
-        let events = fs::read_to_string(format!("/sys/fs/cgroup{cgroup}/memory.events")).ok()?;
-        events
+    fn kills(events: &Path) -> Option<u64> {
+        fs::read_to_string(events)
+            .ok()?
             .lines()
             .find_map(|l| l.strip_prefix("oom_kill "))
             .and_then(|n| n.trim().parse().ok())
     }
 
-    /// Records in `result` the kills since the run began and the names the kernel's log gives them, and counts them
-    /// in the slot's textfile, `exec_pool_memory_kills_total{slot}`. A guest restarted since (a lower count) counts
-    /// none.
+    /// Stops the counting thread after its last read, and gives the kills it counted in the run.
+    fn end(self) -> (String, SystemTime, u64) {
+        drop(self.stop);
+        let now = self.counter.join().unwrap_or(self.kills);
+        (self.cgroup, self.since, now.saturating_sub(self.kills))
+    }
+
+    /// Records in `result` the kills counted in the run and the names the kernel's log gives them.
     fn finish(
         watch: Option<Self>,
-        slot: &str,
         result: &mut ExecResult,
         note: &dyn Fn(&str, &dyn std::fmt::Display),
     ) {
-        let Some((watch, now)) = watch.and_then(|w| Self::kills(&w.cgroup).map(|now| (w, now)))
-        else {
+        let Some((cgroup, since, n)) = watch.map(Self::end) else {
             return;
         };
-        let n = now.saturating_sub(watch.kills);
         if n == 0 {
             return;
         }
         result.oom_kills = Some(n);
-        let since = watch
-            .since
+        let since = since
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
@@ -2715,8 +2763,7 @@ impl MemoryWatch {
             .output();
         match kmsg {
             Ok(o) => {
-                result.oom_victims =
-                    oom_victims(&String::from_utf8_lossy(&o.stdout), &watch.cgroup);
+                result.oom_victims = oom_victims(&String::from_utf8_lossy(&o.stdout), &cgroup);
             }
             Err(e) => note("kernel log", &e),
         }
@@ -2727,16 +2774,6 @@ impl MemoryWatch {
                 result.oom_victims
             ),
         );
-        Self::count(slot, n);
-    }
-
-    fn count(slot: &str, n: u64) {
-        if let Some(dir) = std::env::var_os("EXEC_POOL_TEXTFILE") {
-            let file = PathBuf::from(dir).join(format!("exec-pool-memory-{slot}.prom"));
-            if let Err(e) = textfile::bump(&file, MEMORY_KILLS, &format!("slot=\"{slot}\""), n) {
-                eprintln!("exec-pool-exec: {}: {e}", file.display());
-            }
-        }
     }
 }
 
@@ -2808,6 +2845,34 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_memory_kill_is_counted_while_the_run_goes_on_and_once() {
+        let dir = std::env::temp_dir().join(format!("exec-pool-memory-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let (events, prom) = (dir.join("memory.events"), dir.join("memory.prom"));
+        let count = || fs::read_to_string(&prom).unwrap_or_default();
+        let line = "exec_pool_memory_kills_total{slot=\"pool1\"}";
+        fs::write(&events, "oom 3\noom_kill 3\n").unwrap();
+        let watch = MemoryWatch::watch(
+            "/environments.slice/container@pool1.service".to_owned(),
+            events.clone(),
+            Some(prom.clone()),
+            "pool1",
+            Duration::from_millis(10),
+        )
+        .unwrap();
+        assert!(count().contains(&format!("{line} 0")));
+        fs::write(&events, "oom 5\noom_kill 5\n").unwrap();
+        let t = Instant::now();
+        while !count().contains(&format!("{line} 2")) {
+            assert!(t.elapsed() < Duration::from_secs(5), "{}", count());
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(watch.end().2, 2);
+        assert!(count().contains(&format!("{line} 2")), "{}", count());
+        fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn a_pane_waiting_on_its_background_command_is_not_parked_but_its_turn_bound_still_cuts() {
