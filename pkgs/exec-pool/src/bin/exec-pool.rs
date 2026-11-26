@@ -435,8 +435,15 @@ fn sessions(store: &mut Store, args: &Args) -> Result<(), Fail> {
             continue;
         }
         // a reported session is asked again: it may since have merged another pull request from its branch
-        let Ok(pulls) = pulls(&summary) else {
-            continue;
+        let pulls = match pulls(&summary) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!(
+                    "exec-pool: {}: {e}",
+                    summary.get("task").unwrap_or(&Value::Null)
+                );
+                continue;
+            }
         };
         let task = summary
             .get("task")
@@ -445,13 +452,14 @@ fn sessions(store: &mut Store, args: &Args) -> Result<(), Fail> {
             .to_owned();
         for (line, records) in report_lines(&summary, &pulls, reported.get(&task)) {
             use std::io::Write as _;
-            println!("{line}");
             std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(f)
                 .and_then(|mut f| records.iter().try_for_each(|r| writeln!(f, "{r}")))
                 .map_err(|e| Fail::Usage(format!("--report {}: {e}", f.display())))?;
+            // recorded before it is logged: a lost line, not one counted twice
+            println!("{line}");
         }
     }
     Ok(())
@@ -533,7 +541,7 @@ fn report_lines(
                 let cost = fields.get("cost_usd").and_then(Value::as_f64);
                 match cost {
                     Some(c) if !unpriced => {
-                        let added = ((c - logged) * 1e6).round().max(0.0) / 1e6;
+                        let added = ((c - logged) * 1e6).round().max(0.0) / 1e6 + 0.0;
                         fields.insert("cost_usd".to_owned(), json!(added));
                     }
                     Some(_) => {
@@ -1168,7 +1176,14 @@ mod tests {
         want["pr"] = pr.clone();
         want["rescued"] = json!(false);
         assert_eq!(lines, [want]);
+        assert_eq!(
+            lines[0].to_string(),
+            r#"{"cost_usd":2.0,"head":"aa","pr":{"head":"aa","merged_at":"2026-11-26T00:31:00Z","number":839,"state":"merged","url":"u"},"rescued":false,"state":"waiting","task":"cli-1"}"#
+        );
         assert_eq!(file, "cli-1\ncli-1 839 2\n");
+        let (old, same) = report("cli-1\n", &summary, std::slice::from_ref(&pr));
+        assert!(old.is_empty(), "reported by a binary before per-PR lines");
+        assert_eq!(same, "cli-1\n");
         let (again, same) = report(&file, &summary, &[pr]);
         assert!(again.is_empty(), "{again:?}");
         assert_eq!(same, file);
