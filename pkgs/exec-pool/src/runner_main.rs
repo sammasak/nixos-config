@@ -18,6 +18,12 @@
 //! reset since the last one ran, runs the task's steps in the guest as its user with `systemd-run -M` in the attempt's
 //! workspace, keeps the output under its state directory and writes the result there. It stops the step running, and
 //! starts no other, once the runner's cancel marker names the attempt. It holds no queue access.
+//!
+//! `drain-wait DIR SECS ONE_SHOT_SECS` (a deploy's `exec-pool-drain wait`, `DIR` every slot's runtime directory's parent)
+//! returns once no slot's helper runs but a one-shot run's, which it waits on only `ONE_SHOT_SECS` and then leaves to
+//! finish under the new generation, and exits 1 at `SECS` with a session turn's (or an unreadable manifest's) helper
+//! still running. It names every attempt it waits on, with its slot and how long it has run, on stderr every
+//! [`DRAIN_REPORT`] and at its end.
 
 use std::collections::BTreeMap;
 use std::fs::{self, File};
@@ -46,8 +52,10 @@ use exec_pool::{Agent, Event, Kind, ParkReason, Receipt, SchemaVersion, Settle, 
 use exec_pool::{agent, pane};
 use serde_json::{Value, json};
 
-const USAGE: &str =
-    "usage: exec-pool-runner run | exec SLOT   (configured by the environment its unit sets)";
+const USAGE: &str = "usage: exec-pool-runner run | exec SLOT | drain-wait DIR SECS ONE_SHOT_SECS   (configured by the environment its unit sets)";
+/// How often `drain-wait` looks at the slots' helpers, and how often it says what it waits on.
+const DRAIN_POLL: Duration = Duration::from_secs(5);
+const DRAIN_REPORT: Duration = Duration::from_secs(30);
 const MANIFEST: &str = "manifest.json";
 const RESULT: &str = "result.json";
 /// Beside the manifest: the attempt the helper is to stop, as [`Manifest::cancel_token`].
@@ -2900,6 +2908,116 @@ fn write_result(slot: &str, dir: &Path, mut result: ExecResult) -> Result<(), St
         .map_err(|e| format!("{RESULT}: {e}"))
 }
 
+/// A slot's running helper as a deploy's drain sees it: its attempt's task, whether it is a session turn, and how long
+/// since its manifest was written; `None` for a manifest it could not read, waited on as a session turn's.
+struct Running {
+    slot: String,
+    task: Option<(String, bool)>,
+    secs: Option<u64>,
+}
+
+impl std::fmt::Display for Running {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.task {
+            Some((id, true)) => write!(f, "{} task {id} (session turn", self.slot)?,
+            Some((id, false)) => write!(f, "{} task {id} (one-shot", self.slot)?,
+            None => write!(f, "{} task unknown (no readable manifest", self.slot)?,
+        }
+        match self.secs {
+            Some(s) => write!(f, ", running {s}s)"),
+            None => write!(f, ")"),
+        }
+    }
+}
+
+/// Every slot whose `exec-pool-exec@` unit is active, activating or deactivating, read from its manifest under `dir`.
+fn running_helpers(dir: &Path) -> Result<Vec<Running>, String> {
+    let out = Command::new("systemctl")
+        .args([
+            "list-units",
+            "--no-legend",
+            "--plain",
+            "--state=active,activating,deactivating",
+            "exec-pool-exec@*",
+        ])
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("systemctl: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("systemctl list-units: {}", out.status));
+    }
+    let now = SystemTime::now();
+    Ok(String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| l.split_whitespace().next())
+        .filter_map(|u| u.strip_prefix("exec-pool-exec@")?.strip_suffix(".service"))
+        .map(|slot| {
+            // a unit name holds no `/`, but an odd one is not read as a path either
+            let path = (!slot.is_empty() && !slot.contains('/') && slot != "..")
+                .then(|| dir.join(slot).join(MANIFEST));
+            let task = path
+                .as_deref()
+                .and_then(|p| read_regular(p).ok())
+                .and_then(|s| Manifest::parse(&s).ok())
+                .map(|m| (m.task.id, m.session.is_some()));
+            let secs = path
+                .as_deref()
+                .filter(|_| task.is_some())
+                .and_then(|p| fs::metadata(p).and_then(|m| m.modified()).ok())
+                .and_then(|t| now.duration_since(t).ok())
+                .map(|d| d.as_secs());
+            Running {
+                slot: slot.to_owned(),
+                task,
+                secs,
+            }
+        })
+        .collect())
+}
+
+fn drain_wait(dir: &Path, bound: u64, one_shot_bound: u64) -> Result<(), String> {
+    let t = Instant::now();
+    let mut said: Option<Instant> = None;
+    let list = |r: &[Running]| {
+        r.iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    loop {
+        let running = running_helpers(dir)?;
+        let waited = t.elapsed().as_secs();
+        if running.is_empty() {
+            if said.is_some() {
+                eprintln!("exec-pool-drain: no attempt runs after {waited}s");
+            }
+            return Ok(());
+        }
+        let held = running
+            .iter()
+            .any(|r| r.task.as_ref().is_none_or(|t| t.1) || waited < one_shot_bound);
+        if !held {
+            eprintln!(
+                "exec-pool-drain: after {waited}s, leaving {} to finish under the new generation: a one-shot run is \
+                 not stopped, its restarted runner adopts it",
+                list(&running)
+            );
+            return Ok(());
+        }
+        if waited >= bound {
+            return Err(format!("still running after {waited}s: {}", list(&running)));
+        }
+        if said.is_none_or(|s| s.elapsed() >= DRAIN_REPORT) {
+            eprintln!(
+                "exec-pool-drain: waited {waited}s of {bound}s ({one_shot_bound}s for a one-shot run) on {}",
+                list(&running)
+            );
+            said = Some(Instant::now());
+        }
+        thread::sleep(DRAIN_POLL);
+    }
+}
+
 fn main() -> ExitCode {
     let cli: Vec<String> = std::env::args().skip(1).collect();
     let outcome = match cli
@@ -2910,6 +3028,10 @@ fn main() -> ExitCode {
     {
         ["run"] => run(),
         ["exec", slot] => exec(slot),
+        ["drain-wait", dir, secs, one_shot] => match (secs.parse(), one_shot.parse()) {
+            (Ok(secs), Ok(one_shot)) => drain_wait(Path::new(dir), secs, one_shot),
+            _ => Err("drain-wait: SECS and ONE_SHOT_SECS must be whole seconds".to_owned()),
+        },
         _ => {
             eprintln!("{USAGE}");
             return ExitCode::from(2);

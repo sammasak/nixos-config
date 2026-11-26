@@ -99,9 +99,10 @@ let
   ]) slotNames;
   resets = map (n: "dev-env-reset@${n}.service") slotNames;
   # the deploy's drain (the Justfile's deploy recipe): `on [SECS]` (root) writes the request every runner reads beside
-  # its runtime directory (pkgs/exec-pool/src/runner.rs, DRAIN_REQUEST), held until `off` or SECS pass; `wait SECS`
-  # returns once no slot's helper runs, 1 at the bound. Its first wait covers a claim taken just before the request,
-  # whose helper starts and sees it within one heartbeat.
+  # its runtime directory (pkgs/exec-pool/src/runner.rs, DRAIN_REQUEST), held until `off` or SECS pass; `wait SECS
+  # [ONE_SHOT_SECS]` returns once no slot's helper runs but a one-shot run's past ONE_SHOT_SECS (it cannot park, and
+  # rides the deploy through), 1 at SECS, naming what it waits on every 30 s (runner_main.rs, drain-wait). Its first
+  # sleep covers a claim taken just before the request, whose helper starts and sees it within one heartbeat.
   drain = pkgs.writeShellApplication {
     name = "exec-pool-drain";
     runtimeInputs = [
@@ -110,7 +111,6 @@ let
     ];
     text = ''
       marker=/run/exec-pool-runner/drain
-      busy() { systemctl list-units --no-legend --plain --state=active,activating,deactivating 'exec-pool-exec@*'; }
       case "''${1:-}" in
         on)
           umask 022
@@ -120,19 +120,11 @@ let
           ;;
         off) rm -f "$marker" ;;
         wait)
-          end=$((SECONDS + ''${2:-900}))
           sleep 15
-          while [ -n "$(busy)" ]; do
-            if [ "$SECONDS" -ge "$end" ]; then
-              echo "exec-pool-drain: still running:" >&2
-              busy >&2
-              exit 1
-            fi
-            sleep 5
-          done
+          exec ${exe} drain-wait "''${marker%/*}" "''${2:-900}" "''${3:-60}"
           ;;
         *)
-          echo "usage: exec-pool-drain on [SECS] | off | wait [SECS]" >&2
+          echo "usage: exec-pool-drain on [SECS] | off | wait [SECS [ONE_SHOT_SECS]]" >&2
           exit 2
           ;;
       esac
