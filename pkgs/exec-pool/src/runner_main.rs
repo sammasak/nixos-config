@@ -1334,6 +1334,11 @@ const ENTER_WAIT: Duration = if cfg!(test) {
 } else {
     Duration::from_secs(4)
 };
+const ENTER_POLL: Duration = if cfg!(test) {
+    Duration::from_millis(25)
+} else {
+    Duration::from_secs(1)
+};
 
 /// The host user's Herdr, where a slot's pane is (`EXEC_POOL_HERDR`: the argv up to and with `herdr`, run as that
 /// user), and the command the pane runs to attach to the turn's agent in the guest (`EXEC_POOL_ATTACH`).
@@ -1503,7 +1508,7 @@ impl Herdr {
                     let _ = self.call(&["agent", "send-keys", pane, "Enter"], Duration::ZERO);
                     let t = Instant::now();
                     while t.elapsed() < ENTER_WAIT {
-                        thread::sleep(ENTER_WAIT / 4);
+                        thread::sleep(ENTER_POLL);
                         let seen = self.seen(pane).ok().flatten();
                         if seen.is_some_and(|s| !s.settled || s.seq != before) {
                             return Ok(());
