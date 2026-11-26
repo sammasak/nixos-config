@@ -111,6 +111,9 @@ pub struct Step {
     pub limit_secs: Option<u64>,
 }
 
+/// The file in a checkout's git directory that sets its hooks path.
+const HOOKS_FILE: &str = "exec-pool-hooks";
+
 /// The bound of a quick step: a relink or the transcript probe.
 pub const QUICK_SECS: u64 = 30;
 
@@ -205,12 +208,13 @@ impl Manifest {
         let t = &self.task;
         let run = ws.run(env, &t.command.workdir, &agent::argv(t)?)?;
         let [root, dirs] = ws.create(mkdir);
-        let [clone, checkout] = self.clone_argv(&ws.checkout(), tools, identity)?;
+        let [clone, checkout, hooks] = self.clone_argv(&ws.checkout(), tools, identity)?;
         Ok(vec![
             step(Stage::Prepare, "exec-pool-root", root),
             step(Stage::Prepare, "exec-pool-workspace", dirs),
             step(Stage::Prepare, "exec-pool-clone", clone),
             step(Stage::Prepare, "exec-pool-checkout", checkout),
+            step(Stage::Prepare, "exec-pool-hooks", hooks),
             step(Stage::Run, "exec-pool-task", run),
         ])
     }
@@ -231,7 +235,7 @@ impl Manifest {
         (resume, relink, install): (&Resume, Vec<String>, &str),
     ) -> Result<Vec<Step>, StepsError> {
         let [root, dirs] = ws.create_scratch(tools.2);
-        let [clone, _] = self.clone_argv(SESSION_WORK, tools, identity)?;
+        let [clone, _, hooks] = self.clone_argv(SESSION_WORK, tools, identity)?;
         let mut steps = vec![
             step(Stage::Prepare, "exec-pool-root", root),
             step(Stage::Prepare, "exec-pool-workspace", dirs),
@@ -249,6 +253,7 @@ impl Manifest {
         for (unit, argv) in resume.steps(&g, (&names.0, &self.task.source.rev, &names.1)) {
             steps.push(step(Stage::Prepare, unit, argv));
         }
+        steps.push(step(Stage::Prepare, "exec-pool-hooks", hooks));
         steps.push(Step {
             limit_secs: Some(QUICK_SECS),
             ..step(Stage::Prepare, "exec-pool-relink", relink)
@@ -297,14 +302,19 @@ impl Manifest {
         ))
     }
 
-    /// The clone into `checkout` and the checkout of the rev there, by `git` with no global config: the guest's
-    /// system config alone, which sends GitHub to the slot's proxy (a private repository clones too).
+    /// The clone into `checkout`, the checkout of the rev there and the hooks file, by `git` with no global config:
+    /// the guest's system config alone, which sends GitHub to the slot's proxy (a private repository clones too).
+    ///
+    /// The clone's config includes [`HOOKS_FILE`] by a path through `.githooks`, which git opens only while the
+    /// checkout has that directory and otherwise skips, so a repository that tracks it gets
+    /// `core.hooksPath=.githooks` from the hooks file and one without it (a devenv repository, whose shell installs
+    /// its own hooks) keeps git's default.
     fn clone_argv(
         &self,
         checkout: &str,
         (git, env, _): (&str, &str, &str),
         identity: (&str, &str),
-    ) -> Result<[Vec<String>; 2], StepsError> {
+    ) -> Result<[Vec<String>; 3], StepsError> {
         let s = |v: &[&str]| v.iter().map(|&x| x.to_owned()).collect::<Vec<_>>();
         let git = |args: &[&str]| {
             let mut v = s(&[env, "GIT_CONFIG_GLOBAL=/dev/null", git]);
@@ -328,13 +338,17 @@ impl Manifest {
             &format!("user.name={}", identity.0),
             "-c",
             &format!("user.email={}", identity.1),
+            "-c",
+            &format!("include.path=../.githooks/../.git/{HOOKS_FILE}"),
         ]);
         if let Some(url) = github_push_url(&t.source.repo) {
             clone.extend(["-c".to_owned(), format!("remote.origin.pushurl={url}")]);
         }
         clone.extend(s(&["--", &t.source.repo, checkout]));
         let clone: Vec<&str> = clone.iter().map(String::as_str).collect();
-        Ok([git(&clone), git(&checkout_args)])
+        let hooks = format!("{checkout}/.git/{HOOKS_FILE}");
+        let hooks = git(&["config", "--file", &hooks, "core.hooksPath", ".githooks"]);
+        Ok([git(&clone), git(&checkout_args), hooks])
     }
 
     /// The guest command that lists the task's branch on its repository once the run is over, through the same config
@@ -1048,7 +1062,7 @@ mod tests {
         );
     }
 
-    fn steps(m: &Manifest) -> [(Stage, Vec<String>); 5] {
+    fn steps(m: &Manifest) -> [(Stage, Vec<String>); 6] {
         let ws = m.workspace("/home/u").unwrap();
         let all: Vec<(Stage, Vec<String>)> = m
             .steps(
@@ -1100,6 +1114,7 @@ mod tests {
                 "exec-pool-workspace",
                 "exec-pool-clone",
                 "exec-pool-checkout",
+                "exec-pool-hooks",
                 "exec-pool-relink"
             ]
         );
@@ -1129,7 +1144,7 @@ mod tests {
                 .ends_with(&["-b".into(), "pool/t1".into(), "abc123".into()])
         );
         assert_eq!(
-            first[4].argv,
+            first[5].argv,
             [
                 "/cp",
                 "-rsTH",
@@ -1153,6 +1168,7 @@ mod tests {
                 "exec-pool-fetch",
                 "exec-pool-checkout",
                 "exec-pool-restore",
+                "exec-pool-hooks",
                 "exec-pool-relink",
                 "exec-pool-transcript"
             ]
@@ -1168,7 +1184,7 @@ mod tests {
                 .ends_with(&["-B".into(), "pool/t1".into(), "s1^".into()])
         );
         assert_eq!(
-            resumed[7].argv,
+            resumed[8].argv,
             [
                 "/install",
                 "-D",
@@ -1477,10 +1493,18 @@ mod tests {
     #[test]
     fn steps_make_the_workspace_then_clone_and_run_in_it() {
         let m = manifest(&task()).unwrap();
-        let [(s1, root), (s2, _), (s3, clone), (s4, checkout), (s5, run)] = steps(&m);
+        let [
+            (s1, root),
+            (s2, _),
+            (s3, clone),
+            (s4, checkout),
+            (s5, hooks),
+            (s6, run),
+        ] = steps(&m);
         assert_eq!(
-            [s1, s2, s3, s4, s5],
+            [s1, s2, s3, s4, s5, s6],
             [
+                Stage::Prepare,
                 Stage::Prepare,
                 Stage::Prepare,
                 Stage::Prepare,
@@ -1502,9 +1526,21 @@ mod tests {
                 "user.name=Pool",
                 "-c",
                 "user.email=pool@example.org",
+                "-c",
+                "include.path=../.githooks/../.git/exec-pool-hooks",
                 "--",
                 "https://example.org/r.git",
                 &format!("{dir}/work")
+            ]
+        );
+        assert_eq!(
+            hooks[3..],
+            [
+                "config",
+                "--file",
+                &format!("{dir}/work/.git/exec-pool-hooks"),
+                "core.hooksPath",
+                ".githooks"
             ]
         );
         assert_eq!(
@@ -1535,12 +1571,70 @@ mod tests {
     }
 
     #[test]
+    fn a_checkout_that_tracks_githooks_gets_its_hooks_path_and_one_without_gets_none() {
+        let root = std::env::temp_dir().join(format!("exec-pool-hooks-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let git = |dir: &Path, args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .arg("-C")
+                .arg(dir)
+                .args(args)
+                .output()
+                .unwrap();
+            (out.status.success(), String::from_utf8(out.stdout).unwrap())
+        };
+        for (name, tracked) in [("with", true), ("without", false)] {
+            let origin = root.join(name).join("origin");
+            std::fs::create_dir_all(&origin).unwrap();
+            git(&origin, &["init", "--quiet"]);
+            if tracked {
+                std::fs::create_dir(origin.join(".githooks")).unwrap();
+                std::fs::write(origin.join(".githooks/pre-push"), "").unwrap();
+            }
+            std::fs::write(origin.join("README"), "").unwrap();
+            git(&origin, &["add", "-A"]);
+            let commit = [
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "--quiet",
+                "-m",
+                "c",
+            ];
+            assert!(git(&origin, &commit).0);
+            let (_, rev) = git(&origin, &["rev-parse", "HEAD"]);
+            let mut t = task();
+            t["source"] = json!({ "repo": origin.to_str().unwrap(), "rev": rev.trim() });
+            let m = manifest(&t).unwrap();
+            let home = root.join(name).join("home");
+            std::fs::create_dir(&home).unwrap();
+            let ws = m.workspace(home.to_str().unwrap()).unwrap();
+            let steps = m
+                .steps(&ws, ("git", "env", "mkdir"), ("Pool", "pool@example.org"))
+                .unwrap();
+            for s in steps.iter().filter(|s| s.stage == Stage::Prepare) {
+                let (exe, args) = s.argv.split_first().unwrap();
+                let ok = std::process::Command::new(exe).args(args).status().unwrap();
+                assert!(ok.success(), "{name}: {}", s.unit);
+            }
+            let work = Path::new(&ws.checkout()).to_owned();
+            let want = tracked.then(|| ".githooks\n".to_owned());
+            let got = git(&work, &["config", "core.hooksPath"]);
+            assert_eq!(got.0.then_some(got.1), want, "{name}");
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn a_github_checkout_pushes_over_ssh_and_its_branch_is_read_back() {
         let mut t = task();
         t["source"]["repo"] = json!("https://github.com/sammasak/nixos-config.git");
         t["command"] = json!({ "agent": "claude", "argv": ["go"], "workdir": "." });
         let m = manifest(&t).unwrap();
-        let [_, _, (_, clone), (_, checkout), _] = steps(&m);
+        let [_, _, (_, clone), (_, checkout), _, _] = steps(&m);
         assert_eq!(checkout[7..], ["-b", "pool/t1", "abc123"]);
         let at = clone.iter().position(|a| a == "--").unwrap();
         assert_eq!(
