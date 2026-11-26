@@ -148,13 +148,18 @@ writes one gate-step record per check.
 | pool-merge-check: host evaluation | 67 s mean over 319 evaluations, 354 min in 7 d | lenovo's sam.memory budget (#794, #799) | the host's modules and `hosts/<dir>/` |
 | pool-merge-check: package build | 195 s mean over 22 builds in 24 h | c15a3024 (#795) | `pkgs/<dir>/` |
 
-The two slowest, by minutes in 7 d (26 Nov):
+The slowest, by minutes in 7 d (26 Nov), with the cut for each:
 1. Host evaluation, the gate probe's 378 min and pool-merge-check's 354. Cut, path scoping: a `scripts/test-*` change
    evaluates no host in pool-merge-check (no host module reads one, held by `scripts/test-pool-merge-check.py`);
    `scripts/test-workers-eval.py` alone was in 55 commits that week, each 6 host evaluations (about 7 min).
 2. grafana-dashboards, 265 min. Cut, caching: its build interpolated all of `modules/` and `scripts/` for one
    `rg` over the textfile writers, so every edit there rebuilt it; the names are now read at evaluation, and it
    rebuilds only when what it reads moves.
+3. The flake check's unrecorded 12.8 min (#835) held a second evaluation of the six VM tests: they were packages as
+   well as checks, the same derivations, and the flake check evaluates each package in its own process. Cut: checks
+   only (`just role-vm-test` builds the check). The packages part of the flake check, timed per output on acer-pool2
+   under one light-lock hold: 258 s before (231 s of it the six VM tests), 24 s after; 162 s of that loop on the
+   26 Nov 03:20 run. Narrow check: the next scheduled run's `eval packages.*` lines in the gate journal.
 
 ### Where the time goes, and what a cache can save (Loki, read from a slot on 25 Nov)
 

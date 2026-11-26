@@ -5,8 +5,8 @@
   ...
 }:
 {
-  # Checks as well as packages: `nix flake check` and the pre-push gate (msi or acer) boot them, and a built one is a
-  # cache hit. The packages stay for `just role-vm-test` and its .broken variant.
+  # Checks only: the flake check evaluates each package in a process of its own, so these tests as packages too would
+  # be evaluated twice. `just role-vm-test` builds the check and its .broken variant.
   perSystem =
     { pkgs, system, ... }:
     let
@@ -40,8 +40,5 @@
         };
       };
     in
-    lib.optionalAttrs (system == "x86_64-linux") {
-      packages = vmTests;
-      checks = vmTests;
-    };
+    lib.optionalAttrs (system == "x86_64-linux") { checks = vmTests; };
 }

@@ -150,7 +150,7 @@ checks HOST:
 [doc("Build and run the runtime-host role VM test (msi only); BREAK=1 must fail")]
 role-vm-test BREAK="":
     [ "$(uname -n)" = msi-ms7758 ] || { echo "role-vm-test: run it on msi-ms7758, not $(uname -n)" >&2; exit 1; }
-    nix build -L --no-link .#runtime-host-role-vm{{ if BREAK == "" { "" } else { ".broken" } }}
+    nix build -L --no-link .#checks.x86_64-linux.runtime-host-role-vm{{ if BREAK == "" { "" } else { ".broken" } }}
 
 # ── Configuration Verification ────────────────────────────────────────
 
