@@ -315,6 +315,33 @@ groups:
           query: '{__name__=~"store_upload_queue_paths|store_upload_last_success_timestamp_seconds",job="node-exporter",node="{{ $labels.node }}"}'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#storeuploadstuck"
 
+      # A try that fails before its textfile write (a full /var) leaves the last gauges served, so a queue last read 0
+      # hides StoreUploadStuck. 1800 s is three missed 10-minute retries; with the 30m for, a transfer may run an hour.
+      # Absent: /run is tmpfs, so after a boot no try has written it; past 30 minutes of uptime, the same grace as a
+      # stale file, so a long first send is not this. A sender is a node with the queue gauge in the last 4 days, not
+      # 1: msi and asus sleep Fri 21:00 to Mon 08:30. That also drops acer, whose retain job writes
+      # the same file hourly with no queue gauge; a stalled retain is acer's failed unit, not an upload stopping.
+      - alert: StoreUploadStale
+        expr: |
+          (
+            max by (node) (time() - node_textfile_mtime_seconds{job="node-exporter",file=~".*/store-upload[.]prom"} > 1800)
+            or max by (node) (max_over_time(store_upload_queue_paths{job="node-exporter"}[4d]))
+              unless on (node) node_textfile_mtime_seconds{job="node-exporter",file=~".*/store-upload[.]prom"}
+              and on (node) max by (node) (time() - node_boot_time_seconds{job="node-exporter"} > 1800)
+          )
+          and on (node) max by (node) (max_over_time(store_upload_queue_paths{job="node-exporter"}[4d]))
+          and on (node) max by (node) (up{job="node-exporter"} == 1)
+          and on () max(up{job="node-exporter",node="acer-swift"}) == 1
+        for: 30m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "store-upload on {{ $labels.node }} has stopped writing its gauges"
+          description: "store-upload on {{ $labels.node }} has not rewritten /run/node-exporter-textfile/store-upload.prom for over 30 minutes, or has not written it since boot, for 30 minutes while both hosts are up: its tries fail before the write, so the queue gauge is stale and StoreUploadStuck cannot fire while its builds stop reaching acer-swift. Run df -h /var and journalctl -u store-upload -n 20 on {{ $labels.node }}. Owning issue: sammasak/nixos-config#835."
+          query: 'time() - node_textfile_mtime_seconds{job="node-exporter",node="{{ $labels.node }}",file=~".*/store-upload[.]prom"}'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#storeuploadstuck"
+
       # 36 h: every job runs daily (OnCalendar, Persistent), so this is one missed run, read the afternoon after it.
       # The timestamp exists only after a recorded success, and backup.prom is on tmpfs: the two alerts below cover a
       # backup with no recorded success and a collector that is stale or, after a reboot, never wrote.

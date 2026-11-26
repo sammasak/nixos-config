@@ -177,6 +177,8 @@ ssh to `store-upload@acer-swift` refused or timed out, or acer unable to reach t
 `http://<sender>:5000` (nix's error from `nix store info` precedes it; check the sender's harmonia). A
 `copied N, failed M` line is a send that succeeded: paths acer could not pull are dropped, counted in acer's
 `store_upload_received_paths_total{result="failed"}`, not in this alert.
+StoreUploadStale: the sender's `store-upload.prom` is over 30 minutes old or missing, so its tries fail before the
+write and the gauges above are stale; run `df -h /var` on the sender (a full /var fails the queue and state writes).
 Do not: delete `/var/lib/store-upload/queue.sending` on the sender; the next try sends it. Issue #835.
 
 ## BackupStale
