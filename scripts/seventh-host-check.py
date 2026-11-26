@@ -61,7 +61,7 @@ RULE = re.compile(r"^iptables -w -A nixos-fw -s (\S+) -p (tcp|udp) --dport ([0-9
 # each derived list hard-coded without the seed, as a source edit (file, from, to)
 BREAKS = [
     ("modules/homelab/monitoring/prometheus.nix", "          }) hosts;\n", f'          }}) (removeAttrs hosts [ "{SEED}" ]);\n'),
-    ("modules/homelab/adguardhome.nix", "            }) fleet;\n", f'            }}) (removeAttrs fleet [ "{SEED}" ]);\n'),
+    ("modules/homelab/adguardhome.nix", "            }) fleet\n", f'            }}) (removeAttrs fleet [ "{SEED}" ])\n'),
     ("flake-modules/deploy.nix", "lib.mapAttrs mkNode config.configurations.nixos;",
      f'lib.mapAttrs mkNode (removeAttrs config.configurations.nixos [ "{SEED}" ]);'),
     ("modules/core/fleet.nix", "from = lib.remove loki.host (lib.attrNames hosts);",

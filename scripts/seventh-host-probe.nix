@@ -14,6 +14,19 @@ let
   inherit (flake.inputs.nixpkgs) lib;
   c = flake.nixosConfigurations.${host}.config;
   failing = cfg: map (a: a.message) (builtins.filter (a: !a.assertion) cfg.assertions);
+  guestsFailing =
+    cfg:
+    lib.concatMap (n: map (m: "containers.${n}: ${m}") (failing cfg.containers.${n}.config)) (
+      lib.attrNames cfg.containers
+    );
+  # every assertion the toplevel checks: a specialisation re-evaluates its parent's, guests included
+  failingAll =
+    cfg:
+    failing cfg
+    ++ guestsFailing cfg
+    ++ lib.concatMap (s: failingAll cfg.specialisation.${s}.configuration) (
+      lib.attrNames cfg.specialisation
+    );
   # No assertion is part of the derivation, so a host failing one still has its toplevel's drvPath; the failures are
   # reported unmasked beside it. Guests too: a container's toplevel is in its host's.
   mask =
@@ -22,11 +35,17 @@ let
       assertions = lib.mkForce [ ];
       sam.workers.guestModules = [ ({ lib, ... }: { assertions = lib.mkForce [ ]; }) ];
     };
+  # extendModules is a second evaluation of the whole host: only a host that fails an assertion pays for it
   drv =
     f:
     if f.nixosConfigurations ? ${host} then
-      (f.nixosConfigurations.${host}.extendModules { modules = [ mask ]; })
-      .config.system.build.toplevel.drvPath
+      let
+        n = f.nixosConfigurations.${host};
+      in
+      if failingAll n.config == [ ] then
+        n.config.system.build.toplevel.drvPath
+      else
+        (n.extendModules { modules = [ mask ]; }).config.system.build.toplevel.drvPath
     else
       null;
   orEmpty = v: if v == null then [ ] else v;
@@ -42,13 +61,7 @@ in
 {
   inherit (c.networking) hostName;
   failing = if asserts then failing c else null;
-  guestsFailing =
-    if full then
-      lib.concatMap (n: map (m: "containers.${n}: ${m}") (failing c.containers.${n}.config)) (
-        lib.attrNames c.containers
-      )
-    else
-      null;
+  guestsFailing = if full then guestsFailing c else null;
   drv = if full then drv flake else null;
   baselineDrv = if full && baseline != null then drv (builtins.getFlake baseline) else null;
 
