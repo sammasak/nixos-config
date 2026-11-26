@@ -3,6 +3,8 @@
 -> the filter -> Caddy's push socket -> git http-backend on a bare repository. A slot pushes its task's
 `pool/<id>` and `refs/pool-wip/<id>` (a large push too, chunked), and nothing else: another branch, another task's,
 a tag, a mixed push, a push with no manifest, an unknown slot and an unreadable body leave the remote as it was.
+A pull request it opens (`POST /repos/o/r/pulls`, the slot site's route to the filter too) reaches the API only from
+`pool/<id>`; another branch, another task's, a fork's or a body it cannot read is refused, and other API calls pass.
 Its textfile counts each passed and refused request by slot, the first refusal included.
 Usage: test-exec-pool-push-filter.py FILTER   (caddy and git on PATH)"""
 
@@ -31,9 +33,11 @@ def git(*args, cwd=None):
 
 
 class Backend(http.server.BaseHTTPRequestHandler):
-    """git http-backend as CGI over ROOT, the upstream GitHub stands for."""
+    """git http-backend as CGI over ROOT, the upstream GitHub stands for, and its REST API under /repos/, which records
+    each call it gets."""
     protocol_version = "HTTP/1.1"
     root = ""
+    api = []
 
     def log_message(self, *_):
         pass
@@ -78,6 +82,15 @@ class Backend(http.server.BaseHTTPRequestHandler):
         self.cgi("GET")
 
     def do_POST(self):
+        if self.path.startswith("/repos/"):
+            Backend.api.append((self.path, self.body()))
+            out = b'{"number": 1}'
+            self.send_response(201)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out)))
+            self.end_headers()
+            self.wfile.write(out)
+            return
         self.cgi("POST")
 
 
@@ -139,10 +152,19 @@ def main():
 }}
 http://127.0.0.1:{port} {{
   @receive path_regexp (?i)git-receive-pack
+  @pulls {{
+    path_regexp (?i)^/repos/[^/]+/[^/]+/pulls/?$
+    method POST
+  }}
   handle @receive {{
     reverse_proxy unix/{fsock} {{
       header_up X-Pool-Slot pool1
       flush_interval -1
+    }}
+  }}
+  handle @pulls {{
+    reverse_proxy unix/{fsock} {{
+      header_up X-Pool-Slot pool1
     }}
   }}
   handle {{
@@ -166,6 +188,7 @@ http:// {{
             wait_for(lambda: socket.socket(socket.AF_UNIX).connect(push), "caddy's push socket", caddy)
             wait_for(lambda: socket.socket(socket.AF_UNIX).connect(fsock), "the filter", filt)
             run(d, f"http://127.0.0.1:{port}/o/r.git", bare, fsock, manifest, prom)
+            pulls(port, manifest, prom)
         finally:
             filt.terminate()
             caddy.terminate()
@@ -177,15 +200,18 @@ http:// {{
               f"the filter logs what it refused and passed ({log[-300:]!r})")
         check("passed []" in log, "the large push came as git's empty probe, then chunked")
     listed = subprocess.run([FILTER, "--list"], capture_output=True, text=True).stdout.split()
-    check(listed == ["exec_pool_push_filter_pushes_total"], f"--list names the textfile's metric ({listed})")
+    check(listed == [PUSHES, PULLS], f"--list names the textfile's metrics ({listed})")
     finish()
 
 
-def counts(prom):
-    """The textfile's series as {(slot, result): value}."""
+PUSHES, PULLS = "exec_pool_push_filter_pushes_total", "exec_pool_push_filter_pulls_total"
+
+
+def counts(prom, metric=PUSHES):
+    """The textfile's series of metric as {(slot, result): value}."""
     out = {}
     for line in prom.read_text().splitlines():
-        if line.startswith("exec_pool_push_filter_pushes_total{"):
+        if line.startswith(metric + "{"):
             labels, value = line.split("{", 1)[1].split("} ")
             kv = dict(p.split("=", 1) for p in labels.split(","))
             out[(kv["slot"].strip('"'), kv["result"].strip('"'))] = int(value)
@@ -194,7 +220,7 @@ def counts(prom):
 
 def run(d, url, bare, fsock, manifest, prom):
     zero = {(s, r): 0 for s in ("pool1", "unknown") for r in ("passed", "refused")}
-    check(counts(prom) == zero and oct(prom.stat().st_mode & 0o777) == "0o644",
+    check(counts(prom) == zero and counts(prom, PULLS) == zero and oct(prom.stat().st_mode & 0o777) == "0o644",
           f"at start the textfile holds every series at 0, readable by node-exporter ({counts(prom)})")
     work = d / "work"
     git("init", "-q", str(work))
@@ -265,6 +291,54 @@ def run(d, url, bare, fsock, manifest, prom):
     c = counts(prom)
     check(c[("unknown", "refused")] == 2 and c[("pool1", "refused")] == 12 and "pool9" not in str(c),
           f"a request with no slot or an unknown one counts as unknown, not as its header's name ({c})")
+
+
+def api(port, path, body):
+    """A REST call as gh api sends it through the slot's site: its status and the JSON it got back."""
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    conn.request("POST", path, body=body if isinstance(body, bytes) else json.dumps(body).encode(),
+                 headers={"Content-Type": "application/json", "X-GitHub-Api-Version": "2022-11-28"})
+    resp = conn.getresponse()
+    out = resp.read()
+    conn.close()
+    try:
+        return resp.status, json.loads(out or b"{}")
+    except ValueError:
+        return resp.status, {"text": out.decode(errors="replace")}
+
+
+def pulls(port, manifest, prom):
+    pr = {"head": "pool/t-1", "base": "main", "title": "t", "body": "b"}
+    pushes = counts(prom)
+    status, got = api(port, "/repos/o/r/pulls", pr)
+    check(status == 201 and Backend.api == [("/repos/o/r/pulls", json.dumps(pr).encode())],
+          f"a pull request from the task's own branch reaches the API as sent ({status} {got} {Backend.api})")
+    status, _ = api(port, "/repos/O/r/pulls/", {**pr, "head": "o:pool/t-1", "head_repo": "r"})
+    check(status == 201 and len(Backend.api) == 2, f"and named with the repository's own owner ({status})")
+    for what, body in [
+        ("main", {**pr, "head": "main"}),
+        ("another task's branch", {**pr, "head": "pool/t-2"}),
+        ("a branch under the task's", {**pr, "head": "pool/t-1/x"}),
+        ("a fork's branch of that name", {**pr, "head": "other:pool/t-1"}),
+        ("another repository's branch", {**pr, "head_repo": "elsewhere"}),
+        ("no head", {"base": "main", "title": "t"}),
+        ("a head given twice", b'{"head": "pool/t-1", "head": "main", "base": "main"}'),
+        ("a body that is no JSON object", b'["pool/t-1"]'),
+        ("a body that is no JSON", b"head=pool/t-1"),
+    ]:
+        status, got = api(port, "/repos/o/r/pulls", body)
+        check(status == 403 and len(Backend.api) == 2 and "refused by the pool's filter" in got.get("message", ""),
+              f"a pull request from {what} is refused with a message, and never reaches the API ({status} {got})")
+    manifest.rename(manifest.with_suffix(".gone"))
+    status, _ = api(port, "/repos/o/r/pulls", pr)
+    check(status == 403 and len(Backend.api) == 2, "with no manifest (no task in the slot) no pull request is opened")
+    manifest.with_suffix(".gone").rename(manifest)
+    status, _ = api(port, "/repos/o/r/issues/1/comments", {"body": "head: main"})
+    check(status == 201 and Backend.api[-1][0] == "/repos/o/r/issues/1/comments",
+          f"another API call passes unread ({status})")
+    c = counts(prom, PULLS)
+    check(c[("pool1", "passed")] == 2 and c[("pool1", "refused")] == 10 and counts(prom) == pushes,
+          f"pull requests count apart from pushes, the comment in neither ({c})")
 
 
 if __name__ == "__main__":

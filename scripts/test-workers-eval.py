@@ -116,6 +116,8 @@ FLEET_CASES = [
     ("github without a gh login", '{ sam.workers.instances.t.egress.github.repos = [ "o/r" ]; }', "signed with the token in sam.workers.ghHostsFile", "asus-b460m"),
     ("github keeping the ssh key", '{ sam.workers = { ghHostsFile = "/home/lukas/hosts.yml"; instances.t = { egress.github.repos = [ "o/r" ]; credentials = [ "id_ed25519" ]; }; }; }',
      "gets neither id_ed25519 nor gh-hosts.yml"),
+    ("own refs with GraphQL", '{ sam.workers = { ghHostsFile = "/home/lukas/hosts.yml"; instances.t.egress.github = { repos = [ "o/r" ]; graphql = true; ownRefs = "/run/m.json"; }; }; }',
+     "GraphQL's createPullRequest it cannot hold to the task", "asus-b460m"),
     ("telemetry without nativeOtel", "{ sam.profile.nativeOtel = lib.mkForce false; sam.workers.instances.t.telemetry = true; }", "runs only with sam.profile.nativeOtel"),
     ("telemetry from a guest module", "{ sam.workers.instances.t.telemetry = false; services.devEnvironments.guestModules = [ { sam.claude.telemetry.enable = true; } ]; }",
      "a guest module turned on sam.claude.telemetry"),
@@ -477,6 +479,8 @@ def check_github_forward():
 # acer's slots push only their task's refs (homelab.execPool.ownRefsOnly): each slot site sends every receive-pack to
 # exec-pool-push-filter with its own name, and only the push site behind the filter signs one
 RECEIVE = ["/sammasak/nixos-config.git/git-receive-pack", "/SAMMASAK/nixos-config/GIT-RECEIVE-PACK", "/sammasak/skills/git-receive-pack/"]
+# a pull request's head is in its body too: every spelling of its creation goes to the filter
+PULLS = ["/repos/sammasak/nixos-config/pulls", "/REPOS/sammasak/nixos-config/PULLS/", "/repos/x/pub/pulls"]
 
 
 def check_push_filter(acer, msi):
@@ -493,8 +497,9 @@ def check_push_filter(acer, msi):
     sites = {b.split("\n", 2)[1].strip(): b for b in acer.get("caddy", "").split("http:// {")[1:]}
     for n in slots:
         site = sites.get(f"bind unix//run/dev-env-egress/{n}/github.sock", "")
-        check(f"header_up X-Pool-Slot {n}\n" in site and site.find("handle @receive {") < site.find("handle @git {"),
-              f"{n}'s site sends receive-pack to the filter as {n}, ahead of its git route")
+        check(f"header_up X-Pool-Slot {n}\n" in site and site.find("handle @receive {") < site.find("handle @git {")
+              and -1 < site.find("handle @pulls {") < site.find("handle @write {"),
+              f"{n}'s site sends receive-pack and pull request creation to the filter as {n}, ahead of its git and write routes")
         GitHubRecorder.seen = []
         upstream = http.server.ThreadingHTTPServer(("127.0.0.1", 0), GitHubRecorder)
         threading.Thread(target=upstream.serve_forever, daemon=True).start()
@@ -505,28 +510,33 @@ def check_push_filter(acer, msi):
             check(set(re.findall(r"unix/(\S+)", local.split("\n", 2)[2])) == {f"{t}/filter.sock"},
                   f"{n}'s site under test proxies to no socket outside its temp dir")
             try:
-                wrong = site_wrong(local, r"https://(api\.)?github\.com", [("POST", p, 502) for p in RECEIVE]
-                                   + [("GET", "/sammasak/nixos-config/info/refs?service=git-receive-pack", True)],
+                wrong = site_wrong(local, r"https://(api\.)?github\.com", [("POST", p, 502) for p in RECEIVE + PULLS]
+                                   + [("GET", "/sammasak/nixos-config/info/refs?service=git-receive-pack", True),
+                                      ("POST", "/repos/sammasak/nixos-config/issues/1/comments", True),
+                                      ("PATCH", "/repos/sammasak/nixos-config/pulls/12", True)],
                                    f"http://127.0.0.1:{upstream.server_port}")
             finally:
                 upstream.shutdown()
-        check(wrong == [] and not any("receive-pack" in p.split("?")[0] for p, _ in GitHubRecorder.seen),
-              f"{n}'s site lets no receive-pack past the filter, and still the ref listing ({'no caddy on PATH' if wrong is None else wrong})")
+        check(wrong == [] and not any("receive-pack" in p.split("?")[0] or p.lower().rstrip("/").endswith("/pulls")
+                                      for p, _ in GitHubRecorder.seen),
+              f"{n}'s site lets no receive-pack or pull request creation past the filter, and still the ref listing and other API calls ({'no caddy on PATH' if wrong is None else wrong})")
     push = sites.get("bind unix//run/dev-env-egress/.push.sock", "")
     GitHubRecorder.seen = []
     upstream = http.server.ThreadingHTTPServer(("127.0.0.1", 0), GitHubRecorder)
     threading.Thread(target=upstream.serve_forever, daemon=True).start()
     try:
-        wrong = site_wrong(push, r"https://github\.com", [
+        wrong = site_wrong(push, r"https://(api\.)?github\.com", [
             ("POST", "/sammasak/nixos-config.git/git-receive-pack", True), ("POST", "/sammasak/skills/git-receive-pack", True),
             ("POST", "/x/pub/git-receive-pack", False), ("GET", "/sammasak/skills/git-receive-pack", False),
-            ("POST", "/sammasak/skills/git-upload-pack", False), ("POST", "/repos/sammasak/skills/pulls", False),
+            ("POST", "/sammasak/skills/git-upload-pack", False), ("POST", "/repos/sammasak/skills/pulls", True),
+            ("POST", "/repos/x/pub/pulls", False), ("GET", "/repos/sammasak/skills/pulls", False),
+            ("POST", "/repos/sammasak/skills/issues/1/comments", False), ("POST", "/repos/sammasak/skills/pulls/1/comments", False),
             ("POST", "/sammasak/skills/../x/git-receive-pack", False), ("POST", "/sammasak%2fskills/git-receive-pack", False),
         ], f"http://127.0.0.1:{upstream.server_port}")
     finally:
         upstream.shutdown()
     check(wrong == [] and GitHubRecorder.seen and all(a for _, a in GitHubRecorder.seen),
-          f"the push site signs a listed repository's receive-pack alone ({'no caddy on PATH' if wrong is None else wrong})")
+          f"the push site signs a listed repository's receive-pack and pull request creation alone ({'no caddy on PATH' if wrong is None else wrong})")
 
 
 def check_github_proxy(site):
