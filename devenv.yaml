@@ -4,7 +4,7 @@ inputs:
   nixpkgs:
     url: github:cachix/devenv-nixpkgs/rolling
   platform:
-    url: git+ssh://git@github.com/sammasak/devenv-platform?rev=358f2c2873e3c57827ca56e4f2dccb41f07ab729
+    url: git+ssh://git@github.com/sammasak/devenv-platform?rev=e0e13205e92c91c19fd32bef811015dd1991ed66
     flake: false
   git-hooks:
     url: github:cachix/git-hooks.nix/27555e2624241fb116b49095df4caaee85a25691

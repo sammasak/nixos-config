@@ -93,11 +93,11 @@
     "devenv-platform": {
       "flake": false,
       "locked": {
-        "lastModified": 1795688067,
-        "narHash": "sha256-1vOZb+pXnqgJoqwktlWMTShKnZZe/BZHzyvQR099mEM=",
+        "lastModified": 1795708807,
+        "narHash": "sha256-r6nw/hyp0kE0MI3Tly+0xYN4SlmAtM7fVtOLclEK0uc=",
         "ref": "refs/heads/main",
-        "rev": "358f2c2873e3c57827ca56e4f2dccb41f07ab729",
-        "revCount": 333,
+        "rev": "e0e13205e92c91c19fd32bef811015dd1991ed66",
+        "revCount": 336,
         "type": "git",
         "url": "ssh://git@github.com/sammasak/devenv-platform"
       },
