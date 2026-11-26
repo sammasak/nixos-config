@@ -180,6 +180,7 @@ for seed, host, marker, what in [("openPort", "acer-swift", '"port":9999', "allo
                                  ("lokiAnySource", "black-pi", f'"port":{ports["loki"]}', "Loki in black-pi's allowedTCPPorts"),
                                  ("ntfyElsewhere", "msi-ms7758", f'"port":{ports["ntfy"]}', "ntfy on msi, off its public entry's host")]:
     check(any(f"{host}'s {OPENS}" in m and marker in m for m in F[seed]), f"seeded: {what} fails ({F[seed]})")
+check(any('"port":853' in m for m in F["dnsAnySource"]), f"seeded: lenovo's 853/tcp to any source is named too ({F['dnsAnySource']})")
 check(any("sam.fleet.loki is served here" in m and "loopback" in m for m in F["lokiLoopback"]),
       f"seeded: black-pi's Loki on loopback fails ({F['lokiLoopback']})")
 check(any("naked-pi has no sam.fleet listener node-exporter-naked-pi" in m for m in F["exporterOffFleet"]),

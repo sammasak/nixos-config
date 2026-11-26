@@ -132,7 +132,7 @@ in
     networkmanager.enable = true;
 
     # Baseline firewall for EVERY host: SSH, then the sam.fleet listeners it serves. A port open to any source is a
-    # public entry there (edge.nix, adguardhome.nix open theirs), so a laptop running none is SSH-only.
+    # public entry there (edge.nix opens its own), so a laptop running none is SSH-only.
     #
     # Break-glass if a rule here is ever wrong: the console.
     firewall = lib.mkMerge (
