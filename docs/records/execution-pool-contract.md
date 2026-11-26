@@ -280,7 +280,7 @@ PostgreSQL, so it is imported only where the queue runs; it imports the other tw
 | `light.slots`, `light.memory`, `light.cpu`, `light.cpuQuota` | 0, `"1G"`, 1, `"200%"` | the last `light.slots` slots reserve less and get a CPUQuota ceiling |
 | `repos` | the owner's repositories | what the GitHub sidecar signs for a slot: fetch, push (branch and snapshot ref), gh |
 | `agents` | `[ ]` | `claude`, `codex`, `pi`; sessions run claude |
-| `capabilities` | `[ ]` | what each slot offers a task |
+| `capabilities` | from the host's facts | what each slot offers a task: `github` (with `repos`), `monitoring` (with `monitoring`), `always-on` (no power window, never sleeps) |
 | `timeoutSecs` | 1800 | a one-shot run's or a session turn's time limit |
 | `queueListener` | null | a runner's remote queue (a `sam.fleet` listener); null: this host's |
 | `remoteRunners` | false | the queue admits `exec_pool_runner` over TCP |
@@ -335,12 +335,15 @@ database of its own: `homelab.postgresql.clients` in `modules/homelab/exec-pool.
 (`lukas`; a worker guest's user goes beside it) reach `exec_pool` as that role through a pg_ident peer map, still over
 the socket alone, with no password. Migration 0002 gives it no table write: it queues only through `submit_task`, a
 SECURITY DEFINER function that takes the one shape `submit` builds (agent claude, codex or pi, an https repo, a rev
-that is not an option, a workdir inside the checkout, a prompt and maybe a model; no capability, one attempt,
+that is not an option, a workdir inside the checkout, a prompt and maybe a model; no capability (from 0028 the ones
+`--requires` names), one attempt,
 credential class `slot`) and assigns the task's id from its key, and it reads attempts, events and `task_summaries`,
 which leaves out the prompt. So a submitter chooses no policy, forges no event and queues nothing a claim cannot
 decode. Migration 0008 puts an agent check in front of it: every claim records its slot's agents in `slots`, and
 `submit_task` refuses an agent no slot seen in the last day offers, naming the ones on offer, instead of queuing a task
-nothing would claim. `submit` prints the task id; the idempotency key is `--key`, or else derived from the flags, so the same
+nothing would claim. Migration 0028 adds the capabilities alike: each claim records its slot's, and a task whose
+`--requires` no slot seen in the last day offers with its agent is refused under SQLSTATE XP412 (`QueueError::Unoffered`),
+naming the capability. `submit` prints the task id; the idempotency key is `--key`, or else derived from the flags, so the same
 submission again returns the same task. `exec-pool-migrate` is ordered after `postgresql-setup.service`, which
 creates the role. From lenovo, the coordinator's host, `exec-pool` is a wrapper
 (`sam.herdr.coordinatorWakeup.poolHost`, `modules/programs/cli/coordinator-wakeup.nix`) that runs acer's over ssh as

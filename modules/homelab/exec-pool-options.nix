@@ -6,6 +6,7 @@ let
   inherit (lib) mkOption types;
   cfg = config.homelab.execPool;
   has = r: lib.elem r cfg.roles;
+  fleetHost = config.sam.fleet.hosts.${config.networking.hostName} or { };
 in
 {
   options.homelab.execPool = {
@@ -110,9 +111,15 @@ in
       description = "Agents of `agents` a runner offers only while this file exists as it starts; another module restarts the runners when the file comes or goes.";
     };
     capabilities = mkOption {
-      type = types.listOf types.str;
+      type = types.listOf (
+        types.enum [
+          "github"
+          "monitoring"
+          "always-on"
+        ]
+      );
       default = [ ];
-      description = "The capabilities each slot offers; a task claims a slot only when it offers every one the task names.";
+      description = "The capabilities each slot offers, set from the host's own facts: `github` with `repos` (fetch, push and gh through the sidecar), `monitoring` with `monitoring`, `always-on` on a host with no power window that never sleeps (sam.fleet.hosts). A task claims a slot only when it offers every one the task names (`exec-pool submit --requires NAME`), and submit refuses a task no slot seen in the last day offers them to.";
     };
     timeoutSecs = mkOption {
       type = types.ints.positive;
@@ -165,6 +172,12 @@ in
       description = "Set by exec-pool.nix: the queue's part is imported.";
     };
   };
+
+  config.homelab.execPool.capabilities = lib.mkIf cfg.enable (
+    lib.optional (cfg.repos != [ ]) "github"
+    ++ lib.optional cfg.monitoring "monitoring"
+    ++ lib.optional (!(fleetHost.sleeps or true) && fleetHost.power or null == null) "always-on"
+  );
 
   config.assertions = [
     {

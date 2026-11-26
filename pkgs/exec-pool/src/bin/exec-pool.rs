@@ -23,12 +23,14 @@ const DB: &str = "host=/run/postgresql dbname=exec_pool user=exec_pool_submit";
 const REPOS: &str = "/etc/exec-pool/repos";
 const USAGE: &str = "usage: exec-pool COMMAND
   submit --agent claude|codex|pi --repo URL --rev REV --workdir PATH --prompt TEXT|--prompt-file FILE [--model M]
-        [--key K] [--priority N]
+        [--key K] [--priority N] [--requires NAME]...
         prints the task id. The checkout of REV at URL is cloned into the slot and the agent runs in PATH, relative
         to it, and is refused unless it is in the pool's repository list (homelab.execPool.repos, /etc/exec-pool/repos). FILE - reads the prompt from stdin, which no shell re-splits (an ssh command line). K is the idempotency key, by default derived from the rest: the same submission again is the same
         task, so give a new --key to run it once more. N, -100 to 100 (0), orders the claim: higher first, and a
         queued task gains one for every 10 minutes it waits, so a low one still runs; a running task is never stopped
-        for another. The same key again keeps the priority it was first given.
+        for another. The same key again keeps the priority it was first given. Each --requires NAME is a capability
+        the slot must offer (homelab.execPool.capabilities: github, monitoring, always-on); a task no slot seen in
+        the last day offers them to, with its agent, is refused, naming the capability.
   start             submit's flags, claude only: starts a session, whose first turn runs the prompt and parks it
                     waiting; prints its id
   send ID [--at HH:MM|RFC3339] --prompt TEXT|--prompt-file FILE
@@ -70,6 +72,8 @@ are, then wait for their input.";
 const ATTACH_TIMEOUT: Duration = Duration::from_secs(600);
 /// Flags that take no value.
 const SWITCHES: [&str; 2] = ["follow", "merged"];
+/// Flags that may be given more than once, each value kept.
+const REPEATED: [&str; 1] = ["requires"];
 /// How often `logs -f` reads the queue.
 const FOLLOW_POLL: Duration = Duration::from_secs(2);
 /// How often `wait` reads the queue, and how long it waits after the settle for the runner to record the result.
@@ -98,6 +102,7 @@ impl From<QueueError> for Fail {
 
 struct Args {
     flags: BTreeMap<String, String>,
+    repeated: BTreeMap<String, Vec<String>>,
     positional: Vec<String>,
 }
 
@@ -105,6 +110,7 @@ impl Args {
     fn parse(rest: &[String]) -> Result<Self, Fail> {
         let mut args = Self {
             flags: BTreeMap::new(),
+            repeated: BTreeMap::new(),
             positional: Vec::new(),
         };
         let mut it = rest.iter();
@@ -120,7 +126,12 @@ impl Args {
                 it.next()
                     .ok_or_else(|| Fail::Usage(format!("--{key} needs a value")))?
             };
-            if args.flags.insert(key.to_owned(), value.clone()).is_some() {
+            if REPEATED.contains(&key) {
+                args.repeated
+                    .entry(key.to_owned())
+                    .or_default()
+                    .push(value.clone());
+            } else if args.flags.insert(key.to_owned(), value.clone()).is_some() {
                 return Err(Fail::Usage(format!("--{key} given twice")));
             }
         }
@@ -136,9 +147,18 @@ impl Args {
         self.flags.get(key).map(String::as_str)
     }
 
+    fn all(&self, key: &str) -> &[String] {
+        self.repeated.get(key).map_or(&[], Vec::as_slice)
+    }
+
     /// Refuses a flag `cmd` does not take, so a misspelt `--modle` is not silently dropped.
     fn only(&self, cmd: &str, known: &[&str], positional: usize) -> Result<(), Fail> {
-        if let Some(k) = self.flags.keys().find(|k| !known.contains(&k.as_str())) {
+        if let Some(k) = self
+            .flags
+            .keys()
+            .chain(self.repeated.keys())
+            .find(|k| !known.contains(&k.as_str()))
+        {
             return Err(Fail::Usage(format!("{cmd} takes no --{k}")));
         }
         if self.positional.len() > positional {
@@ -175,6 +195,7 @@ fn task_spec(cmd: &str, args: &Args) -> Result<TaskSpec, Fail> {
             "model",
             "key",
             "priority",
+            "requires",
         ],
         0,
     )?;
@@ -195,9 +216,23 @@ fn task_spec(cmd: &str, args: &Args) -> Result<TaskSpec, Fail> {
     let (repo, rev, workdir) = (args.get("repo")?, args.get("rev")?, args.get("workdir")?);
     let prompt = &prompt(args)?;
     let model = args.opt("model");
+    let requires: BTreeSet<String> = args.all("requires").iter().cloned().collect();
+    if let Some(bad) = requires.iter().find(|r| !capability_name(r)) {
+        return Err(Fail::Usage(format!(
+            "--requires {bad:?} is not a capability name (a-z, 0-9 and -, from a letter, at most 32)"
+        )));
+    }
+    if requires.len() > MAX_REQUIRES {
+        return Err(Fail::Usage(format!("at most {MAX_REQUIRES} --requires")));
+    }
     let key = args.opt("key").map_or_else(
         || {
-            let what = json!([agent, repo, rev, workdir, prompt, model]);
+            // a task with no requirement keeps the key it had before --requires
+            let what = if requires.is_empty() {
+                json!([agent, repo, rev, workdir, prompt, model])
+            } else {
+                json!([agent, repo, rev, workdir, prompt, model, requires])
+            };
             // a session and a one-shot task of the same flags are two tasks
             let what = if session {
                 json!(["session", what])
@@ -225,17 +260,28 @@ fn task_spec(cmd: &str, args: &Args) -> Result<TaskSpec, Fail> {
             workdir: RelPath::try_from(workdir.to_owned())
                 .map_err(|e| Fail::Usage(format!("--workdir: {e}")))?,
         },
-        capabilities: BTreeSet::new(),
+        capabilities: requires,
         resource_class: "small".to_owned(),
         credential_class: "slot".to_owned(),
         // an agent's effects are not known to be safe to replay
         retry: RetryPolicy { max_attempts: 1 },
         pins: Pins::default(),
     };
-    task.validate(&BTreeSet::new())
+    task.validate(&task.capabilities)
         .map_err(|e| Fail::Usage(e.to_string()))?;
     exec_pool::agent::argv(&task).map_err(|e| Fail::Usage(e.to_string()))?;
     Ok(task)
+}
+
+/// What `submit_task` takes (`0028_requires.up.sql`): at most 8 names of `[a-z][a-z0-9-]{0,31}`.
+const MAX_REQUIRES: usize = 8;
+
+fn capability_name(name: &str) -> bool {
+    name.len() <= 32
+        && name.starts_with(|c: char| c.is_ascii_lowercase())
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
 fn prompt(args: &Args) -> Result<String, Fail> {
@@ -788,6 +834,42 @@ mod tests {
             spec(&with(&["--key", "run-2"])).unwrap().idempotency_key,
             "run-2"
         );
+    }
+
+    #[test]
+    fn each_requires_is_a_capability_of_the_task_and_part_of_its_key() {
+        let t = spec(&with(&["--requires", "monitoring", "--requires", "github"])).unwrap();
+        assert_eq!(
+            t.capabilities,
+            BTreeSet::from(["github".to_owned(), "monitoring".to_owned()])
+        );
+        let plain = spec(&BASE).unwrap();
+        assert_ne!(t.idempotency_key, plain.idempotency_key);
+        assert_eq!(
+            spec(&with(&["--requires", "github", "--requires", "monitoring"]))
+                .unwrap()
+                .idempotency_key,
+            t.idempotency_key
+        );
+        let session = task_spec("start", &args(&with(&["--requires", "always-on"]))).ok();
+        assert_eq!(
+            session.map(|s| s.capabilities),
+            Some(BTreeSet::from(["always-on".to_owned()]))
+        );
+        for bad in ["GitHub", "read_only", "-x", ""] {
+            let got = spec(&with(&["--requires", bad])).unwrap_err();
+            assert!(got.contains("not a capability name"), "{bad:?}: {got}");
+        }
+        let many: Vec<&str> = BASE
+            .iter()
+            .copied()
+            .chain(
+                ["a", "b", "c", "d", "e", "f", "g", "h", "i"]
+                    .iter()
+                    .flat_map(|n| ["--requires", *n]),
+            )
+            .collect();
+        assert!(spec(&many).unwrap_err().contains("at most 8"));
     }
 
     #[test]

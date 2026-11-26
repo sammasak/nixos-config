@@ -26,7 +26,7 @@ pub const DOWN: &str = include_str!("../migrations/0001_queue.down.sql");
 /// From 7 each records its floor, the oldest VERSION whose reads and writes stay correct on it: an additive one keeps
 /// the previous floor, so a binary rolled back across it still serves; one an older binary would misread or break by
 /// its writes records its own version.
-const STEPS: [(i32, &str); 27] = [
+const STEPS: [(i32, &str); 28] = [
     (1, UP),
     (2, include_str!("../migrations/0002_submitter.up.sql")),
     (3, include_str!("../migrations/0003_result.up.sql")),
@@ -69,6 +69,7 @@ const STEPS: [(i32, &str); 27] = [
     (25, include_str!("../migrations/0025_hold_input.up.sql")),
     (26, include_str!("../migrations/0026_cancel_review.up.sql")),
     (27, include_str!("../migrations/0027_result_head.up.sql")),
+    (28, include_str!("../migrations/0028_requires.up.sql")),
 ];
 const DOWN_SUBMITTER: &str = include_str!("../migrations/0002_submitter.down.sql");
 const DOWN_RESULT: &str = include_str!("../migrations/0003_result.down.sql");
@@ -88,9 +89,11 @@ const DOWN_SESSION_SUMMARIES: &str = include_str!("../migrations/0020_session_su
 const DOWN_TURN_ARM: &str = include_str!("../migrations/0021_turn_arm.down.sql");
 const DOWN_CONTINUE_BODY: &str = include_str!("../migrations/0023_continue_body.down.sql");
 const DOWN_HOLD_INPUT: &str = include_str!("../migrations/0025_hold_input.down.sql");
-const VERSION: i32 = 27;
+const VERSION: i32 = 28;
 /// The fence's SQLSTATE, raised by `attempts_fence`.
 const FENCED: &str = "XP409";
+/// `submit_task`'s SQLSTATE for capabilities no recent slot offers (`0028_requires.up.sql`).
+const UNOFFERED: &str = "XP412";
 const LIVE: &str = "('leased', 'running', 'checkpointing')";
 /// The HELP and TYPE lines both renderings of `exec_pool_queue_up` start with.
 macro_rules! up_help {
@@ -134,6 +137,9 @@ pub enum QueueError {
     Client(String),
     #[error("the database refused a stale write: {0}")]
     Fenced(String),
+    /// A submission requiring capabilities that no slot seen in the last day offers with its agent: refused, not queued.
+    #[error("{0}")]
+    Unoffered(String),
     #[error("database error {code}: {message}")]
     Db { code: String, message: String },
     #[error("the queue connects over a Unix socket only; give host=/path/to/socket/dir")]
@@ -173,6 +179,9 @@ impl From<postgres::Error> for QueueError {
         match e.as_db_error() {
             Some(db) if db.code() == &SqlState::from_code(FENCED) => {
                 Self::Fenced(db.message().to_owned())
+            }
+            Some(db) if db.code() == &SqlState::from_code(UNOFFERED) => {
+                Self::Unoffered(db.message().to_owned())
             }
             // a FATAL or PANIC ends the session whatever its code, but a refused login or a missing database is
             // a misconfiguration, not an outage to wait out
@@ -928,7 +937,8 @@ impl Store {
     /// its first submission. The queued task's id and whether it was already queued.
     ///
     /// # Errors
-    /// What `submit_task` or the database reports, an idempotency conflict included.
+    /// [`QueueError::Unoffered`] when no slot seen in the last day offers every capability `task` names with its agent;
+    /// what `submit_task` or the database reports, an idempotency conflict included.
     pub fn submit_task(
         &mut self,
         task: &TaskSpec,
@@ -1035,12 +1045,14 @@ impl Store {
             return Err(QueueError::Range("lease_secs"));
         }
         let agents = serde_json::to_value(&slot.agents)?;
+        let capabilities = serde_json::to_value(&slot.capabilities)?;
         self.tx(|tx| {
-            // the agents submit_task checks a task against (0008_slots.up.sql)
+            // the agents and capabilities submit_task checks a task against (0008_slots.up.sql, 0028_requires.up.sql)
             tx.execute(
-                "INSERT INTO slots (host, id, agents) VALUES ($1, $2, $3) \
-                 ON CONFLICT (host, id) DO UPDATE SET agents = excluded.agents, seen_at = now()",
-                &[&slot.host, &slot.id, &agents],
+                "INSERT INTO slots (host, id, agents, capabilities) VALUES ($1, $2, $3, $4) \
+                 ON CONFLICT (host, id) DO UPDATE SET agents = excluded.agents, \
+                 capabilities = excluded.capabilities, seen_at = now()",
+                &[&slot.host, &slot.id, &agents, &capabilities],
             )?;
             // read every queued task unlocked, then lock only the one taken, so a claimer holds no row it skips; a
             // session's checkpoint as it was read
