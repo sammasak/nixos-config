@@ -230,18 +230,12 @@ in
               timeout = 30;
             }
             # the deployer (lenovo) must not run the heavy gates (memory); the per-recipe refusals cover only some of
-            # them, so the hook refuses nixos:qa, nix flake check and the role VM test there (once the pin carries it)
-            ++
-              lib.optional
-                (
-                  osConfig.networking.hostName == osConfig.sam.fleet.deployer
-                  && builtins.pathExists "${skillsSrc}/hooks/check-heavy-build.py"
-                )
-                {
-                  type = "command";
-                  command = "${pkgs.python3}/bin/python3 ${skillsSrc}/hooks/check-heavy-build.py ${osConfig.sam.fleet.deployer}";
-                  timeout = 15;
-                }
+            # them, so the hook refuses nixos:qa, nix flake check and the role VM test there
+            ++ lib.optional (osConfig.networking.hostName == osConfig.sam.fleet.deployer) {
+              type = "command";
+              command = "${pkgs.python3}/bin/python3 ${skillsSrc}/hooks/check-heavy-build.py ${osConfig.sam.fleet.deployer}";
+              timeout = 15;
+            }
             ++ lib.optional shunt (shuntHook "shunt-check-bash-read.sh");
           }
         ]
