@@ -59,11 +59,12 @@ def pairs(root: pathlib.Path = ROOT) -> list[dict[str, str]]:
     hosts = {}
     for name, body in re.findall(r"^    ([A-Za-z0-9-]+) = \{\n(.*?)\n    \};$", table, re.M | re.S):
         address = need(re.search(r'^      address = "([^"]+)";$', body, re.M), f"host {name} has no address")[1]
-        hosts[name] = {"address": address, "gpu": re.search(r"^      gpu = ", body, re.M) is not None}
+        hosts[name] = {"address": address, "gpu": re.search(r"^      gpu = (?!null;)", body, re.M) is not None}
     for name, address in re.findall(r'^    ([A-Za-z0-9-]+)\.address = "([^"]+)";$', table, re.M):
         hosts[name] = {"address": address, "gpu": False}
-    if not hosts:
-        raise Unreadable(f"{FLEET}: the hosts table names no host")
+    keys = set(re.findall(r"^    ([^ #}\n][^ .=\n]*)", table, re.M))
+    if not hosts or keys != set(hosts):
+        raise Unreadable(f"{FLEET}: the hosts table has entries this parse does not read ({sorted(keys)} vs {sorted(hosts)})")
     caches = need(re.search(r"^  storeCaches = \[\n(.*?)\n  \];$", text, re.M | re.S), "no `storeCaches = [` list")[1]
     block = need(re.search(r"^    listeners = \{\n(.*?)\n    \}\n(.*?)\n    \);\n    public = ", text, re.M | re.S),
                  "no `    listeners = { ... } // ... );` block before `public`")
@@ -80,7 +81,7 @@ def pairs(root: pathlib.Path = ROOT) -> list[dict[str, str]]:
             raise Unreadable(f"{FLEET}: listener {name} is {let}, no let-bound attrset")
         found[name] = endpoint(lets[let], strings, f"listener {name} ({let})")
     top = [l for l in body.splitlines() if re.match(r"      [^ #}]", l)]
-    if len(top) != len(entries) + len(aliases) + len(re.findall(r"^      inherit ", body, re.M)):
+    if len(top) != len(entries) + len(aliases) + len(re.findall(r"^      inherit ([\w ]+);$", body, re.M)):
         raise Unreadable(f"{FLEET}: a listener line this parse does not know: {top}")
 
     scraped = re.findall(r'^    // scraped "([\w-]+)" ([0-9]+) \((.*)\)$', tail, re.M)
@@ -130,12 +131,18 @@ def main(args: list[str]) -> int:
     if len(table) < 10 or not all(".fleet." in n for n in table.values()):
         print(f"lint-fleet-pairs: only {len(table)} listeners read from {FLEET}: {table}", file=sys.stderr)
         return 2
-    if args:
-        files = [(p, pathlib.Path(p).read_text(errors="ignore")) for p in args]
-    else:
-        tracked = subprocess.run(["git", "-C", str(ROOT), "ls-files"], check=True, stdout=subprocess.PIPE,
-                                 text=True).stdout.split()
-        files = [(p, (ROOT / p).read_text(errors="ignore")) for p in tracked if (ROOT / p).is_file()]
+    try:
+        if args:
+            files = [(p, pathlib.Path(p).read_text(errors="ignore")) for p in args]
+        else:
+            tracked = subprocess.run(["git", "-C", str(ROOT), "ls-files", "-z"], check=True, stdout=subprocess.PIPE,
+                                     text=True).stdout.split("\0")
+            files = [(p, (ROOT / p).read_text(errors="ignore")) for p in tracked if p and (ROOT / p).is_file()]
+            if len(files) < 100 or FLEET not in dict(files):
+                raise Unreadable(f"the tracked tree was not read ({len(files)} files)")
+    except (Unreadable, OSError, subprocess.CalledProcessError) as e:
+        print(f"lint-fleet-pairs: {e}", file=sys.stderr)
+        return 2
     rc = 0
     for path, n, lit, name in pair_literals(files, table):
         print(f"{path}:{n}: names {lit}, use its inside name {name}", file=sys.stderr)

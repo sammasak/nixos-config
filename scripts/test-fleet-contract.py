@@ -76,9 +76,12 @@ spec = importlib.util.spec_from_file_location("lint_fleet_pairs", ROOT / "script
 lint_fleet_pairs = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(lint_fleet_pairs)
 evaluated = sorted(P["pairs"], key=lambda p: (p["literal"], p["name"]))
-check(lint_fleet_pairs.pairs(ROOT) == evaluated,
-      f"lint-fleet-pairs.py's text parse of fleet.nix yields the evaluated listener pairs "
-      f"({lint_fleet_pairs.pairs(ROOT)} vs {evaluated})")
+try:
+    parsed = lint_fleet_pairs.pairs(ROOT)
+except lint_fleet_pairs.Unreadable as e:
+    parsed = str(e)
+check(parsed == evaluated,
+      f"lint-fleet-pairs.py's text parse of fleet.nix yields the evaluated listener pairs ({parsed} vs {evaluated})")
 
 F = P["failing"]
 check(len(F["hosts"]) >= 6 and all(m == [] for m in F["hosts"].values()), f"every host passes its assertions ({F['hosts']})")
