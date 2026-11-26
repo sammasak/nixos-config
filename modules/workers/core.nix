@@ -89,7 +89,14 @@ let
         # its last records first, bounded: Loki down never holds a retire, a reset or an activation
         ${pkgs.coreutils}/bin/timeout 30 ${config.systemd.package}/bin/systemctl start "dev-env-records@$n.service" || true
       ''}
-      mv -T --no-copy "$d/$n" "$d/.trash/$n-$(date +%Y%m%d-%H%M%S)"
+      t=$d/.trash/$n-$(date +%Y%m%d-%H%M%S)
+      mv -T --no-copy "$d/$n" "$t"
+      # kept: eval-cache rows are keyed by the flake's fingerprint and fetcher entries by content hash
+      if [[ ''${keep:-} == caches ]]; then
+        for c in nix-cache eval-cache; do
+          [[ -L $t/$c || ! -d $t/$c ]] || { install -d -m 0700 "$d/$n"; mv -T --no-copy "$t/$c" "$d/$n/$c"; }
+        done
+      fi
     fi
     rm -rf --one-file-system "/nix/var/nix/profiles/per-container/$n" "/nix/var/nix/gcroots/per-container/$n"
   '';
@@ -198,6 +205,13 @@ let
       SupplementaryGroups = [ "dev-env-records-metrics" ];
       ReadWritePaths = [ recordsMetrics ];
     };
+  # A reset between an activation that moved the instance's id block and its container's restart keeps a cache the new
+  # uid cannot write: trashed, so the next line makes it afresh.
+  keptCache = o: c: ''
+    [[ -z $(${pkgs.findutils}/bin/find "$d/${c}" -maxdepth 0 ! -user ${o.u} 2>/dev/null) ]] || mv -T --no-copy "$d/${c}" "$d/.trash/${
+      lib.replaceStrings [ "/" ] [ "-" ] c
+    }-$(date +%Y%m%d-%H%M%S)"
+  '';
   # The activation and every slot's reset each prepare all instances: two at once both write a trashed home's
   # .id-base.new and one mv finds it gone, failing that reset and with it a deploy. Bounded, never failing.
   prepareDirs = ''
@@ -223,6 +237,7 @@ let
         fi
         # mkdir and chown -h: the guest owns ~/.cache, and install -d follows a symlink there and chmods and chowns its target
         mkdir -m 0755 "$d/${w.name}/home/.cache" 2>/dev/null && chown -h ${o.u}:${o.g} "$d/${w.name}/home/.cache" || true
+        ${keptCache o "${w.name}/eval-cache"}
         [[ -d $d/${w.name}/eval-cache ]] || install -d -m 0700 -o ${o.u} -g ${o.g} "$d/${w.name}/eval-cache"
       ''
       # root's at every level, so the guest cannot swap the dir its tree is renamed into
@@ -231,6 +246,7 @@ let
         install -d -m 0755 "$d/.sessions/dock" "$d/.sessions/dock/${w.name}"
       ''
       + lib.optionalString (ownCache w) ''
+        ${keptCache o "${w.name}/nix-cache"}
         [[ -d $d/${w.name}/nix-cache ]] || install -d -m 0700 -o ${o.u} -g ${o.g} "$d/${w.name}/nix-cache"
       ''
       + lib.optionalString w.rootInGuest ''
@@ -245,9 +261,9 @@ let
   resetSteps = pkgs.writeShellScript "dev-env-reset-steps" ''
     rc=0
     trap rc=1 ERR
-    d=${lib.escapeShellArg cfg.stateDir} n=$1
+    d=${lib.escapeShellArg cfg.stateDir} n=$1 keep=''${2:-}
     ${trashOne}
-    [[ ! -e $d/$n ]] || rc=1
+    [[ ! -L $d/$n && -z $(${pkgs.findutils}/bin/find "$d/$n" -mindepth 1 -maxdepth 1 ! -name nix-cache ! -name eval-cache 2>/dev/null) ]] || rc=1
     ${prepareDirs}
     exit "$rc"
   '';
@@ -747,7 +763,7 @@ let
       ownNixCache = mkOption {
         type = types.bool;
         default = false;
-        description = "Its own Nix fetcher and tarball cache, emptied by every reset, instead of the host's shared one; always under rootInGuest.";
+        description = "Its own Nix fetcher and tarball cache, kept across resets like the eval cache, instead of the host's shared one; always under rootInGuest.";
       };
       rootInGuest = mkOption {
         type = types.bool;
@@ -1173,7 +1189,7 @@ in
           # a pool slot is reset every task turn, seconds apart in a session: without this the container's start limit
           # (startLimitBurst below) fails it on the fourth turn in ten minutes
           systemctl reset-failed "container@$n.service"
-          if ! ${resetSteps} "$n"; then
+          if ! ${resetSteps} "$n" caches; then
             systemctl start "container@$n.service" || true
             echo "$n: the reset failed after the stop; the container was started again on what is left" >&2
             exit 1

@@ -3,7 +3,8 @@
 actionable, parked (the policy's repos) and archived (the API's flag); the first verdict against the policy grade; a
 deploy record's flake attribute joined to its host;
 PR lead time from the earliest own author date, with its fallbacks; every section stamped; a deploy-repo PR's phases
-from its last commit, its gates and the first deploy that has its merge, cached once final. Then GitHub down: exit 0, no GitHub series
+from its last commit, its gates (a full gate, the push hook's fast set, a pool merge check of its head) and the
+first deploy that has its merge, of any host and per host, cached once final. Then GitHub down: exit 0, no GitHub series
 (no 0 in their place), the Loki sections still written and GitHub's last success timestamps carried over. Seeded: a
 name outside METRICS is refused."""
 import http.server
@@ -17,6 +18,7 @@ import threading
 import time
 import urllib.error
 import urllib.parse
+from datetime import datetime, timezone
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 POLICY = ROOT / "modules/homelab/monitoring/shipping-policy.json"
@@ -109,8 +111,9 @@ class Fake(http.server.BaseHTTPRequestHandler):
         if u.path.startswith("/loki/"):
             query = q["query"][0]
             # the pass lookup must name the scheduled run's head, or main's passes are never read
-            assert '|= "result=fail"' in query or 'kind="gate-step"' not in query or "5c4ed00" in query, query
+            assert '|= "result=fail"' in query or 'kind="gate-step"' not in query or "5c4ed00" in query or "pool-merge-check" in query, query
             lines = (GATES if 'kind="gate"' in query else DEPLOYS if 'kind="deploy"' in query
+                     else [] if "pool-merge-check" in query
                      else ["gate=nixos-qa step=lint result=fail"] if '|= "result=fail"' in query
                      else STEP_PASSES if 'kind="gate-step"' in query else [])
             span = range(int(q["start"][0]), int(q["end"][0]))
@@ -333,6 +336,13 @@ with tempfile.TemporaryDirectory() as tmp:
           and m.get('shipping_pr_phase_unmatched{reason="not_deployed"}') == 1
           and m.get('shipping_pr_phase_unmatched{reason="before_records"}') == 0,
           "a PR with no gate and no deploy yet is unmatched for both; a PR whose commits failed is left out")
+    check(near(m.get('shipping_pr_merge_to_deploy_hours{host="lenovo",node="lenovo-21CB001PMX",quantile="0.5"}'), 0.8)
+          and m.get('shipping_pr_merge_to_deploy_prs{host="lenovo",node="lenovo-21CB001PMX"}') == 2
+          and m.get('shipping_pr_not_deployed{host="lenovo",node="lenovo-21CB001PMX"}') == 1
+          and m.get('shipping_pr_merge_to_deploy_prs{host="acer-swift",node="acer-swift"}') == 0
+          and m.get('shipping_pr_not_deployed{host="acer-swift",node="acer-swift"}') == 3
+          and not any(k.startswith("shipping_pr_merge_to_deploy_hours") and "acer-swift" in k for k in m),
+          "per host: lenovo's deploys give its merge_to_deploy; acer, with good deploys but none with a sha, has none of the PRs")
     labels = {kv.split("=")[0] for k in m if k.startswith(("shipping_pr_phase", "shipping_pr_gate_retries")) and "{" in k
               for kv in k.split("{")[1].rstrip("}").split(",")}
     check(labels == {"phase", "quantile", "reason"}, f"phase series carry bounded labels only, no PR number or sha {labels}")
@@ -464,6 +474,97 @@ gh = StubGitHub([commits(40)], token="")
 hours, reason, _ = sm.lead_hours(gh, lead_pr)
 check(abs(hours - 4) < 1e-6 and reason == "no_token" and gh.calls == 0,
       "without a token no commits call is made and lead time is open-to-merge, counted as no_token")
+
+
+# #902, phases() on its own over seeded records: the push hook's fast record and a pool merge check of the PR head are
+# gates; failed fast sets and failed merge checks before them are retries; merge_to_deploy per host
+class CompareGitHub:
+    def __init__(self, answers):
+        self.answers, self.calls, self.token = answers, [], "fake"
+
+    def get(self, path, **params):
+        merge, deployed = path.rsplit("/", 1)[1].split("...")
+        self.calls.append((merge, deployed))
+        if (merge, deployed) not in self.answers:
+            raise urllib.error.HTTPError(path, 404, "unknown", {}, None)
+        return {"status": self.answers[merge, deployed]}
+
+
+def seed(records):
+    """LOKI_READ as a run leaves it: every day of every query read, the records on day 0."""
+    sm.LOKI_READ.clear()
+    sm.LOKI_READ["end"] = NOW
+    for q in (sm.PHASE_GATE_QUERY, sm.STEP_FAIL_QUERY, sm.POOL_CHECK_QUERY, sm.DEPLOY_QUERY):
+        for day in range(sm.LOKI_DAYS):
+            sm.LOKI_READ[q, day] = sorted([(NOW - h * 3600, {**rec(line)[1], "@host": "lenovo"}) for h, line in records.get(q, [])],
+                                          key=lambda x: x[0], reverse=True) if day == 0 else []
+
+
+def phase_pr(n, last, merged, shas, merge):
+    return {**pr(n, 20, merged), "phase_facts": {"last": NOW - last * 3600, "shas": shas, "merge": merge}}
+
+
+MA, MB, MC = "a20" + "0" * 37, "b21" + "0" * 37, "c22" + "0" * 37
+seeded = {
+    # PR 20: its fast set failed on its first commit 9 h ago, then passed on its head (120 s, 8 h ago)
+    sm.PHASE_GATE_QUERY: [(8, f"gate=nixos-qa-push seconds=120 result=owed sha={sha(20, 1)[:8]} mode=fast head={sha(20, 1)} checkout=clean"),
+                          (7, "gate=nixos-qa seconds=600 result=pass sha=fffffff mode=manual deferred=0")],
+    sm.STEP_FAIL_QUERY: [(9, f"gate=nixos-qa-push step=nixos-push-eval seconds=80 result=fail sha={sha(20, 0)[:8]}"),
+                         (9, f"gate=nixos-qa step=lint seconds=5 result=fail sha={sha(20, 0)[:8]}")],
+    # PR 21 (no gate record): a merge check of its head failed (4.9 h ago), the next one passed (3 h to 2.9 h ago); one of
+    # another head is not its
+    sm.POOL_CHECK_QUERY: [(5, f"gate=pool-merge-check step=pool-merge-eval check=lenovo seconds=60 result=pass sha=m1 head={sha(21, 0)}"),
+                          (4.9, f"gate=pool-merge-check step=pool-merge-build check=exec-pool seconds=300 result=fail sha=m1 head={sha(21, 0)}"),
+                          (3, f"gate=pool-merge-check step=pool-merge-eval check=naked-pi seconds=0 result=skipped sha=m2 head={sha(21, 0)}"),
+                          (2.9, f"gate=pool-merge-check step=pool-merge-eval check=lenovo seconds=360 result=pass sha=m2 head={sha(21, 0)}"),
+                          (2.5, f"gate=pool-merge-check step=pool-merge-eval check=lenovo seconds=9 result=pass sha=m3 head={sha(21, 9)}")],
+    # lenovo deploys e1 (has PR 20's merge) then e2 (has 21's and 22's); asus deploys e3 (has 20's only)
+    sm.DEPLOY_QUERY: [(1.5, "node=lenovo result=ok seconds=20 rolled_back=0 sha=e1"), (0.2, "node=lenovo result=ok seconds=20 rolled_back=0 sha=e2"),
+                      (0.1, "node=asus-b460m result=ok seconds=20 rolled_back=0 sha=e3")]}
+answers = {(MA, "e1"): "ahead", (MA, "e3"): "ahead", (MB, "e2"): "ahead", (MB, "e3"): "behind",
+           (MC, "e2"): "ahead", (MC, "e3"): "behind"}
+phase_prs = [phase_pr(20, 10, 2, [sha(20, 0), sha(20, 1)], MA), phase_pr(21, 6, 1, [sha(21, 0)], MB),
+             phase_pr(22, 5, 0.5, [sha(22, 0)], MC)]
+with tempfile.TemporaryDirectory() as tmp:
+    def phases_run(gh):
+        seed(seeded)
+        out = sm.Out()
+        sm.phases(gh, "http://loki.invalid", out, phase_prs, "sammasak", "nixos-config", datetime.fromtimestamp(NOW, timezone.utc),
+                  f"{tmp}/phase-cache.json", ["lenovo-21CB001PMX", "asus-b460m"])
+        return {row.rsplit(" ", 1)[0]: float(row.rsplit(" ", 1)[1]) for rows in out.lines.values() for row in rows}
+
+    def near(x, want):
+        return x is not None and abs(x - want) < 1e-9
+    gh = CompareGitHub(answers)
+    pm = phases_run(gh)
+    check(pm.get('shipping_pr_phase_unmatched{reason="no_gate"}') == 1 and pm.get('shipping_pr_phase_prs{phase="gate"}') == 2,
+          f"a fast push record and a pool merge check of the head are gates; a manual gate and no record are none {pm}")
+    # idle: 20's 10 h - 8 h less its 120 s, 21's 6 h - 3 h; gate 120 s and 0.1 h; to merge 6 h and 1.9 h
+    check(near(pm.get('shipping_pr_phase_hours{phase="idle",quantile="0.5"}'), (2 - 120 / 3600 + 3) / 2)
+          and near(pm.get('shipping_pr_phase_hours{phase="gate",quantile="0.5"}'), (120 / 3600 + 0.1) / 2)
+          and near(pm.get('shipping_pr_phase_hours{phase="gate_to_merge",quantile="0.5"}'), (6 + 1.9) / 2),
+          "a merge check runs from its first record's start to its last record; a fast record from its seconds before it")
+    check(pm.get('shipping_pr_gate_retries{quantile="0.5"}') == 1 and pm.get('shipping_pr_gate_retries{quantile="0.9"}') == 1,
+          "a failed fast set (its push-eval step) and a failed merge check before the pass are retries; the full gate's step is not")
+    check(near(pm.get('shipping_pr_phase_hours{phase="merge_to_deploy",quantile="0.5"}'), 0.5)
+          and pm.get('shipping_pr_phase_prs{phase="merge_to_deploy"}') == 3,
+          "merge_to_deploy keeps the first good deploy of any host")
+    check(near(pm.get('shipping_pr_merge_to_deploy_hours{host="lenovo",node="lenovo-21CB001PMX",quantile="0.5"}'), 0.5)
+          and near(pm.get('shipping_pr_merge_to_deploy_hours{host="lenovo",node="lenovo-21CB001PMX",quantile="0.9"}'), 0.74)
+          and pm.get('shipping_pr_merge_to_deploy_prs{host="lenovo",node="lenovo-21CB001PMX"}') == 3
+          and near(pm.get('shipping_pr_merge_to_deploy_hours{host="asus-b460m",node="asus-b460m",quantile="0.5"}'), 1.9)
+          and pm.get('shipping_pr_merge_to_deploy_prs{host="asus-b460m",node="asus-b460m"}') == 1
+          and pm.get('shipping_pr_not_deployed{host="asus-b460m",node="asus-b460m"}') == 2
+          and pm.get('shipping_pr_not_deployed{host="lenovo",node="lenovo-21CB001PMX"}') == 0,
+          f"merge_to_deploy per host: each host's own first deploy that has the merge; a host behind shows its undeployed PRs {pm}")
+    check(sorted(gh.calls) == sorted(answers), f"one compare per merge and deployed sha {sorted(gh.calls)}")
+    gh = CompareGitHub(answers)
+    check(phases_run(gh) == pm and gh.calls == [], f"a second run compares nothing again and gives the same series {gh.calls}")
+    # a cache from before per-host matching (no hosts, no has): read again once, same series
+    cached = json.loads(pathlib.Path(f"{tmp}/phase-cache.json").read_text())
+    pathlib.Path(f"{tmp}/phase-cache.json").write_text(json.dumps({k: {"deployed": v["deployed"], "tried": v["tried"]} for k, v in cached.items()}))
+    check(phases_run(CompareGitHub(answers)) == pm, "an entry cached before per-host matching is matched again, same series")
+sm.LOKI_READ.clear()
 
 try:
     sm.Out().add("shipping_not_declared", 1)
