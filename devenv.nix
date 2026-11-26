@@ -234,8 +234,8 @@ let
         }
         # Every check of a system is evaluated in one nix-eval-jobs run, whose workers share nixpkgs and the fleet's
         # modules until a worker over --max-memory-size MiB is replaced after its job. Their sum (5 GiB) caps the run: a
-        # check that exceeds it even alone fails with an error line, and acer's or msi's deploy check needs 4.1 GiB: a
-        # budget under about 4.5 GiB fails them. eval_seconds is the check's own wallMs; a node's two deploy checks may
+        # check that exceeds it even alone fails with an error line. acer's and msi's deploy checks exceed even 6 GiB in a
+        # worker (4.1 GiB in a nix eval of their own): at this budget they fail. eval_seconds is the check's own wallMs; a node's two deploy checks may
         # each evaluate its host, on either worker. The roots keep every drv the run wrote
         # until the step ends: the builds come hours after the evaluation.
         # Sets d to the check's drvPath, ev to its eval seconds and with to its run.
