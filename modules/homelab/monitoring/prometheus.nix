@@ -126,6 +126,8 @@ in
             timeout = "5s";
             dns = {
               query_name = config.sam.fleet.listeners.prometheus.dnsName;
+              # the default is ANY, which 1.1.1.1 refuses (NOTIMP)
+              query_type = "A";
               transport_protocol = "udp";
               preferred_ip_protocol = "ip4";
               valid_rcodes = [ "NXDOMAIN" ];

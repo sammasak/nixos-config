@@ -193,6 +193,7 @@ a row above and a narrow check, not a longer gate.
 
 ## Later (not queued; one line each)
 
+- [#836](https://github.com/sammasak/nixos-config/issues/836) follow-ups to the inside names (`<listener>.fleet.sammasak.dev`): Grafana's API is admitted from the edge alone (widen `from` is the owner's call, it still needs a Grafana login); the slots reach Prometheus, Alertmanager and Loki through their host's read-only proxy, not by name; an unlisted name in the zone falls to the edge's 404; the per-name probe (one curl per inside name from black-pi) is the metric still unread; scorecard and platform-record keep the address default.
 - [#653](https://github.com/sammasak/nixos-config/issues/653): a PR head held to the task's branch (pool finding 4); slice 4 is needs-owner.
 - [#834](https://github.com/sammasak/nixos-config/issues/834), skills [#167](https://github.com/sammasak/skills/issues/167), [#168](https://github.com/sammasak/skills/issues/168): Shunt pilots for Codex and Pi, one-shot boilerplate, a local bulk-read backend; after item 10 decides Shunt.
 - [#611](https://github.com/sammasak/nixos-config/issues/611): native OTLP requests above 1 MiB; fix #613 merged, relay rejections per day unread.
