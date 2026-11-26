@@ -70,7 +70,7 @@ covers 21:00 to 08:30 Stockholm in both seasons, and mutes one hour more: 20:00 
 ## The scheduled full gate
 
 A push runs the fast set only (CLAUDE.md, the pre-push hook) and owes the full gate. `scheduled-gate.timer` on
-acer-swift (`modules/homelab/scheduled-gate.nix`, at 03:20, 09:20, 15:20 and 21:20) fetches origin/main into
+acer-swift (`modules/homelab/scheduled-gate.nix`, at 03:20, 11:20 and 19:20) fetches origin/main into
 `/var/lib/scheduled-gate/repo` and, when main has moved since the last finished run, runs `devenv tasks run nixos:qa`
 in a worktree just added at that commit, as the owner. nixos:qa waits for the heavy-work lock itself and records the
 gate (`gate=nixos-qa mode=scheduled`) and its steps in Loki, as a push's gate did; its step times are in

@@ -216,7 +216,8 @@ full-gate REF="HEAD":
 # (a conflict exits 1), this runs the checks BRANCH's changed paths map to (scripts/pool_merge_check.py: docs none,
 # rules and dashboards their checks, exec-pool its build and the pool's hosts, anything else every host's toplevel
 # drvPath), prints each with its seconds and each skipped, and records them as gate-step records. Nothing is pushed.
-# Heavy: each nix process under the heavy-work lock, one at a time, and refused on lenovo.
+# Heavy: each nix process under the heavy-work lock, one at a time, and refused on lenovo. Optional: a pull request
+# ships on its own head's narrow check and a clean textual merge, not on this.
 [doc("Run the checks BRANCH's changed paths map to, merged with current origin/main, under the heavy lock; not on lenovo")]
 pool-merge-check BRANCH:
     @[ "$(uname -n)" != lenovo-21CB001PMX ] || { echo "pool-merge-check: run it on acer, not lenovo" >&2; exit 1; }; \

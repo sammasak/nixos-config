@@ -125,8 +125,10 @@ only run long gates even less often". Per-step seconds sit in Loki's `{job="plat
 (`gate="nixos-qa"` or `gate="pool-merge-check"`); item 4 fills the unknowns from them. "Caught" means a fix commit or
 pull request names the check as what failed.
 
-The full gate runs only as the scheduled gate (acer, 03:20 and 15:20, when main moved) or `just full-gate`.
-`just pool-merge-check` picks its checks from the changed paths (`scripts/pool_merge_check.py`; docs: nothing) and
+The full gate runs only as the scheduled gate (acer, 03:20, 11:20 and 19:20, when main moved) or `just full-gate`.
+Owner, 26 Nov: a pull request ships on its session's narrow check on its own head and a textually clean merge; nobody
+re-runs a merge check on current main, and the scheduled gate, eight hours apart, is the backstop for two that merge
+cleanly but break each other. `just pool-merge-check` stays for a session that wants it; it picks its checks from the changed paths (`scripts/pool_merge_check.py`; docs: nothing) and
 writes one gate-step record per check.
 
 | Check or step | Typical minutes | Real defects caught (commit or PR) | Depends on |
