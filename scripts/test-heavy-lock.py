@@ -2,7 +2,8 @@
 file: without the file it runs unlocked; a free lock is held for the command's whole run; a held one is waited for, with
 its holder named; an ancestor already holding it (`flock -o … nixos:qa`, or a nested call) runs at once. The command is
 told its wait in HEAVY_LOCK_WAIT_SECONDS: 0 on a free or absent lock, the measured wait on a held one, the outer wait in
-a nested call, unset under a `flock -o` launcher (not measured here). Seeded: the wrapper without its ancestor check
+a nested call, unset under a `flock -o` launcher (not measured here). Under NIXOS_QA_MODE=scheduled it holds
+scheduled-gate.lock too. Seeded: the wrapper without its ancestor check
 deadlocks under `flock -o`, so the check is what prevents it; one that does not time its wait reports a contended lock
 as 0. Run as `test-heavy-lock.py [the packaged heavy-lock]`, else the source."""
 import os
@@ -23,7 +24,7 @@ WAIT = 'echo "${HEAVY_LOCK_WAIT_SECONDS-unset}"'
 with tempfile.TemporaryDirectory() as t:
     t = pathlib.Path(t)
     lock = t / "heavy-work.lock"
-    env = {k: v for k, v in os.environ.items() if not k.startswith("HEAVY_LOCK")} | {"HEAVY_LOCK": str(lock)}
+    env = {k: v for k, v in os.environ.items() if not k.startswith("HEAVY_LOCK") and k != "NIXOS_QA_MODE"} | {"HEAVY_LOCK": str(lock)}
 
     def run(*cmd, program=PROGRAM, timeout=20):
         return subprocess.run([*program, *cmd], env=env, capture_output=True, text=True, timeout=timeout, check=False)
@@ -52,6 +53,16 @@ with tempfile.TemporaryDirectory() as t:
     check(r.stdout.strip() == "0", f"a free lock: the wait is 0 ({r.stdout.strip()})")
     r = run("bash", "-c", "exit 7")
     check(r.returncode == 7, f"the command's exit status is the wrapper's ({r.returncode})")
+
+    mark = t / "scheduled-gate.lock"
+    mark.touch()
+    probe = f'flock -n "{mark}" true && echo FREE || echo HELD'
+    r = run("bash", "-c", probe)
+    check(r.stdout.strip() == "FREE", f"outside the scheduled gate scheduled-gate.lock stays free ({r.stdout.strip()})")
+    r = subprocess.run([*PROGRAM, "bash", "-c", probe], env=env | {"NIXOS_QA_MODE": "scheduled"}, capture_output=True,
+                       text=True, timeout=20, check=False)
+    check(r.stdout.strip() == "HELD",
+          f"the scheduled gate holds scheduled-gate.lock beside the lock, for a slot to wait on ({r.stdout.strip()})")
 
     r, waited = contended("bash", "-c", WAIT)
     holder_named = "waiting for" in r.stderr and "held by pid" in r.stderr

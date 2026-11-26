@@ -7,7 +7,9 @@ parent (systemd-run) sets NIXOS_QA_LOCKED=1 for nixos:qa instead. Without the lo
 work-locks.nix) it runs unlocked and says so. The command inherits the locked descriptor, so the lock lasts as long as
 it and anything it leaves running. HEAVY_LOCK_WAIT_SECONDS tells the command how long it waited for the lock: 0 when
 it was free or absent; left as inherited when an ancestor holds it (a nested call keeps the outer wait, a `flock -o`
-launcher leaves it unset: that wait was not measured here).
+launcher leaves it unset: that wait was not measured here). Under NIXOS_QA_MODE=scheduled it also holds
+scheduled-gate.lock beside it, when there is one, for as long: a pool slot, which cannot see the heavy lock's holder
+from its PID namespace, waits on that to leave the scheduled gate alone (modules/workers/execution-pool.nix).
 Usage: heavy-lock COMMAND [ARG...]   HEAVY_LOCK overrides the path (scripts/test-heavy-lock.py)."""
 
 from __future__ import annotations
@@ -114,6 +116,12 @@ def main(argv: list[str]) -> None:
         os.environ[WAIT] = f"{time.monotonic() - start:.1f}"
         say(f"took {lock}")
     os.set_inheritable(fd, True)
+    mark = os.path.join(os.path.dirname(lock), "scheduled-gate.lock")
+    if os.environ.get("NIXOS_QA_MODE") == "scheduled" and os.path.exists(mark):
+        # a slot holds it shared for an instant only
+        mfd = os.open(mark, os.O_RDONLY)
+        fcntl.flock(mfd, fcntl.LOCK_EX)
+        os.set_inheritable(mfd, True)
     os.environ["HEAVY_LOCK_HELD"] = lid
     run(argv)
 

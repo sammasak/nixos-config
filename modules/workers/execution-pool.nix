@@ -117,7 +117,19 @@ in
             lib.hiPrio (
               pkgs.writeShellScriptBin name ''
                 light() {
-                  WORK_LOCKS_HELD=1 ${pkgs.util-linux}/bin/flock -o -w 900 -E 75 /run/work-locks/light-work.lock "$@"
+                  # the scheduled gate runs alone (#835): its scheduled-gate.lock (pkgs/heavy-lock) is waited out first,
+                  # within the same 900 s
+                  start=$SECONDS gate=/run/work-locks/scheduled-gate.lock
+                  if [ -e "$gate" ] && ! ${pkgs.util-linux}/bin/flock -s -n "$gate" true; then
+                    echo "${name}: waiting for the scheduled gate, which holds /run/work-locks/heavy-work.lock" >&2
+                    ${pkgs.util-linux}/bin/flock -s -w 900 -E 75 "$gate" true || {
+                      rc=$?
+                      [ "$rc" -ne 75 ] || echo "${name}: the scheduled gate still holds $gate after 900 s" >&2
+                      return "$rc"
+                    }
+                  fi
+                  w=$((900 - SECONDS + start))
+                  WORK_LOCKS_HELD=1 ${pkgs.util-linux}/bin/flock -o -w $((w > 0 ? w : 0)) -E 75 /run/work-locks/light-work.lock "$@"
                   rc=$?
                   [ "$rc" -ne 75 ] || echo "${name}: /run/work-locks/light-work.lock still held after 900 s" >&2
                   return "$rc"

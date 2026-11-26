@@ -15,6 +15,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 
 HERE = pathlib.Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("pool_merge_check", HERE / "pool_merge_check.py")
@@ -125,7 +126,7 @@ def lane(name: str, real: str, d: pathlib.Path) -> pathlib.Path:
     check(head in src, f"the module has a {name} lane")
     body = src.split(head, 1)[1].split("\n            '')\n", 1)[0] if head in src else ""
     text = template.replace("${text}", body).replace("${real}", "${nix}")
-    for k, v in {"${pkgs.util-linux}/bin/flock": f"{d}/stub/flock", "/run/work-locks/light-work.lock": f"{d}/light",
+    for k, v in {"${pkgs.util-linux}/bin/flock": f"{d}/stub/flock", "/run/work-locks/light-work.lock": f"{d}/light", "/run/work-locks/scheduled-gate.lock": f"{d}/gate",
                  "${config.nix.package}/bin/nix-instantiate": f"{d}/stub/nix-instantiate",
                  "${config.nix.package}/bin/nix-build": f"{d}/stub/nix-build", "${pkgs.coreutils}/bin/": "", "${pkgs.bash}/bin/bash": "bash",
                  "${nix}": f"{d}/stub/nix", "${name}": name, "''$": "$"}.items():
@@ -141,8 +142,10 @@ with tempfile.TemporaryDirectory() as tmp:
     d = pathlib.Path(tmp)
     (d / "light").touch()
     (d / "stub").mkdir()
-    (d / "stub/flock").write_text('#!/usr/bin/env bash\nwhile [ "${1#-}" != "$1" ] || [ "$1" = 900 ] || [ "$1" = 75 ]; do shift; done\n'
-                             'shift; IN_LOCK=locked exec "$@"\n')
+    # the scheduled gate's lock is a real one, its holder this test; the light lock always free
+    (d / "stub/flock").write_text(f'#!/usr/bin/env bash\nfor a; do [ "$a" != {d}/gate ] || exec flock "$@"; done\n'
+                                  'while [ "${1#-}" != "$1" ] || [[ $1 =~ ^[0-9]+$ ]]; do shift; done\n'
+                                  'shift; IN_LOCK=locked exec "$@"\n')
     (d / "stub/nix").write_text(f'#!/usr/bin/env bash\necho "$* ${{IN_LOCK:-free}}" >>{d}/log\n'
                                 '[ "$1" != eval ] || [[ $* == *fn.nix* ]] || echo /nix/store/x.drv^out\n')
     # nix-instantiate --add-root R: two roots, the second one's output bin, as the real one prints them
@@ -216,6 +219,21 @@ with tempfile.TemporaryDirectory() as tmp:
     check(r == ["build .# free"], f"the default package (an empty fragment) is passed through whole ({r})")
     r = runs("store", "gc")
     check(r == ["store gc free"], f"another subcommand runs unlocked ({r})")
+
+    (d / "gate").touch()
+    start = time.monotonic()
+    r = runs("eval", "--raw", ".#x")
+    check(r == ["eval --raw .#x locked"] and time.monotonic() - start < 1,
+          f"no scheduled gate: a slot's evaluation takes the light lock at once ({r})")
+    holder = subprocess.Popen(["flock", str(d / "gate"), "sleep", "2"])
+    time.sleep(0.3)
+    (d / "log").write_text("")
+    start = time.monotonic()
+    w = subprocess.run([str(wrappers["nix"]), "eval", "--raw", ".#x"], env=env, capture_output=True, text=True, check=False)
+    waited = time.monotonic() - start
+    holder.wait()
+    check(waited >= 1.2 and "waiting for the scheduled gate" in w.stderr and (d / "log").read_text().splitlines() == ["eval --raw .#x locked"],
+          f"while the scheduled gate holds its lock a slot's evaluation waits it out, saying so ({waited:.1f} s, {w.stderr.strip()!r})")
 
 repo = HERE.parent / "pkgs/exec-pool/migrations"
 check(pmc.migrations_problem(repo) is None, f"this tree's exec-pool migrations ({pmc.migrations_problem(repo)})")
