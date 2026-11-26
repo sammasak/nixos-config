@@ -287,7 +287,6 @@ let
   # a paused instance is declared nowhere but here: its units go as a retired one's do, and nothing removes what it holds
   running = lib.filter (w: !w.paused) instances;
   reservedMem = lib.foldl' (s: w: s + w.memory.reserved) 0 running;
-  highOf = w: builtins.floor (w.memory.reserved * cfg.pool.highFactor);
 
   # The credential proxy: a socket directory per instance (its identity), secrets as unit credentials, never in the store.
   egressDir = "/run/dev-env-egress";
@@ -932,13 +931,6 @@ in
       type = size;
       description = "MemoryMax of the environments' slice, the only ceiling: every instance's reserve fits in it, swap is capped at a quarter of it. The host must have both free: the swap is zram, held in RAM.";
     };
-    pool.highFactor = mkOption {
-      type = types.nullOr (
-        types.addCheck types.number (f: f >= 1) // { description = "number, at least 1"; }
-      );
-      default = 2;
-      description = "Each instance's MemoryHigh, this times its memory.reserved: past it the kernel throttles and reclaims that instance alone and kills nothing, so its growth is not taken out of a neighbour at the slice's limit. At least 1, or the instance is throttled inside its own reserve, and at most pool.memory (asserted), or it is never reached. null sets none.";
-    };
   };
 
   config = lib.mkMerge [
@@ -1422,14 +1414,6 @@ in
             message = "${p}.instances: their memory.reserved adds up to ${showSize reservedMem}, more than pool.memory ${showSize cfg.pool.memory}.";
           }
           {
-            assertion = cfg.pool.highFactor == null || lib.all (w: highOf w <= cfg.pool.memory) running;
-            message = "${p}.pool.highFactor: ${
-              lib.concatMapStringsSep ", " (w: "${w.name}'s MemoryHigh ${showSize (highOf w)}") (
-                lib.filter (w: highOf w > cfg.pool.memory) running
-              )
-            } is above pool.memory ${showSize cfg.pool.memory}, the slice's MemoryMax, so it is never reached.";
-          }
-          {
             assertion = lib.allUnique (map (w: w.index) instances);
             message = "${p}.instances: two names hash to one address (10.233.<index>); rename one.";
           }
@@ -1597,8 +1581,6 @@ in
                 MemoryLow = w.memory.reserved;
                 # MemoryLow alone is given up once a neighbour has nothing left to reclaim: it took an idle instance to 59M
                 MemoryMin = w.memory.reserved;
-                # throttled and reclaimed past it, never killed: the kill stays the slice's, at its MemoryMax
-                MemoryHigh = lib.mkIf (cfg.pool.highFactor != null) (highOf w);
                 CPUWeight = lib.min 10000 (100 * w.cpu.reserved);
                 # Without nameservers the stock pre-start's copy of the host's resolv.conf is the guest's only DNS: at
                 # boot or while a switch restarts NetworkManager it can have no nameserver yet.
