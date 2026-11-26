@@ -207,13 +207,14 @@ mode (`claude -p --output-format json`) instead, with no pane and no pause. Befo
 startup dialogs a named worker's home has accepted into the session's `~/.claude.json`.
 
 **Subagent calls** (#901): the verdict also lists the Agent (formerly Task) tool calls of the turn's own assistant
-messages after its prompt (`pane::verdict`; a subagent's sidechain lines not), each tool use once, as its short
+messages after its prompt (`pane::verdict`), not a subagent's sidechain lines, each tool use once, as its short
 `description` and `subagent_type`, never its prompt or output: at most 100, each field cut to 200 bytes, and their
 count. The park records them on the turn's result (`results.subagent_calls`, `subagent_call_count`, migration 0029),
 which `exec-pool result ID` shows, so a session's claim that an independent reviewer ran can be checked after its
 transcript and slot home are gone; the count alone goes on `turns.subagent_calls` and
 `exec_pool_session_subagent_calls_total{host,variant,shunt,agent}`. Both are null, not zero, when the runner read no
-transcript: a headless (`claude -p`) turn or a one-shot run, whose result line carries no tool calls.
+transcript: one it could not read, a headless (`claude -p`) turn or a one-shot run, whose result line carries no tool
+calls. A runner rolled back below 29 leaves a session's results columns as its previous turn set them.
 
 **Park** (turn end, timeout, drain, cancel of the turn): after the agent's step, the agent having been told on its
 first turn and after every later turn's input to commit and push before it stops or waits (`agent::SESSION_PARK`):

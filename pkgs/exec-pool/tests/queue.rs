@@ -3853,6 +3853,31 @@ fn a_park_with_an_arm_lands_in_a_queue_not_yet_migrated_to_record_it() {
 }
 
 #[test]
+fn a_park_with_subagent_calls_lands_in_a_queue_not_yet_migrated_to_record_them() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    // as a remote runner's park into a queue host still at 28
+    pg.sql()
+        .batch_execute(
+            "ALTER TABLE results DROP COLUMN subagent_calls, DROP COLUMN subagent_call_count; \
+             ALTER TABLE turns DROP COLUMN subagent_calls",
+        )
+        .unwrap();
+    let (a, epoch, _) = started(&mut owner);
+    let mut reviewed = park(ParkReason::TurnEnd, 0);
+    reviewed.result.subagent_calls = Some(vec![SubagentCall::new(Some("Review"), None)]);
+    reviewed.result.subagent_call_count = Some(1);
+    owner.park(&a, epoch, &reviewed).unwrap();
+    let r = &s.result(&id).unwrap().unwrap()["result"];
+    assert_eq!(r["output"], "the turn's answer");
+    assert!(
+        r["subagent_calls"].is_null() && r["subagent_call_count"].is_null(),
+        "{r}"
+    );
+}
+
+#[test]
 fn an_undelivered_turn_keeps_the_error_backoff_and_past_it_counts_as_stalled() {
     let pg = Pg::new();
     let mut owner = pg.migrated();

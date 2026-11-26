@@ -2435,9 +2435,12 @@ impl<'a> Dock<'a> {
             .transpose()
             .inspect_err(|e| note("transcript", e))
             .ok()
-            .flatten()
-            .unwrap_or_default();
-        let (line, ran) = pane::verdict(&transcript, pane.from.unwrap_or(usize::MAX), pane.ended);
+            .flatten();
+        let (line, ran) = pane::verdict(
+            transcript.as_deref(),
+            pane.from.unwrap_or(usize::MAX),
+            pane.ended,
+        );
         if pane.from.is_none() || (!ran && !stopped) {
             // nothing of the turn's input reached the agent: nothing it could have done
             result.stage = Stage::Prepare;
