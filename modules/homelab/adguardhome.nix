@@ -26,6 +26,12 @@ let
   # every fleet name answers its LAN address, and none is served as loopback (NixOS maps this host's own name to
   # 127.0.0.2 in /etc/hosts, which AdGuard would otherwise answer the whole LAN from)
   fleet = config.sam.fleet.hosts;
+  # the inside names (sam.fleet.zone): every listener and ntfy, at its serving host's LAN address. Straight at the
+  # host, not the edge, so monitoring and the caches answer while acer or Caddy is the thing that is broken
+  inside = lib.mapAttrs' (_: e: lib.nameValuePair e.dnsName fleet.${e.host}.address) (
+    config.sam.fleet.listeners // { inherit (config.sam.fleet) ntfy; }
+  );
+  inZone = d: lib.hasSuffix ".${config.sam.fleet.zone}" d || d == config.sam.fleet.zone;
   loopback = a: lib.hasPrefix "127." a || a == "::1";
   served = config.services.adguardhome.settings;
   hostsLoopback = lib.filter (
@@ -103,6 +109,10 @@ in
         message = "modules/homelab/adguardhome.nix: AdGuard answers the LAN from this host's /etc/hosts, which maps ${toString hostsLoopback} to loopback (nixos-config#503): keep dns.hostsfile_enabled false.";
       }
       {
+        assertion = lib.all (r: !inZone r.domain) cfg.rewrites;
+        message = "modules/homelab/adguardhome.nix: homelab.dns.rewrites names ${config.sam.fleet.zone}, which only sam.fleet's listeners fill.";
+      }
+      {
         assertion = rewritesLoopback == [ ];
         message = "modules/homelab/adguardhome.nix: a DNS rewrite serves the fleet host ${toString rewritesLoopback} as loopback; every fleet name answers its sam.fleet address.";
       }
@@ -156,6 +166,12 @@ in
                 got=$(ask "$q" | tr '\n' ' '); [ "$got" = "${h.address} " ] || { echo "$q answered '$got', not ${h.address}"; bad=1; }
               done
             '') fleet
+          )}
+          # each inside name its serving host's address, over the *.sammasak.dev wildcard to the edge
+          ${lib.concatStrings (
+            lib.mapAttrsToList (name: a: ''
+              got=$(ask '${name}' | tr '\n' ' '); [ "$got" = "${a} " ] || { echo "${name} answered '$got', not ${a}"; bad=1; }
+            '') inside
           )}
           # a name with no rewrite must not borrow a fleet address: the answers above are the rewrites', not a catch-all
           got=$(ask not-a-fleet-host | tr '\n' ' ')
@@ -232,7 +248,11 @@ in
               domain = name;
               answer = h.address;
               enabled = true;
-            }) fleet;
+            }) fleet
+            ++ lib.mapAttrsToList (domain: answer: {
+              inherit domain answer;
+              enabled = true;
+            }) inside;
         };
       };
     };

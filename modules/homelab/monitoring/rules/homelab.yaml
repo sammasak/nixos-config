@@ -201,6 +201,19 @@ groups:
           query: 'time() - node_textfile_mtime_seconds{job="node-exporter",node="{{ $labels.node }}",file=~".*/adguard[.]prom"}'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#dnsstatsstale"
 
+      - alert: InsideNamePublic
+        # the inside names (sam.fleet.zone) have no Authentik: answered by a public resolver, they reach the LAN map
+        expr: probe_dns_answer_rrs{job="inside-names-public"} > 0
+        for: 15m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "An inside fleet name resolves on public DNS"
+          description: "{{ $labels.instance }} answers the inside name black-pi asks it with {{ $value }} records: a public record exists under fleet.sammasak.dev, which only lenovo's AdGuard may answer. Delete it at Cloudflare."
+          query: 'probe_dns_answer_rrs{job="inside-names-public"}'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#insidenamepublic"
+
       - alert: RootFilesystemLow
         # The 3 GB root floor (nixos-config#302): black-pi's SD card holds Prometheus and Loki.
         expr: node_filesystem_avail_bytes{job="node-exporter",mountpoint="/",fstype!~"tmpfs|overlay|squashfs"} < 3 * 1024 * 1024 * 1024
@@ -409,7 +422,7 @@ groups:
           team: homelab
         annotations:
           summary: "{{ $labels.instance }} is down"
-          description: "The HTTPS probe from black-pi to {{ $labels.instance }} has failed for 5 minutes: a refused connection, a bad certificate, or a status outside the module's list. Check http://192.168.10.137:9090/targets?search=blackbox."
+          description: "The HTTPS probe from black-pi to {{ $labels.instance }} has failed for 5 minutes: a refused connection, a bad certificate, or a status outside the module's list. Check http://prometheus.fleet.sammasak.dev:9090/targets?search=blackbox."
           query: 'probe_http_status_code{job="blackbox",instance="{{ $labels.instance }}"}'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#appdown"
 

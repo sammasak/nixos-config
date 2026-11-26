@@ -10,7 +10,7 @@ groups:
     rules:
       - alert: TargetDown
         annotations:
-          description: '{{ printf "%.4g" $value }}% of the {{ $labels.job }} targets have not answered black-pi''s scrape for 10 minutes. The query lists them and http://192.168.10.137:9090/targets?search={{ $labels.job }} shows each one''s error; a node-exporter target down is also NodeChronicNotReady''s page for that host.'
+          description: '{{ printf "%.4g" $value }}% of the {{ $labels.job }} targets have not answered black-pi''s scrape for 10 minutes. The query lists them and http://prometheus.fleet.sammasak.dev:9090/targets?search={{ $labels.job }} shows each one''s error; a node-exporter target down is also NodeChronicNotReady''s page for that host.'
           query: up == 0 unless on (node) homelab:node:off_as_planned
           runbook_url: https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#targetdown
           summary: Scrape targets are unreachable.

@@ -10,8 +10,8 @@ date -u
 nvidia-smi --query-gpu=name,driver_version,memory.total,memory.used,power.draw,power.limit,enforced.power.limit,temperature.gpu,fan.speed,clocks_throttle_reasons.hw_thermal_slowdown,clocks_throttle_reasons.sw_thermal_slowdown --format=csv
 systemctl --failed --no-pager
 systemctl is-active ollama prometheus-nvidia-gpu-exporter
-curl --fail --silent --show-error --max-time 5 http://192.168.10.113:11434/api/version
-curl --fail --silent --show-error --max-time 5 http://192.168.10.113:11434/api/ps
+curl --fail --silent --show-error --max-time 5 http://ollama-asus.fleet.sammasak.dev:11434/api/version
+curl --fail --silent --show-error --max-time 5 http://ollama-asus.fleet.sammasak.dev:11434/api/ps
 """
 
 

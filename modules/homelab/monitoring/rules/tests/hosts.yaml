@@ -20,7 +20,7 @@ tests:
           - exp_labels: {severity: warning, job: node-exporter}
             exp_annotations:
               summary: "Scrape targets are unreachable."
-              description: "50% of the node-exporter targets have not answered black-pi's scrape for 10 minutes. The query lists them and http://192.168.10.137:9090/targets?search=node-exporter shows each one's error; a node-exporter target down is also NodeChronicNotReady's page for that host."
+              description: "50% of the node-exporter targets have not answered black-pi's scrape for 10 minutes. The query lists them and http://prometheus.fleet.sammasak.dev:9090/targets?search=node-exporter shows each one's error; a node-exporter target down is also NodeChronicNotReady's page for that host."
               query: "up == 0 unless on (node) homelab:node:off_as_planned"
               runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#targetdown"
       - eval_time: 23m
