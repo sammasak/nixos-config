@@ -19,6 +19,14 @@ let
     lib.concatMap (n: map (m: "containers.${n}: ${m}") (failing cfg.containers.${n}.config)) (
       lib.attrNames cfg.containers
     );
+  # every assertion the toplevel checks: a specialisation re-evaluates its parent's, guests included
+  failingAll =
+    cfg:
+    failing cfg
+    ++ guestsFailing cfg
+    ++ lib.concatMap (s: failingAll cfg.specialisation.${s}.configuration) (
+      lib.attrNames cfg.specialisation
+    );
   # No assertion is part of the derivation, so a host failing one still has its toplevel's drvPath; the failures are
   # reported unmasked beside it. Guests too: a container's toplevel is in its host's.
   mask =
@@ -34,7 +42,7 @@ let
       let
         n = f.nixosConfigurations.${host};
       in
-      if failing n.config == [ ] && guestsFailing n.config == [ ] then
+      if failingAll n.config == [ ] then
         n.config.system.build.toplevel.drvPath
       else
         (n.extendModules { modules = [ mask ]; }).config.system.build.toplevel.drvPath
