@@ -119,7 +119,7 @@ in
         ]
       );
       default = [ ];
-      description = "The capabilities each slot offers, set from the host's own facts: `github` with `repos` (fetch, push and gh through the sidecar), `monitoring` with `monitoring`, `always-on` on a host with no power window that never sleeps (sam.fleet.hosts). A task claims a slot only when it offers every one the task names (`exec-pool submit --requires NAME`), and submit refuses a task no slot seen in the last day offers them to.";
+      description = "The capabilities each slot offers, set from the host's own facts: `github` with `repos` (fetch, push and gh through the sidecar), `monitoring` with `monitoring`, `always-on` on a host with no power window that never sleeps (sam.fleet.hosts); a host's own definition adds to them. A task claims a slot only when it offers every one the task names (`exec-pool submit --requires NAME`), and submit refuses a task no slot seen in the last day offers them to.";
     };
     timeoutSecs = mkOption {
       type = types.ints.positive;

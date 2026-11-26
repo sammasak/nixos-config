@@ -2,7 +2,8 @@
 -- declares (homelab.execPool.capabilities) with every claim, the claim takes only a slot that offers them all
 -- (TaskSpec::fits), and submit_task refuses a task no slot seen in the last day offers them to, with its agent, under
 -- its own SQLSTATE (QueueError::Unoffered) rather than leave it queued for ever. A slot of a runner before 28 keeps
--- '[]', so until its host is deployed it offers none.
+-- '[]', so until its host is deployed it offers none; one rolled back below 28 keeps the capabilities its newer runner
+-- recorded, which submit then trusts for up to a day while that runner skips the task.
 ALTER TABLE slots ADD COLUMN capabilities jsonb NOT NULL DEFAULT '[]';
 GRANT UPDATE (capabilities) ON slots TO exec_pool_runner;
 

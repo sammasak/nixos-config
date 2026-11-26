@@ -397,11 +397,12 @@ fn the_submitter_queues_through_submit_task_and_reads_no_prompt() {
     ] {
         refused(&mut c, sql, "42501");
     }
-    let bad: [(&str, serde_json::Value); 11] = [
+    let bad: [(&str, serde_json::Value); 12] = [
         ("/capabilities", json!(["read_only"])),
         ("/capabilities", json!(["monitoring", "github"])),
         ("/capabilities", json!([1])),
         ("/capabilities", json!("github")),
+        ("/capabilities", json!(["github", "github"])),
         ("/credential_class", json!("root")),
         ("/retry", json!({ "max_attempts": 9 })),
         ("/command/agent", json!("none")),
@@ -523,8 +524,16 @@ fn submit_task_refuses_a_capability_no_slot_seen_in_the_last_day_offers_with_the
         "a refused task leaves no row"
     );
     // a requirement one slot offers queues, and a task with none as before
-    s.submit_task(&requiring("cli:monitoring", &["monitoring"]), 0)
+    let (id, duplicate) = s
+        .submit_task(&requiring("cli:monitoring", &["monitoring"]), 0)
         .unwrap();
+    assert!(!duplicate);
+    assert_eq!(
+        s.submit_task(&requiring("cli:monitoring", &["monitoring"]), 0)
+            .unwrap(),
+        (id, true),
+        "the same task again under its key is the one queued"
+    );
     s.submit_task(&requiring("cli:none", &[]), 0).unwrap();
     // a slot's next claim records the capabilities it offers now
     monitored.capabilities.clear();
