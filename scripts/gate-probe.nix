@@ -305,6 +305,7 @@ let
               || lib.hasInfix "-scheduled-shutdown." n
               || lib.hasPrefix "wol-" n
               || lib.hasPrefix "night-quiet" n
+              || lib.hasPrefix "store-upload." n
             ) c.systemd.units
           );
       in
