@@ -2,8 +2,10 @@
 """scripts/pool_merge_check.py's choice of checks from changed paths, and its migration numbering, without Nix: a docs
 change runs nothing, a rule or dashboard change its own checks and no host, exec-pool its build and the pool's hosts,
 scripts/, modules/workers/ and metrics/records.json the guest-records test, modules/workers/ also execution-pool-vm's
-evaluation, flake.lock and any unmapped path every host, and a path that feeds a flake output the push hook's nix flake
-show of the merge (seeded: a merge whose flake show fails fails; a rule change beside an unmapped path still evaluates every
+evaluation, flake.lock and any unmapped path every host, asus's host dir, the ollama and paddock modules and flake.lock the
+ollama-gpu test on its probe section (its drvPath under both locks, the build and the test under the heavy one alone,
+GATE_HEAVY from devenv.nix; seeded: a failed evaluation runs no test, a devenv.nix without gateHeavy fails that check),
+and a path that feeds a flake output the push hook's nix flake show of the merge (seeded: a merge whose flake show fails fails; a rule change beside an unmapped path still evaluates every
 host; two migrations on one number, and a gap, fail). Every evaluation takes the heavy lock, then the light one the
 push hook's evaluation takes, and a build compiles under the heavy one alone; a step's record carries its wait for them
 apart from its run (seeded: a held light lock). A slot's nix wrapper, from the module's text with nix and the record
@@ -106,6 +108,18 @@ s = got("pkgs/scheduled-gate/scheduled_gate.py")
 check(("build", "scheduled-gate") in s and evals(s) == set(HOSTS), "another package: its build and every host")
 check(evals(got("pkgs/patches/x.patch")) == set(HOSTS) and not any(k == "build" for k, _ in got("pkgs/patches/x.patch")),
       "a pkgs dir with no package of its own: every host, no build")
+og = ("probe", "scripts/test-ollama-gpu.py")
+for path in ("hosts/asus-b460m/configuration.nix", "modules/homelab/ollama-host.nix", "modules/homelab/paddock.nix", "flake.lock"):
+    o = got(path)
+    check(og in o and evals(o) == set(HOSTS), f"{path}: the ollama-gpu test on its probe section, and every host ({sorted(o)})")
+for path in ("docs/ollama.md", "hosts/acer-swift/configuration.nix", "modules/homelab/ollama-pull-pinned.sh", "scripts/test-ollama-gpu.py"):
+    check(og not in got(path), f"{path}: no ollama-gpu test")
+check(set(pmc.PROBE_SECTIONS) == {t for k, t in got(*pmc.OLLAMA_GPU) if k == "probe"} and all(
+      f'gate_probe.section("{sec}")' in (HERE.parent / t).read_text() for t, sec in pmc.PROBE_SECTIONS.items()),
+      f"each probe check names the section its test reads ({pmc.PROBE_SECTIONS})")
+heavy_re = pmc.gate_heavy(HERE.parent) or "^$"
+check(re.search(heavy_re, "/nix/store/x-cuda_cudart-12.8") is not None and re.search(heavy_re, "/nix/store/x-python3-3.13") is None,
+      f"GATE_HEAVY is devenv.nix's gateHeavy ({heavy_re})")
 mixed = got("modules/homelab/monitoring/rules/homelab.yaml", "modules/core/fleet.nix")
 check(evals(mixed) == set(HOSTS) and ("check", "monitoring-rules-tests") in mixed,
       "seeded: a rule change beside an unmapped path still evaluates every host")
@@ -158,6 +172,53 @@ with tempfile.TemporaryDirectory() as tmp:
             check(ok and waited < 1 and r == want,
                   f"{kind} {target}: evaluated under the heavy lock, then the light one, neither inherited"
                   f"{', built under the heavy one alone' if len(want) > 1 else ''} ({r}, {waited:.1f} s waited)")
+        # a probe test: its section evaluated under both locks, built and the test run under the heavy one alone, on that probe
+        (d / "scripts").mkdir()
+        (d / "devenv.nix").write_text('{\n  gateHeavy = "-cuda-";\n}\n')
+        (d / "bin/nix").write_text(
+            "#!/usr/bin/env bash\nst() { flock -n \"$1\" true && echo free || echo held; }\n"
+            f'echo "$1 heavy=$(st {heavy}) light=$(st {light}) $WORK_LOCKS_HELD $GC_FREE_SPACE_DIVISOR" >>{d}/log\n'
+            '[ "$1" != eval ] || [ -z "$EVAL_RC" ] || exit "$EVAL_RC"\n'
+            '[ "$1" = eval ] && echo /nix/store/p.drv || echo /nix/store/p-out\n')
+        (d / "scripts/test-ollama-gpu.py").write_text(
+            "import os, subprocess\nst = lambda f: 'free' if subprocess.run(['flock', '-n', f, 'true']).returncode == 0 else 'held'\n"
+            f"open({str(d / 'log')!r}, 'a').write(f\"test heavy={{st({str(heavy)!r})}} light={{st({str(light)!r})}} \""
+            " + ' '.join(f'{k}={os.environ.get(k)}' for k in ('GATE_PROBE', 'GATE_HEAVY', 'WORK_LOCKS_HELD')) + '\\n')\n")
+        pc = pmc.Check("probe", "scripts/test-ollama-gpu.py")
+        (d / "log").write_text("")
+        ok, _, _ = pmc.run(pc, d)
+        r = (d / "log").read_text().splitlines()
+        check(ok and r == ["eval heavy=held light=held 1 16", "build heavy=held light=free 1 ",
+                           "test heavy=held light=free GATE_PROBE=/nix/store/p-out GATE_HEAVY=-cuda- WORK_LOCKS_HELD=None"],
+              f"probe: its section evaluated under the heavy lock, then the light one; built and the test run under the heavy one alone, on that probe ({r})")
+        check(pmc.command(pc, d)[-1] == '(import ./scripts/gate-probe.nix { only = [ "ollama-gpu" ]; }).json.drvPath',
+              f"probe: the test's own section, as gate_probe.py builds it alone ({pmc.command(pc, d)})")
+        (d / "log").write_text("")
+        os.environ["EVAL_RC"] = "3"
+        try:
+            ok, _, _ = pmc.run(pc, d)
+        finally:
+            del os.environ["EVAL_RC"]
+        r = (d / "log").read_text().splitlines()
+        check(not ok and len(r) == 1 and r[0].startswith("eval "), f"seeded: a failed probe evaluation fails the check, nothing built or run ({r})")
+        nix_ok = (d / "bin/nix").read_text()
+        (d / "bin/nix").write_text(nix_ok.replace('[ "$1" = eval ]', '[ "$1" = eval ] || exit 4; [ "$1" = eval ]'))
+        (d / "log").write_text("")
+        ok, _, _ = pmc.run(pc, d)
+        r = (d / "log").read_text().splitlines()
+        check(not ok and [l.split()[0] for l in r] == ["eval", "build"], f"seeded: a failed probe build fails the check, the test not run ({r})")
+        (d / "bin/nix").write_text(nix_ok)
+        test_ok = (d / "scripts/test-ollama-gpu.py").read_text()
+        (d / "scripts/test-ollama-gpu.py").write_text(test_ok + "raise SystemExit(1)\n")
+        ok, _, _ = pmc.run(pc, d)
+        check(not ok, "seeded: a failing test fails the probe check")
+        (d / "scripts/test-ollama-gpu.py").write_text(test_ok)
+        (d / "devenv.nix").write_text("{ }\n")
+        (d / "log").write_text("")
+        ok, _, _ = pmc.run(pc, d)
+        check(not ok and (d / "log").read_text() == "", "seeded: no gateHeavy in devenv.nix fails the probe check, nothing run")
+        (d / "devenv.nix").unlink()
+        check(pmc.run(pc, d)[0] is False, "seeded: no devenv.nix fails the probe check, the checker does not crash")
         holder = subprocess.Popen(["flock", str(light), "sleep", "2"])
         while subprocess.run(["flock", "-n", str(light), "true"], check=False).returncode == 0:
             time.sleep(0.05)
