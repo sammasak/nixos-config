@@ -21,6 +21,7 @@
     ../core/resource-hygiene.nix
     ../core/memory-budget.nix
     ../core/store-cache.nix
+    ../core/store-upload.nix
     ../homelab/native-otel-relay.nix
     ../themes/Catppuccin # Stylix: off when headless under runtime-host, always off under rf-lab
     ../homelab/deploy-target.nix
