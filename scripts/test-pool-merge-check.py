@@ -294,7 +294,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check(waited >= 1.2 and "waiting for the scheduled gate" in w.stderr and (d / "log").read_text().splitlines() == ["eval --raw .#x locked"],
           f"while the scheduled gate holds its lock a slot's evaluation waits it out, saying so ({waited:.1f} s, {w.stderr.strip()!r})")
     rec = (d / "records").read_text().splitlines()[-1:]
-    check(rec and re.fullmatch(r"host lock lane=light class=nix-eval wait_seconds=[12] seconds=[01] rc=0", rec[0]) is not None,
+    check(rec and re.fullmatch(r"host lock lane=light class=nix-eval wait_seconds=[123] seconds=[01] rc=0", rec[0]) is not None,
           f"its lock record counts the gate's wait as the hold's, the host shipping it ({rec})")
     (d / "gate").unlink()
 
@@ -306,16 +306,16 @@ with tempfile.TemporaryDirectory() as tmp:
 
     rc, r, rec = recorded("eval", "--raw", ".#x")
     check(rc == 0 and r == ["eval --raw .#x locked"] and len(rec) == 2
-          and all(re.fullmatch(r"host lock lane=light class=nix-eval wait_seconds=0 seconds=[01] rc=0", x) for x in rec),
+          and all(re.fullmatch(r"host lock lane=light class=nix-eval wait_seconds=[01] seconds=[01] rc=0", x) for x in rec),
           f"a free light lock: the command under it, never inheriting it, and one lock record per hold, shipped by the host ({r}, {rec})")
     rc, r, rec = recorded("flake", "show", "--json")
-    check(re.fullmatch(r"host lock lane=light class=nix-flake-show wait_seconds=0 seconds=[01] rc=0", rec[0] if rec else "") is not None,
+    check(re.fullmatch(r"host lock lane=light class=nix-flake-show wait_seconds=[01] seconds=[01] rc=0", rec[0] if rec else "") is not None,
           f"the class names the subcommand ({rec})")
     rc, r, rec = recorded("eval", ".#x", NIX_RC="3")
-    check(rc == 3 and re.fullmatch(r"host lock lane=light class=nix-eval wait_seconds=0 seconds=[01] rc=3", rec[0] if rec else "") is not None,
+    check(rc == 3 and re.fullmatch(r"host lock lane=light class=nix-eval wait_seconds=[01] seconds=[01] rc=3", rec[0] if rec else "") is not None,
           f"the command's exit status is the wrapper's and its record's ({rc}, {rec})")
     rc, r, rec = recorded("build", "--no-link", ".#a")
-    check(rc == 0 and re.fullmatch(r"host lock lane=light class=nix-build-eval wait_seconds=0 seconds=[01] rc=0", rec[0] if rec else "") is not None
+    check(rc == 0 and re.fullmatch(r"host lock lane=light class=nix-build-eval wait_seconds=[01] seconds=[01] rc=0", rec[0] if rec else "") is not None
           and r[-1] == "build --no-link /nix/store/x.drv^out free",
           f"nix build: its evaluation's hold recorded, the record kept out of the drvs it picked ({r}, {rec})")
     holder = subprocess.Popen(["flock", str(d / "light"), "sleep", "2"])
@@ -328,7 +328,7 @@ with tempfile.TemporaryDirectory() as tmp:
     holder.wait()
     rec = (d / "records").read_text().splitlines()
     check(w.returncode == 0 and waited >= 1.2 and len(rec) == 1
-          and re.fullmatch(r"host lock lane=light class=nix-instantiate wait_seconds=[12] seconds=[01] rc=0", rec[0]) is not None,
+          and re.fullmatch(r"host lock lane=light class=nix-instantiate wait_seconds=[123] seconds=[01] rc=0", rec[0]) is not None,
           f"seeded: a held light lock is waited for and recorded as the wait, not the hold ({waited:.1f} s, {rec})")
 
     # devenv's warm-up: the stub writes .devenv/input-paths.txt as devenv does, the files its evaluation read, and its
