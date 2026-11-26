@@ -132,6 +132,8 @@ let
       ''
         export GC_FREE_SPACE_DIVISOR=16
         names() { nix eval --json --no-write-lock-file ".#$1" --apply builtins.attrNames | jq -r '.[]'; }
+        # a listing in `for x in $(names ...)` loses its exit status: a failed one would pass the step short of its outputs
+        listed() { list=$(names "$1") || { echo "nixos-flake-check: listing $1 failed" >&2; exit 1; }; }
         # one line per output with its seconds, so a slow step shows where it spends them (#502)
         took() { echo "nixos-flake-check: $1 took $((SECONDS - $2)) s" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}" >&2; }
         drv() {
@@ -209,8 +211,11 @@ let
         cur=output-list
         all=()
         for kind in packages checks; do
-          for s in $(names "$kind"); do
-            for o in $(names "$kind.$s"); do all+=("$kind.$s.$o"); done
+          listed "$kind"
+          systems=$list
+          for s in $systems; do
+            listed "$kind.$s"
+            for o in $list; do all+=("$kind.$s.$o"); done
           done
         done
         # A host's deploy-activate check wraps its toplevel (flake-modules/deploy.nix), so evaluating that check
@@ -254,7 +259,10 @@ let
             pre[$1]=$d
           fi
         }
-        hosts=$(names nixosConfigurations)
+        listed nixosConfigurations
+        hosts=$list
+        listed formatter
+        formatters=$list
         cur=""
         held=()
         for h in $hosts; do
@@ -264,7 +272,7 @@ let
             echo "$h $got" >>"$toplevels"
           fi
         done
-        for s in $(names formatter); do drv "formatter.$s"; done
+        for s in $formatters; do drv "formatter.$s"; done
         for p in "''${all[@]}"; do
           IFS=. read -r kind s o <<<"$p"
           if [ "$kind.$s" = "checks.$here" ]; then

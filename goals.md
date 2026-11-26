@@ -215,7 +215,7 @@ max-jobs and cores (2 and 2) against the memory budget.
 | `execution-pool-vm` failed to evaluate for a `modules/workers/` change | that check's drvPath evaluated for `modules/workers/` changes |
 | `local-lane` is in metrics/records.json's guest kinds but not in `records.kinds` | `scripts/test-guest-records.py` (about 3 s) mapped to `scripts/` and `modules/workers/` |
 | #777: every pane turn on acer failed with a herdr parse error | one session turn through a pane on a slot before the merge |
-| Five red acer scheduled runs from 24 Nov 20:37Z wrote only the step record (`check` empty), so RetroDueStepFailsRepeat named no check (#826); #841 names each guard (`scripts/test-gate-steps.py`). Open: `for s in $(names packages)` ignores a failed listing, so the step passes short of those outputs | a failed listing fails the step, a case in `scripts/test-gate-steps.py` |
+| Five red acer scheduled runs from 24 Nov 20:37Z wrote only the step record (`check` empty), so RetroDueStepFailsRepeat named no check (#826); #841 names each guard (`scripts/test-gate-steps.py`). `for s in $(names packages)` ignored a failed listing, so the step passed short of those outputs: closed by #856, each listing its own assignment | a failed listing fails the step, a case in `scripts/test-gate-steps.py` |
 
 Rule for every session: a reply states the minutes of each check it ran and what any failure caught. An escape gets
 a row above and a narrow check, not a longer gate.
