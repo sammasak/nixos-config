@@ -26,6 +26,9 @@ unread). What shipped is in git history and the closed issues.
 - Prefer upstream nixpkgs modules and built-in features over home-made services.
 - Owner gates: only what no agent can do (physical access, a real-terminal sudo, money, an account-level
   credential, an approval the owner reserved). Those carry `needs-owner` and are listed at the end.
+- 26 Nov: pull requests ship on the session's narrow check on its own head, the in-session independent review and a
+  textually clean merge; nobody re-runs a merge check on current main. The scheduled gate on acer, three runs a day,
+  is the backstop, and a clash between two clean merges costs one fix-forward pull request.
 - Paddock (26 Nov, #874): "Ensure that we track this work and that we harden and fix the implementation once we are happy with it and start using this for real in our setup. Once we have find the right model fit and run pi-agents to get real feedback and metrics we can then continue to harden it and eventually do a upstream contribution. Also since we are doing this we need to keep in mind that other contributions are going to the main thing and not to our fork so we need to keep our branches up to date. Also some of work might already be fit for upstream (nix? - what metrics do we need here before we are happy with upstreaming it?)"
 
 ## What "more work done" means
@@ -150,6 +153,8 @@ With no local model up every command exits 3 with "no local model up" and submit
 11. The v0.1 acceptance script in a VM (PASS, FAIL or UNTESTED per criterion) is not written.
 12. Turn errors per arm (`exec_pool_session_turn_errors_total{host,variant,shunt,agent}`, #851) are counted; the row in
     the Agent harnesses comparison table is PR #860, in flight.
+13. A pool session's push from a fresh clone ran no hooks because no hooks path was set (seen on PR #867), so
+    pre-push checks may be skipped in slots; needs a brief.
 
 ## Check tuning
 
@@ -158,8 +163,11 @@ only run long gates even less often". Per-step seconds sit in Loki's `{job="plat
 (`gate="nixos-qa"` or `gate="pool-merge-check"`); #849 reads this table's minutes from them. "Caught" means a fix
 commit or pull request names the check as what failed.
 
-The full gate runs only as the scheduled gate (acer, 03:20 and 15:20, when main moved) or `just full-gate`.
-`just pool-merge-check` picks its checks from the changed paths (`scripts/pool_merge_check.py`; docs: nothing) and
+The full gate runs only as the scheduled gate (acer, 03:20, 11:20 and 19:20, when main moved) or `just full-gate`.
+Owner, 26 Nov: a pull request ships on its session's narrow check on its own head and a textually clean merge; nobody
+re-runs a merge check on current main, and the scheduled gate, eight hours apart, is the backstop for two that merge
+cleanly but break each other. `just pool-merge-check` stays for a session that wants it; it picks its checks from
+the changed paths (`scripts/pool_merge_check.py`; docs: nothing) and
 writes one gate-step record per check. The last full run (26 Nov 07:07 to 08:10 UTC, head `0e525a45`, 3784 s) was red
 on `ollama-gpu-test` alone, fixed by #855; the steps after it did not run. Next full run: the 15:20 scheduled gate.
 

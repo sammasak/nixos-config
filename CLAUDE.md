@@ -26,7 +26,7 @@ devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks,
 #               under the same gate and system generation, or it plus such docs. Other changed paths map to no
 #               single check cheaply (the tests read the hosts through the probe, a full evaluation), so none run.
 #               nixos:qa runs scripts/test-qa-push.py on the hook's own text, without Nix.
-#   The full gate: `scheduled-gate.timer` on acer (modules/homelab/scheduled-gate.nix, twice a day) runs
+#   The full gate: `scheduled-gate.timer` on acer (modules/homelab/scheduled-gate.nix, three times a day) runs
 #               nixos:qa on origin/main in a fresh worktree when main has moved, mode=scheduled, under the heavy
 #               lock; ScheduledGateRed and ScheduledGateOverdue report it (docs/shipping.md#the-scheduled-full-gate).
 #               For a risky change before merging: `just full-gate [REF]` (a clean worktree at REF, nixos:qa).

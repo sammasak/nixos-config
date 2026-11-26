@@ -159,5 +159,16 @@ with tempfile.TemporaryDirectory() as t:
     check(st.step == "nixos-flake-check" and st.check == "checks.x86_64-linux.foo",
           f"an older state's combined step is read as step and check ({st.step!r}, {st.check!r})")
 
+# the timer's runs, evenly spaced, against ScheduledGateOverdue: one missed run is no page, a second one is
+timer = (ROOT / "modules/homelab/scheduled-gate.nix").read_text()
+cal = re.search(r'OnCalendar = "\*-\*-\* ([\d,]+):20:00";', timer)
+hours = [int(h) for h in cal.group(1).split(",")] if cal else []
+gaps = {(b - a) % 24 for a, b in zip(hours, hours[1:] + hours[:1])}
+check(hours == [3, 11, 19] and gaps == {8}, f"the timer runs at 03:20, 11:20 and 19:20, 8 h apart ({hours})")
+policy = json.loads((ROOT / "modules/homelab/monitoring/shipping-policy.json").read_text())
+overdue = policy["alerts"]["ScheduledGateOverdue"]["hours"]["value"]
+check(len(gaps) == 1 and 2 * min(gaps) <= overdue < 3 * min(gaps),
+      f"ScheduledGateOverdue's {overdue} h outlasts one missed run, not two ({sorted(gaps)} h apart)")
+
 print(f"{failed} failed" if failed else "all passed")
 sys.exit(1 if failed else 0)

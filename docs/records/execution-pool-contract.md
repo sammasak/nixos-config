@@ -411,8 +411,11 @@ wrapper above (`start`, `send`, `submit`, `wait`, `status`, `result`).
 
 - An issue gets one session: `pool:start` under the key `coord:OWNER/REPO#N`, the issue text and rules as the first
   prompt. Its branch is `pool/<task id>`.
-- Follow-up work on it (review findings, a merge conflict, "merge main and push") is `pool:send` to that same session,
-  never a new one: the turn resumes the same transcript, branch and snapshot.
+- Follow-up work on it (review findings, a merge conflict) is `pool:send` to that same session, never a new one: the
+  turn resumes the same transcript, branch and snapshot.
+- A session runs the narrow check on its own head; it does not merge main and does not re-run for a moved main. A
+  head ships on that check plus a textually clean merge; the scheduled gate on main is the backstop for two pull
+  requests that merge cleanly but break each other. `just pool-merge-check` is optional, never owed.
 - `waiting` means the turn ended and the slot is free for other work; it needs nothing until there is a message to
   send. No session has to stay up for it.
 - `needs_review` is the one state that wants a look: read `pool:result`, then `pool:send` the next step (that resumes
