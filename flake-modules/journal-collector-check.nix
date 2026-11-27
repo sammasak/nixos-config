@@ -4,6 +4,7 @@
 { config, lib, ... }:
 let
   pi = config.flake.nixosConfigurations.black-pi.config;
+  lenovo = config.flake.nixosConfigurations.lenovo.config;
 in
 {
   perSystem =
@@ -37,6 +38,15 @@ in
               grep -F 'Alloy exited with status 2:' exit-failure.log
               touch $out
             '';
+        # the ntfy receipt and fail-closed stages render only where ntfy runs; topics as the module derives them on lenovo
+        journal-collector-config-lenovo =
+          assert lib.assertMsg lenovo.services.ntfy-sh.enable
+            "journal-collector-check: lenovo no longer runs ntfy; move this check to the host that does";
+          pkgs.runCommand "journal-collector-config-lenovo" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+            python3 ${../scripts/test-journal-filter-runtime.py} ${lenovo.services.alloy.configPath} \
+              ${lib.getExe lenovo.services.alloy.package} homelab-alerts,homelab-watchdog
+            touch $out
+          '';
       };
     };
 }

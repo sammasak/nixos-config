@@ -19,7 +19,9 @@
 #   command (its shell -c code: PID 1's Started lines, polkit's and sudo's lines, sudo's continuations, any unit).
 # - ntfy-sh.service, only where ntfy runs: each publish line (its TRACE "Received message") is cut to a receipt of time,
 #   level, topic, title, priority and tags, and kept only for the alert topics; no message body, click or attachment URL
-#   ships. A body ntfy cut at 5000 bytes is not JSON, so its receipt carries a null title. Every other ntfy line ships.
+#   ships. A body ntfy cut at 5000 bytes is not JSON, so its receipt carries a null title, priority and tags. Any ntfy
+#   line still naming message_body after that (a format the receipt stage does not match) is dropped and counted as
+#   ntfy_body_unparsed; every other ntfy line ships.
 # - Only this host's own journal is read: with no path, sdjournal opens it SD_JOURNAL_LOCAL_ONLY.
 {
   config,
@@ -103,6 +105,12 @@ let
           stage.output {
             source = "ntfy_receipt"
           }
+        }
+
+        stage.match {
+          selector            = ${builtins.toJSON ''{unit="ntfy-sh.service"} |= "message_body"''}
+          action              = "drop"
+          drop_counter_reason = "ntfy_body_unparsed"
         }''
     )
   );

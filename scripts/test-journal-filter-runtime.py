@@ -1,7 +1,9 @@
 """Exercise the rendered journal filters in real Alloy with synthetic loopback log entries.
 
 Usage: CONFIG ALLOY [ALERT_TOPICS]. With ALERT_TOPICS (comma-separated: a host running ntfy), an ntfy publish line
-must reach Loki as a body-free receipt for those topics and not at all for any other; without it, unchanged."""
+must reach Loki as a body-free receipt for those topics and not at all for any other, and any other ntfy line naming
+message_body (a format the receipt stage does not know) is dropped and counted as ntfy_body_unparsed; without it,
+unchanged."""
 import json
 import pathlib
 import re
@@ -77,20 +79,42 @@ def receipt(topic, marker, cut=False):
 
 
 alert = (alert_topics or ['homelab-alerts'])[0]
+unparsed = 'same' if alert_topics is None else 'drop'
+
 warn = json.dumps({'time': '2026-11-27T03:20:00+01:00', 'level': 'WARN', 'message': 'Connection closed with error',
                    'error': 'write: broken pipe test_case=ntfy_warn', 'tag': 'subscribe', 'topic': alert,
                    'message_body': 'not a publish'}, separators=(',', ':'))
 for topic in (alert_topics or [alert]):
     cases.append(('ntfy-sh.service', ntfy_publish(topic, 'ntfy_alert_' + topic), 'ntfy_alert_' + topic,
                   receipt(topic, 'ntfy_alert_' + topic)))
+UNPARSED = ('ntfy_warn', 'ntfy_renamed', 'ntfy_text')
 cases += [
     ('ntfy-sh.service', ntfy_publish(alert, 'ntfy_cut', cut=True), 'ntfy_cut', receipt(alert, 'ntfy_cut', cut=True)),
     ('ntfy-sh.service', ntfy_publish('homelab-improvements', 'ntfy_other'), 'ntfy_other',
      receipt('homelab-improvements', 'ntfy_other')),
-    ('ntfy-sh.service', warn, 'ntfy_warn', 'same'),
+    ('ntfy-sh.service', warn, 'ntfy_warn', unparsed),
+    ('ntfy-sh.service', ntfy_publish(alert, 'ntfy_renamed').replace('"message":"Received message"',
+                                                                    '"msg":"Received message"'), 'ntfy_renamed', unparsed),
+    ('ntfy-sh.service', '2026/11/27 03:13:53 TRACE Received message (http_method=POST, message_body='
+     + json.dumps(json.loads(ntfy_publish(alert, 'ntfy_text'))['message_body']) + f', topic={alert})', 'ntfy_text', unparsed),
     ('ntfy-sh.service', 'Listening on :2586[http], ntfy 2.30.0 test_case=ntfy_start', 'ntfy_start', 'same'),
     ('sshd.service', ntfy_publish(alert, 'unit_publish'), 'unit_publish', 'same'),
 ]
+
+
+want_unparsed = None if alert_topics is None else sum(1 for _, _, m, _ in cases if m in UNPARSED)
+unparsed_drops = None
+
+
+def dropped(reason):
+    """Alloy's loki_process_dropped_lines_total for reason, None while unreadable."""
+    try:
+        with urllib.request.urlopen(f'http://127.0.0.1:{admin_port}/metrics', timeout=2) as response:
+            text = response.read().decode()
+    except OSError:
+        return None
+    return sum(float(m[1]) for m in re.finditer(
+        r'^loki_process_dropped_lines_total\{[^}]*reason="%s"[^}]*\} (\S+)$' % reason, text, re.M))
 
 
 def entries(output):
@@ -150,6 +174,11 @@ with tempfile.TemporaryDirectory(prefix='alloy-602-') as td:
             if proc.poll() is not None:
                 raise RuntimeError('Alloy exited before processing fixtures')
             time.sleep(.1)
+        while alert_topics is not None and time.monotonic() < deadline:
+            unparsed_drops = dropped('ntfy_body_unparsed')
+            if unparsed_drops == want_unparsed:
+                break
+            time.sleep(.1)
     finally:
         proc.terminate()
         try:
@@ -171,5 +200,7 @@ with tempfile.TemporaryDirectory(prefix='alloy-602-') as td:
             assert got.get(marker) == line, (marker, got.get(marker), output[-2500:])
         else:
             assert json.loads(got.get(marker) or 'null') == want and 'SECRET' not in got[marker], (marker, got.get(marker))
+    assert unparsed_drops == want_unparsed, ('ntfy_body_unparsed drops', unparsed_drops, want_unparsed)
     print('PASS: rendered Alloy pipeline dropped only found=true INFO lookup; creation/error/caller/unit/message cases survived; private units stayed excluded;',
-          f'ntfy publish lines cut to receipts for {alert_topics}, other topics dropped' if alert_topics else 'ntfy lines unchanged')
+          f'ntfy publish lines cut to receipts for {alert_topics}, other topics dropped, '
+          f'{want_unparsed} unknown-format lines naming message_body dropped as ntfy_body_unparsed' if alert_topics else 'ntfy lines unchanged')
