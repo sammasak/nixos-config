@@ -11,7 +11,8 @@ use exec_pool::workspace::SESSION_HOME;
 use jiff::ZonedDateTime;
 
 const USAGE: &str = "usage: pool-wait --until HH:MM|RFC3339 [--note TEXT]
-  the session's next turn starts at that time (HH:MM: the next one, local time) unless a message wakes it sooner;
+  the session's next turn starts at that time (HH:MM: the next one, local time; one passed under 6 h ago is
+  refused, as likely meant in another zone) unless a message wakes it sooner;
   TEXT (1 to 4096 bytes) is what that turn is told. Prints what it wrote.";
 
 fn wake(args: &[String]) -> Result<Wake, String> {

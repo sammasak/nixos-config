@@ -23,7 +23,7 @@ use exec_pool::queue::{
     TRANSCRIPT_BYTES, Transcript, Turn, TurnLog,
 };
 use exec_pool::task_result::{SubagentCall, TaskResult, Usage};
-use exec_pool::wake::Wake;
+use exec_pool::wake::{self, Wake};
 use exec_pool::{
     Agent, CheckpointRef, Error, Event, Kind, Outcome, ParkReason, Pins, Receipt, Resolution,
     SchemaVersion, Settle, Slot, SlotState, Status, TaskSpec,
@@ -2889,7 +2889,12 @@ fn the_submitter_cli_starts_a_session_messages_it_and_waits_for_its_park() {
     owner
         .park(&a, epoch, &park(ParkReason::TurnEnd, turn.upto))
         .unwrap();
-    let (code, out) = submitter(&["send", id, "--at", "23:59", "--prompt", "later"]);
+    let soon = jiff::ZonedDateTime::now()
+        .checked_add(jiff::SignedDuration::from_hours(1))
+        .unwrap()
+        .strftime("%H:%M")
+        .to_string();
+    let (code, out) = submitter(&["send", id, "--at", &soon, "--prompt", "later"]);
     assert_eq!(code, Some(0));
     assert!(out.contains(r#""status":"waiting""#), "{out}");
     let due: bool = pg
@@ -3095,6 +3100,31 @@ fn a_timer_wakes_its_session_once_due_and_a_message_before_it_does_not_spend_it(
             "exec_pool_session_wake_seconds_count{host=\"msi-ms7758\",source=\"timer\"} 1"
         ),
         "{metrics}"
+    );
+}
+
+#[test]
+fn a_pool_wait_for_an_hh_mm_just_passed_is_refused_not_a_day_away() {
+    // cli-495833c4dc6fd989 parked at 17:32:23Z, 18:32 in the slot's zone, asking for 18:01 meant as UTC
+    let now = "2026-11-26T17:32:23Z"
+        .parse::<jiff::Timestamp>()
+        .unwrap()
+        .to_zoned_datetime(jiff::tz::TimeZone::fixed(jiff::tz::Offset::constant(1)));
+    let err = wake::due_at("18:01", &now);
+    assert!(
+        err.as_ref()
+            .is_err_and(|e| e.to_string().contains("2026-11-27T18:01:00+01:00")),
+        "a wake 23.5 h away that no reconcile would queue today: {err:?}"
+    );
+    assert_eq!(
+        wake::due_at("2026-11-26T18:01:00Z", &now).unwrap(),
+        "2026-11-26T19:01:00+01:00",
+        "the time meant, given with its offset"
+    );
+    assert_eq!(
+        wake::due_at("08:30", &now).unwrap(),
+        "2026-11-27T08:30:00+01:00",
+        "passed hours ago: tomorrow's"
     );
 }
 
