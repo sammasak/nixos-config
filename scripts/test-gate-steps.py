@@ -410,4 +410,77 @@ with tempfile.TemporaryDirectory() as t:
     for k, v in saved.items():
         os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
 
+
+# Check tuning's table, the scheduled run's last step (checkTuningStep): after every other step, before steps_end, in
+# nixos:qa alone; a failed reading is logged and recorded unread, and the gate's result stays its steps'
+ct = re.search(r"\n  checkTuningStep = ''\n(.*?)\n  '';\n", src, re.DOTALL)
+qa_body = re.search(r'\n  qa =\s+gate\s+"nixos-qa".*?\'\'\n(.*?)\n *\'\';\n', src, re.DOTALL)
+push_body = re.search(r'\n  qaPush =\s+gate\s+"nixos-qa-push".*?\'\'\n(.*?)\n *\'\';\n', src, re.DOTALL)
+check(ct is not None and qa_body is not None and push_body is not None, "checkTuningStep, nixos:qa and the push gate found in devenv.nix")
+if ct and qa_body and push_body:
+    tail = [l.strip() for l in qa_body.group(1).rstrip().splitlines()[-3:]]
+    check(tail == ["${timed tests}", "${checkTuningStep}", "steps_end"],
+          f"nixos:qa runs the check-tuning step after its other steps and before steps_end ({tail})")
+    check(src.count("${checkTuningStep}") == 1 and "check-tuning" not in push_body.group(1),
+          "the push gate does not run the check-tuning step; nixos:qa runs it once")
+    CT = textwrap.dedent(ct.group(1)).replace("''${", "${")
+    with tempfile.TemporaryDirectory() as t:
+        t = pathlib.Path(t)
+        rec, state = t / "records", t / "state"
+        state.mkdir()
+        stub = t / "record"
+        stub.write_text(f'#!/usr/bin/env bash\necho "$*" >> "{rec}"\n')
+        stub.chmod(0o755)
+        spool = t / "spool"
+        spool.write_text("2026-11-27T03:20:00+00:00 gate-step gate=nixos-qa step=a-test seconds=120 result=pass sha=abc\n"
+                         "2026-11-27T03:21:00+00:00 gate-step gate=nixos-qa step=a-test seconds=60 result=fail sha=abc\n")
+        step = CT.replace("${lib.getExe record}", str(stub))
+        left = re.findall(r"\$\{lib\.[^}]*\}", step)
+        check(left == [], f"the check-tuning step has no Nix interpolation the test does not stub ({left})")
+
+        def gate_tail(mode, steps="", **extra):
+            """stepOutcomes, stub steps' outcomes (step_done), the check-tuning step and steps_end, run from the repo root
+            as nixos:qa runs in its tree."""
+            rec.write_text("")
+            env = {k: v for k, v in os.environ.items() if k not in ("LOKI_ADDR", "NIXOS_QA_TIMES", "PLATFORM_RECORD_SPOOL")}
+            env.update({"NIXOS_QA_TIMES": str(state / "nixos-qa-times"), "PLATFORM_RECORD_SPOOL": str(spool), **extra})
+            r = subprocess.run(["bash", "-euo", "pipefail", "-c", f"sha=abc mode={mode}\n{OUTCOMES}\n{steps}\n{step}\nsteps_end"],
+                               cwd=ROOT, capture_output=True, text=True, env=env, check=False)
+            return r, rec.read_text().splitlines()
+
+        def step_rec(recs):
+            got = [l for l in recs if "step=check-tuning" in l]
+            return got[0] if len(got) == 1 else got
+
+        r, recs = gate_tail("scheduled", "step_done a-test pass")
+        table = state / "check-tuning.md"
+        line = step_rec(recs)
+        check(r.returncode == 0 and table.exists() and "| nixos-qa | a-test | - | 2 | 1.5 | 2.0 | - | 1 |" in table.read_text()
+              and isinstance(line, str) and re.fullmatch(r"gate-step gate=nixos-qa step=check-tuning seconds=\d+ result=pass sha=abc", line),
+              f"seeded: a scheduled run writes the table from the record spool beside NIXOS_QA_TIMES and records the step ({r.returncode}, {line}, {r.stderr.strip()!r})")
+        check(re.search(r"^nixos-qa: check-tuning took \d+ s$", (state / "nixos-qa-times").read_text(), re.MULTILINE) is not None,
+              "its seconds go to NIXOS_QA_TIMES as every step's do")
+        before = table.read_text()
+        for mode in ("manual", "push"):
+            r, recs = gate_tail(mode, "step_done a-test pass")
+            check(r.returncode == 0 and recs == [], f"a {mode} run runs no check-tuning step ({recs})")
+        spool.unlink()
+        r, recs = gate_tail("scheduled", "step_done a-test pass")
+        line = step_rec(recs)
+        unread = [l for l in r.stderr.splitlines() if "check-tuning unread" in l]
+        check(r.returncode == 0 and isinstance(line, str) and "result=unread" in line and len(unread) == 1
+              and "cannot read the records" in unread[0] and table.read_text() == before and not (state / "check-tuning.md.tmp").exists(),
+              f"seeded: an unreadable record spool leaves a green gate green, logs one line, records unread and keeps the last table ({r.returncode}, {line}, {unread})")
+        r, recs = gate_tail("scheduled", "step_done a-test fail")
+        check(r.returncode == 1 and "1 red step(s): a-test" in r.stderr and "check-tuning" not in r.stderr.split("red step(s)")[1],
+              f"a red step leaves the gate red, and an unread table is not one of its red steps ({r.returncode}, {r.stderr.strip()!r})")
+        r, recs = gate_tail("scheduled", "step_done a-test pass", LOKI_ADDR="http://127.0.0.1:1")
+        line = step_rec(recs)
+        check(r.returncode == 0 and isinstance(line, str) and "result=unread" in line and "No such file" not in r.stderr
+              and "cannot read the records" in r.stderr,
+              f"with LOKI_ADDR set it reads Loki, not the spool, and an unreachable Loki is unread, not red ({r.returncode}, {r.stderr.strip()!r})")
+        r, recs = gate_tail("scheduled", "step_done a-test pass", NIXOS_QA_TIMES="")
+        check(r.returncode == 0 and "result=unread" in str(step_rec(recs)) and "no NIXOS_QA_TIMES" in r.stderr,
+              f"with no NIXOS_QA_TIMES there is nowhere to write: unread, not red ({r.returncode}, {r.stderr.strip()!r})")
+
 finish()
