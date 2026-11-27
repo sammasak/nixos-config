@@ -239,12 +239,12 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
         .query_one("SELECT max(version) FROM schema_migrations", &[])
         .unwrap()
         .get(0);
-    assert_eq!(version, 29);
+    assert_eq!(version, 30);
     submit(&mut s, &task("t-1", 1));
     // a newer binary's additive migration keeps the floor: this one still serves the database, as after a rollback
     pg.sql()
         .execute(
-            "INSERT INTO schema_migrations (version, floor) VALUES (30, 29)",
+            "INSERT INTO schema_migrations (version, floor) VALUES (31, 30)",
             &[],
         )
         .unwrap();
@@ -252,17 +252,17 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
     assert!(s.claim(&slot("s0"), 60).unwrap().is_some());
     // one this binary would misread, or one that names no floor, is refused
     pg.sql()
-        .execute("INSERT INTO schema_migrations (version) VALUES (31)", &[])
+        .execute("INSERT INTO schema_migrations (version) VALUES (32)", &[])
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(31))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(32))));
     pg.sql()
         .execute(
-            "UPDATE schema_migrations SET floor = 31 WHERE version = 31",
+            "UPDATE schema_migrations SET floor = 32 WHERE version = 32",
             &[],
         )
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(31))));
-    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(31))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(32))));
+    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(32))));
 }
 
 #[test]
@@ -3448,6 +3448,47 @@ fn reported_cost_sums_exactly_so_its_counter_never_drops() {
     assert_eq!(
         s.session_summaries(Some(&id), 20).unwrap()[0]["cost_usd"],
         0.3
+    );
+}
+
+#[test]
+fn an_unpriced_session_reads_no_cost_and_a_mixed_one_sums_its_priced_turns() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let (a, epoch, _) = started(&mut owner);
+    let turn = |upto: i64, cost_usd: Option<f64>| {
+        let mut p = park(ParkReason::TurnEnd, upto);
+        p.result.usage = Some(Usage {
+            input_tokens: 5,
+            cost_usd,
+            ..Usage::default()
+        });
+        p
+    };
+    let summary = |s: &mut Store| s.session_summaries(Some(&id), 20).unwrap()[0].clone();
+    owner.park(&a, epoch, &turn(0, None)).unwrap();
+    s.send(&id, "next").unwrap();
+    let (_, epoch, next) = started(&mut owner);
+    owner.park(&a, epoch, &turn(next.upto, None)).unwrap();
+    let v = summary(&mut s);
+    assert_eq!(v["turns_reported"], 2, "{v}");
+    assert_eq!(v["input_tokens"], 10, "{v}");
+    assert!(
+        v["cost_usd"].is_null(),
+        "no turn priced: unknown, not free: {v}"
+    );
+    s.send(&id, "next").unwrap();
+    let (_, epoch, next) = started(&mut owner);
+    owner.park(&a, epoch, &turn(next.upto, Some(0.4))).unwrap();
+    assert_eq!(summary(&mut s)["cost_usd"], 0.4, "mixed: its priced turns");
+    s.send(&id, "next").unwrap();
+    let (_, epoch, next) = started(&mut owner);
+    owner.park(&a, epoch, &turn(next.upto, Some(0.0))).unwrap();
+    assert_eq!(
+        summary(&mut s)["cost_usd"],
+        0.4,
+        "a turn priced at 0 is priced"
     );
 }
 
