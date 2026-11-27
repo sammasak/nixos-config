@@ -296,10 +296,13 @@ with tempfile.TemporaryDirectory() as tmp:
                                   f'flock -n {d}/light true && echo free || echo locked\n')
     (d / "stub/nix").write_text(f'#!/usr/bin/env bash\necho "$* $({d}/stub/state)" >>{d}/log\n'
                                 '[ "$1" != eval ] || [[ $* == *fn.nix* ]] || echo /nix/store/x.drv^out\nexit "${NIX_RC:-0}"\n')
-    # nix-instantiate --add-root R: two roots, the second one's output bin, as the real one prints them
+    # nix-instantiate --add-root R: two roots, the second one's output bin, as the real one prints them.
+    # A real /nix/store is not needed for readlink -f to resolve the stub's roots.
+    mock_store = d / "mock-store"
+    mock_store.mkdir()
     (d / "stub/nix-instantiate").write_text(
         f'#!/usr/bin/env bash\necho "instantiate $* $({d}/stub/state)" >>{d}/log\n'
-        '[ "$1" = --add-root ] || exit 0\nln -s /nix/store/x.drv "$2"; ln -s /nix/store/y.drv "$2-2"; echo "$2"; echo "$2-2!bin"\n')
+        f'[ "$1" = --add-root ] || exit 0\nln -s "{mock_store}/x.drv" "$2"; ln -s "{mock_store}/y.drv" "$2-2"; echo "$2"; echo "$2-2!bin"\n')
     (d / "stub/nix-build").write_text(f'#!/usr/bin/env bash\necho "nix-build $* $({d}/stub/state)" >>{d}/log\n'
                                       'echo /nix/store/x-out\nexit "${NB_RC:-0}"\n')
     # the spool the host ships, whatever HOME the caller has
@@ -348,7 +351,8 @@ with tempfile.TemporaryDirectory() as tmp:
     r = runs("flake", "check", "--no-build")
     check(r == ["flake check --no-build locked"], f"nix flake check runs wholly under the lock ({r})")
     r = runs("-A", "x", "-o", "res", "--arg", "a", "1", "--no-out-link", "default.nix", exe="nix-build")
-    check(r == ["instantiate --add-root ROOT -A x --arg a 1 default.nix locked", "nix-build -o res --no-out-link /nix/store/x.drv /nix/store/y.drv!bin free"],
+    check(r == ["instantiate --add-root ROOT -A x --arg a 1 default.nix locked",
+                f"nix-build -o res --no-out-link {mock_store}/x.drv {mock_store}/y.drv!bin free"],
           f"nix-build instantiates under the lock and builds the rooted drvs outside it, out-link flags on the build ({r})")
     check(list((d / "tmp").iterdir()) == [], "nix-build removes its roots once built")
     b = subprocess.run([str(wrappers["nix-build"]), "default.nix"], env=env | {"NB_RC": "3"}, capture_output=True, text=True, check=False)
