@@ -17,6 +17,9 @@
 #   authentik-worker.service (request lines carry OAuth code and state query strings), user@<uid>.service (every user
 #   unit's lines: agent output), login session scopes (sudo's COMMAND= lines) and any line naming `ak`'s
 #   command (its shell -c code: PID 1's Started lines, polkit's and sudo's lines, sudo's continuations, any unit).
+# - ntfy-sh.service, only where ntfy runs: each publish line (its TRACE "Received message") is cut to a receipt of time,
+#   level, topic, title, priority and tags, and kept only for the alert topics; no message body, click or attachment URL
+#   ships. A body ntfy cut at 5000 bytes is not JSON, so its receipt carries a null title. Every other ntfy line ships.
 # - Only this host's own journal is read: with no path, sdjournal opens it SD_JOURNAL_LOCAL_ONLY.
 {
   config,
@@ -49,6 +52,59 @@ let
       "user@[0-9]+[.]service"
       "session"
     ]
+  );
+  # Alertmanager publishes to the page topic; cluster-watchdog's topic is read from its own script, the one place it is set.
+  watchdogTopics = lib.unique (
+    lib.concatLists (
+      lib.filter lib.isList (
+        builtins.split "localhost:${toString config.homelab.ntfy.port}/([A-Za-z0-9_-]+)" (
+          config.systemd.services.cluster-watchdog.script or ""
+        )
+      )
+    )
+  );
+  pageTopic = lib.removePrefix "${config.sam.fleet.ntfy.url}/" config.sam.fleet.pageUrl;
+  alertTopics = lib.unique ([ pageTopic ] ++ watchdogTopics);
+  isAlertTopic = lib.concatMapStringsSep " " (t: "(eq .topic ${builtins.toJSON t})") alertTopics;
+  # the escaped copy of "message" inside message_body has a space after its colon, so only the top-level field matches
+  # indented by hand: an interpolated '' string keeps none of the block's indentation
+  ntfyReceipt = lib.optionalString config.services.ntfy-sh.enable (
+    lib.concatMapStrings (l: if l == "" then "\n" else "  ${l}\n") (
+      lib.splitString "\n" ''
+
+        stage.match {
+          selector = ${builtins.toJSON ''{unit="ntfy-sh.service"} |= "\"message\":\"Received message\""''}
+
+          stage.json {
+            expressions = {time = "", level = "", topic = "", ntfy_body = "message_body"}
+          }
+
+          stage.template {
+            source   = "ntfy_keep"
+            template = ${builtins.toJSON "{{ if or ${isAlertTopic} }}keep{{ else }}drop{{ end }}"}
+          }
+
+          stage.drop {
+            source              = "ntfy_keep"
+            value               = "drop"
+            drop_counter_reason = "ntfy_other_topic"
+          }
+
+          stage.json {
+            source      = "ntfy_body"
+            expressions = {title = "", priority = "", tags = ""}
+          }
+
+          stage.template {
+            source   = "ntfy_receipt"
+            template = ${builtins.toJSON ''{"time":{{ toJson .time }},"level":{{ toJson .level }},"message":"Received message","topic":{{ toJson .topic }},"title":{{ toJson .title }},"priority":{{ with .priority }}{{ . }}{{ else }}null{{ end }},"tags":{{ with .tags }}{{ . }}{{ else }}null{{ end }}}''}
+          }
+
+          stage.output {
+            source = "ntfy_receipt"
+          }
+        }''
+    )
   );
   # https://grafana.com/docs/alloy/latest/reference/components/loki/loki.source.journal/
   # max_age 72h: spans msi's weekend power-off, equals Loki's retention and stays under its 168h reject_old_samples_max_age.
@@ -123,7 +179,7 @@ let
           drop_counter_reason = "egress_access_log"
         }
       }
-    }
+    ${ntfyReceipt}}
 
     loki.source.journal "host" {
       forward_to    = [loki.process.drop.receiver]
@@ -180,6 +236,15 @@ in
         # Loki admits the fleet's addresses only (sam.fleet.loki.from)
         assertion = config.sam.fleet.hosts ? ${config.networking.hostName};
         message = "modules/homelab/journal-collector.nix: ${config.networking.hostName} has no address in sam.fleet.hosts (modules/core/fleet.nix), so Loki would refuse its journal.";
+      }
+      {
+        assertion =
+          !config.services.ntfy-sh.enable
+          || (
+            lib.hasPrefix "${config.sam.fleet.ntfy.url}/" config.sam.fleet.pageUrl
+            && (config.systemd.services ? cluster-watchdog -> watchdogTopics != [ ])
+          );
+        message = "modules/homelab/journal-collector.nix: the ntfy receipt stage found no alert topic in sam.fleet.pageUrl or cluster-watchdog's script, so it would drop every alert's receipt.";
       }
       {
         assertion = unlisted == [ ];

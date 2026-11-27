@@ -1,4 +1,7 @@
-"""Exercise the rendered journal filters in real Alloy with synthetic loopback log entries."""
+"""Exercise the rendered journal filters in real Alloy with synthetic loopback log entries.
+
+Usage: CONFIG ALLOY [ALERT_TOPICS]. With ALERT_TOPICS (comma-separated: a host running ntfy), an ntfy publish line
+must reach Loki as a body-free receipt for those topics and not at all for any other; without it, unchanged."""
 import json
 import pathlib
 import re
@@ -10,7 +13,8 @@ import time
 import urllib.error
 import urllib.request
 
-config_path, binary = sys.argv[1:]
+config_path, binary, *topics = sys.argv[1:]
+alert_topics = topics[0].split(',') if topics else None
 raw = pathlib.Path(config_path).read_text()
 process = re.search(r'^loki[.]process "drop" \{.*?^\}', raw, re.S | re.M).group(0)
 process = process.replace('loki.write.loki.receiver', 'loki.echo.capture.receiver')
@@ -39,6 +43,71 @@ fixtures = [
     ('loki.service','info','table_manager','another message','true','keep_message',True),
     ('authentik.service','info','table_manager','another message','true','drop_private',False),
 ]
+cases = [(unit, f'level={level} caller={caller}.go:195 msg="{message}" found={found} test_case={marker}', marker,
+          'same' if keep else 'drop') for unit, level, caller, message, found, marker, keep in fixtures]
+
+
+stamps = {}
+
+
+def stamp(marker):
+    """A time per publish case: a receipt whose title was cut away is known by its time alone."""
+    return stamps.setdefault(marker, f'2026-11-27T03:13:{len(stamps):02d}.478+01:00')
+
+
+def ntfy_publish(topic, marker, cut=False):
+    """ntfy 2.30.0's TRACE publish line, as lenovo's journal holds it."""
+    body = json.dumps({'id': 'q4O8CUXSpTIW', 'time': 1795745633, 'event': 'message', 'topic': topic,
+                       'title': f'[WARNING] "NodeOOMKill" test_case={marker}', 'message': 'BODY-SECRET line\nQuery: q',
+                       'priority': 3, 'tags': ['warning', 'orange_circle'], 'click': 'https://CLICK-SECRET'}, indent=2)
+    return json.dumps({'time': stamp(marker), 'level': 'TRACE', 'message': 'Received message',
+                       'http_method': 'POST', 'http_path': '/', 'message_body': body[:120] if cut else body,
+                       'message_body_size': 370, 'message_delayed': False, 'message_id': 'q4O8CUXSpTIW',
+                       'tag': 'publish', 'topic': topic, 'visitor_ip': '192.168.10.137'}, separators=(',', ':'))
+
+
+def receipt(topic, marker, cut=False):
+    if alert_topics is None:
+        return 'same'
+    if topic not in alert_topics:
+        return 'drop'
+    return {'time': stamp(marker), 'level': 'TRACE', 'message': 'Received message', 'topic': topic,
+            'title': None if cut else f'[WARNING] "NodeOOMKill" test_case={marker}',
+            'priority': None if cut else 3, 'tags': None if cut else ['warning', 'orange_circle']}
+
+
+alert = (alert_topics or ['homelab-alerts'])[0]
+warn = json.dumps({'time': '2026-11-27T03:20:00+01:00', 'level': 'WARN', 'message': 'Connection closed with error',
+                   'error': 'write: broken pipe test_case=ntfy_warn', 'tag': 'subscribe', 'topic': alert,
+                   'message_body': 'not a publish'}, separators=(',', ':'))
+for topic in (alert_topics or [alert]):
+    cases.append(('ntfy-sh.service', ntfy_publish(topic, 'ntfy_alert_' + topic), 'ntfy_alert_' + topic,
+                  receipt(topic, 'ntfy_alert_' + topic)))
+cases += [
+    ('ntfy-sh.service', ntfy_publish(alert, 'ntfy_cut', cut=True), 'ntfy_cut', receipt(alert, 'ntfy_cut', cut=True)),
+    ('ntfy-sh.service', ntfy_publish('homelab-improvements', 'ntfy_other'), 'ntfy_other',
+     receipt('homelab-improvements', 'ntfy_other')),
+    ('ntfy-sh.service', warn, 'ntfy_warn', 'same'),
+    ('ntfy-sh.service', 'Listening on :2586[http], ntfy 2.30.0 test_case=ntfy_start', 'ntfy_start', 'same'),
+    ('sshd.service', ntfy_publish(alert, 'unit_publish'), 'unit_publish', 'same'),
+]
+
+
+def entries(output):
+    """{marker: the entry loki.echo printed} for each case marker in Alloy's output."""
+    got = {}
+    for m in re.finditer(r'msg="received log entry" .*?entry=("(?:[^"\\]|\\.)*")', output):
+        entry = json.loads(m[1])
+        mark = re.search(r'test_case=([a-z_-]+)', entry)
+        if mark:
+            got[mark[1]] = entry
+        else:
+            try:
+                at = json.loads(entry).get('time')
+            except (ValueError, AttributeError):
+                continue
+            got.update({marker: entry for marker, t in stamps.items() if t == at})
+    return got
 with tempfile.TemporaryDirectory(prefix='alloy-602-') as td:
     path = pathlib.Path(td) / 'config.alloy'
     path.write_text(config)
@@ -52,8 +121,7 @@ with tempfile.TemporaryDirectory(prefix='alloy-602-') as td:
     )
     try:
         streams = []
-        for unit, level, caller, message, found, marker, _ in fixtures:
-            line = f'level={level} caller={caller}.go:195 msg="{message}" found={found} test_case={marker}'
+        for unit, line, _, _ in cases:
             streams.append({'stream': {'job': 'host-journal', 'unit': unit},
                             'values': [[str(time.time_ns()), line]]})
         req = urllib.request.Request(
@@ -77,7 +145,7 @@ with tempfile.TemporaryDirectory(prefix='alloy-602-') as td:
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             output = capture.read_text()
-            if all('test_case=' + marker in output for *_, marker, keep in fixtures if keep):
+            if all(marker in entries(output) for _, _, marker, want in cases if want != 'drop'):
                 break
             if proc.poll() is not None:
                 raise RuntimeError('Alloy exited before processing fixtures')
@@ -95,6 +163,13 @@ with tempfile.TemporaryDirectory(prefix='alloy-602-') as td:
         output = capture.read_text()
         if proc.returncode not in (0, -15):
             raise RuntimeError(f'Alloy exited with status {proc.returncode}: {output[-4000:]}')
-    for *_, marker, keep in fixtures:
-        assert ('test_case=' + marker in output) == keep, (marker, output[-2500:])
-    print('PASS: rendered Alloy pipeline dropped only found=true INFO lookup; creation/error/caller/unit/message cases survived; private units stayed excluded')
+    got = entries(output)
+    for unit, line, marker, want in cases:
+        if want == 'drop':
+            assert marker not in got, (marker, got.get(marker))
+        elif want == 'same':
+            assert got.get(marker) == line, (marker, got.get(marker), output[-2500:])
+        else:
+            assert json.loads(got.get(marker) or 'null') == want and 'SECRET' not in got[marker], (marker, got.get(marker))
+    print('PASS: rendered Alloy pipeline dropped only found=true INFO lookup; creation/error/caller/unit/message cases survived; private units stayed excluded;',
+          f'ntfy publish lines cut to receipts for {alert_topics}, other topics dropped' if alert_topics else 'ntfy lines unchanged')
