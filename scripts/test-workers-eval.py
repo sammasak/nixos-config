@@ -1384,6 +1384,7 @@ in {
   env = acer.systemd.services."exec-pool-exec@".environment;
   agentEnv = builtins.fromJSON acer.systemd.services."exec-pool-exec@".environment.EXEC_POOL_AGENT_ENV;
   piActivation = acer.containers.pool1.config.home-manager.users.lukas.home.activation.piGateway.data;
+  ghConfig = let hm = acer.containers.pool1.config.home-manager.users.lukas; in { dir = hm.xdg.configHome; text = hm.xdg.configFile."gh/config.yml".text; };
   scratch = acer.services.devEnvironments.instances.pool1.scratch;
   reset = acer.systemd.services."dev-env-reset@".script;
   polkit = acer.security.polkit.extraConfig;
@@ -1434,6 +1435,9 @@ def check_runner():
     pi_dir = agent.get("PI_CODING_AGENT_DIR")
     check(pi_dir == "/home/lukas/.pi/agent" and f'"{pi_dir}/models.json"' in got.get("piActivation", ""),
           f"a Pi step reads the guest user's Pi config, where the slot's activation writes models.json, not its attempt's empty HOME ({pi_dir}, {got.get('piActivation', '')[-200:]!r})")
+    gh_dir, gh = agent.get("GH_CONFIG_DIR"), got.get("ghConfig", {})
+    check(agent.get("GH_TOKEN") == "held-by-the-host" and gh_dir == f"{gh.get('dir')}/gh" and gh.get("text", "").startswith("http_unix_socket: /"),
+          f"a gh step reads the guest user's gh config, whose socket the slot's proxy signs, not its attempt's empty HOME, where gh would send the placeholder GH_TOKEN to GitHub ({gh_dir}, {gh})")
     herdr = json.loads(env.get("EXEC_POOL_HERDR", "[]"))
     check(env.get("EXEC_POOL_ATTACH") == "/run/current-system/sw/bin/worker-%i turn" and env.get("EXEC_POOL_DTACH", "").endswith("/bin/dtach")
           and herdr[:1] and herdr[0].endswith("/bin/setpriv") and "--reuid=lukas" in herdr and herdr[-1].endswith("/bin/herdr")

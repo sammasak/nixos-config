@@ -832,7 +832,11 @@ in
           secrets = lib.optionalAttrs (!ghForward) { "gh-hosts.yml" = cfg.ghHostsFile; };
           missing = "sam.workers: an instance with egress.github.repos is signed with the token in sam.workers.ghHostsFile, which this host does not set.";
           prepare = lib.optional (!ghForward) (lib.getExe githubTokenFromHosts);
-          guest.env.GH_TOKEN = "held-by-the-host";
+          guest.env = {
+            GH_TOKEN = "held-by-the-host";
+            # a pool attempt's HOME is its own, empty one: without this gh finds no socket and sends GH_TOKEN to GitHub
+            GH_CONFIG_DIR = "${home}/.config/gh";
+          };
           guest.config = {
             # also the system's: a pool attempt's HOME holds no Home Manager files, and its push URL is ssh
             programs.git = {
