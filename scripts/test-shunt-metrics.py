@@ -10,7 +10,8 @@ refused. A 64 MiB day file stays under 3/4 of the unit's MemoryMax, a guest's of
 shunt, a link on its log path is refused, bad argv exits 2; with Shunt off it still exports its Bash calls and zero sums.
 Its trashed homes (a slot's earlier turns): two inside the window add to the live one, one trashed before it and one of
 another worker are not read, a record in both a live and a trashed home counts once, a linked trashed home or .trash
-is refused, one past TRASH_MAX is over_cap, and one deleted mid-read is missing, not a failed run.
+is refused, one past TRASH_MAX is over_cap; a total worker byte budget prioritizes the live/current files and is not extended
+by file growth; a missing log directory or day file is counted, not a failed run.
 The wiring, from the probe: imported on the devTools hosts with node-exporter, enabled on lenovo and acer; on lenovo the
 unit reads the hook log read-only with --shunt on and node-exporter the dir; on acer the host says off and each guest's
 unit passes its own declared switch, on for pool1 alone (its Read hook registered), off for the other slots; enabled off devTools, it
@@ -105,7 +106,7 @@ shunt_last_record_timestamp_seconds{hook="shunt-spill",shunt="on"} 1795410000
 # HELP shunt_bash_last_call_timestamp_seconds Unix time of the newest validate-bash record (the agent's last Bash call), carried over while the window holds none.
 # TYPE shunt_bash_last_call_timestamp_seconds gauge
 shunt_bash_last_call_timestamp_seconds{shunt="on"} 1795411800
-# HELP shunt_collector_lines Hook log lines in the window's files: shunt (a counted record), other (another hook or outside the window), malformed, overlong, partial (an unterminated last line), over_cap or duplicate (a guest's record already counted from another of its homes).
+# HELP shunt_collector_lines Hook log lines in the window's files: shunt (a counted record), other (another hook or outside the window), malformed, overlong, partial (an unterminated last line), over_cap (past the Shunt record limit or a guest's Shunt/Bash key limit) or duplicate (a guest's record already counted from another of its homes).
 # TYPE shunt_collector_lines gauge
 shunt_collector_lines{shunt="on",status="shunt"} 14
 shunt_collector_lines{shunt="on",status="other"} 4
@@ -114,7 +115,7 @@ shunt_collector_lines{shunt="on",status="overlong"} 1
 shunt_collector_lines{shunt="on",status="partial"} 1
 shunt_collector_lines{shunt="on",status="over_cap"} 0
 shunt_collector_lines{shunt="on",status="duplicate"} 0
-# HELP shunt_collector_files The window's day files: read, missing, refused (a link or not a regular file) or too_large.
+# HELP shunt_collector_files The window's day files: read, missing, refused (a link or not a regular file), too_large; for guests also stale (archived mtime before window) or over_cap (omitted or incomplete due to shared scan budgets).
 # TYPE shunt_collector_files gauge
 shunt_collector_files{shunt="on",status="read"} 2
 shunt_collector_files{shunt="on",status="missing"} 0
@@ -392,8 +393,9 @@ with tempfile.TemporaryDirectory() as tmp:
     hooks(stale, rec("validate-bash", "allowed", t0 - 30, 2))
     os.utime(stale / "home/.local/state/claude-hooks" / today, (t0 - 30 * 3600, t0 - 30 * 3600))
     pool_check(pool_run(), ['shunt_bash_calls{shunt="on",worker="p1"} 4\n',
-                            'shunt_collector_homes{shunt="on",status="read",worker="p1"} 4\n'],
-               "a trashed day file written before the window is skipped")
+                            'shunt_collector_homes{shunt="on",status="read",worker="p1"} 4\n',
+                            'shunt_collector_files{shunt="on",status="stale",worker="p1"} 1\n'],
+               "a trashed day file written before the window is skipped and counted stale")
 
     # links: a trashed home that is one is refused, nothing behind it read; a .trash that is one, none of its homes
     (trash / stamp_name("p1", t0 - 120)).symlink_to(old.parents[2])
@@ -429,6 +431,70 @@ with tempfile.TemporaryDirectory() as tmp:
         sm.os.listdir = real_listdir
     check(tt.homes is not None and tt.homes["missing"] == 1 and tt.bash_calls == 4,
           f"a trashed home deleted mid-read is missing, not an error {tt.homes}")
+
+    # One worker-wide byte budget: a retained turn cannot multiply the maximum scan input. Live is first,
+    # followed by the most recently trashed home; an older file that won't fit is reported, not parsed.
+    bounded = pathlib.Path(tmp, "bounded")
+    active = hooks(bounded / "p1", rec("validate-bash", "allowed", t0 - 60, 2))
+    newest = hooks(bounded / ".trash" / stamp_name("p1", t0 - 120), rec("validate-bash", "allowed", t0 - 180, 3))
+    hooks(bounded / ".trash" / stamp_name("p1", t0 - 240), rec("validate-bash", "allowed", t0 - 300, 5))
+    cap_bytes = getattr(sm, "WORKER_BYTES_MAX", sm.FILE_MAX)
+    sm.WORKER_BYTES_MAX = (active / today).stat().st_size + (newest / today).stat().st_size
+    try:
+        tt = sm.scan_worker(str(bounded), "p1", t0 - 86400, t0 + 60, time.monotonic() + 60)
+        check(tt.bash_calls == 2 and tt.hook_ms["validate-bash"] == 5 and tt.files.get("over_cap") == 1,
+              f"worker byte budget keeps live/newest, reports omitted file {tt.files}")
+        # Even if appending after fstat, a worker reads only the file's admitted snapshot.
+        original_fstat = sm.os.fstat
+        file_stat = (active / today).stat()
+
+        def growing(fd: int):
+            st = original_fstat(fd)
+            if st.st_ino == file_stat.st_ino and st.st_dev == file_stat.st_dev:
+                with open(active / today, "a") as f:
+                    f.write(rec("validate-bash", "allowed", t0 - 30, 99) + "\n")
+            return st
+
+        sm.os.fstat = growing
+        try:
+            tt = sm.scan_worker(str(bounded), "p1", t0 - 86400, t0 + 60, time.monotonic() + 60)
+        finally:
+            sm.os.fstat = original_fstat
+        check(tt.bash_calls == 2 and tt.hook_ms["validate-bash"] == 5 and tt.files.get("over_cap") == 1,
+              f"file growth after fstat cannot bypass admitted bytes {tt.files}")
+    finally:
+        sm.WORKER_BYTES_MAX = cap_bytes
+
+    # Tiny malformed lines cannot consume unbounded JSON decoding work within the byte budget.
+    chunks = pathlib.Path(tmp, "chunks")
+    hooks(chunks / "p1", rec("validate-bash", "allowed", t0 - 60, 2), "", "", "")
+    hooks(chunks / ".trash" / stamp_name("p1", t0 - 120), rec("validate-bash", "allowed", t0 - 180, 3))
+    chunk_cap = getattr(sm, "WORKER_CHUNKS_MAX", 200_000)
+    sm.WORKER_CHUNKS_MAX = 2
+    try:
+        tt = sm.scan_worker(str(chunks), "p1", t0 - 86400, t0 + 60, time.monotonic() + 60)
+    finally:
+        sm.WORKER_CHUNKS_MAX = chunk_cap
+    check(tt.bash_calls == 1 and tt.lines["malformed"] == 1 and tt.files.get("over_cap") == 2,
+          f"readline budget exposes partial and omitted files while retaining live counts {tt.files}")
+
+    # Unknown and malformed hooks do not use the guest's limited keys or displace real activity.
+    ignored = pathlib.Path(tmp, "ignored")
+    hooks(ignored / "p1", rec("unknown-hook", "allow", t0 - 90, 1),
+          json.dumps({"ts": iso(t0 - 80), "hook": 7}), rec("validate-bash", "allowed", t0 - 60, 2))
+    key_cap = sm.KEYS_MAX
+    sm.KEYS_MAX = 1
+    try:
+        tt = sm.scan_worker(str(ignored), "p1", t0 - 86400, t0 + 60, time.monotonic() + 60)
+    finally:
+        sm.KEYS_MAX = key_cap
+    check(tt.bash_calls == 1 and tt.lines["malformed"] == 1 and tt.lines["over_cap"] == 0,
+          f"only counted hooks consume the key budget {tt.lines}")
+
+    # Trash time slack is inclusive; malformed local-time names and times outside the slack are excluded.
+    check(sm.trashed([stamp_name("p1", t0 - 86400 - 1800), stamp_name("p1", t0 - 86400 - 3601),
+                      "p1-20261399-250000"], "p1", t0 - 86400) == [stamp_name("p1", t0 - 86400 - 1800)],
+          "trash window slack and malformed timestamp")
 
     for argv, why in ((["--worker", "a1"], "--worker without --state-dir"),
                       (["--state-dir", str(state), "--worker", "../a1"], "a worker name outside the instance names"),
