@@ -46,15 +46,17 @@ if not lh:
 LIGHT_HELD = textwrap.dedent(lh.group(1)).replace("''${", "\0d").replace("${pkgs.util-linux}/bin/flock", "flock")
 
 
-def render(qa, lints, gen, docs, fresh, push_lints, ev, record, light, evrec):
+def render(qa, lints, gen, docs, fresh, push_lints, ev, record, light, evrec, sg_lint):
     """The hook as writeShellApplication would build it, with qa (its store path keys a green), the lints, the push's
-    lints and eval, the record helper, the doc readers' tests, the devenv-fresh guard and /run/current-system replaced."""
+    lints and eval, the record helper, the doc readers' tests, the devenv-fresh guard, pkgs/scheduled-gate's ruff lint and
+    /run/current-system replaced."""
     if re.search(r"\bdate\b", BODY):
         sys.exit("FAIL (scripts/test-qa-push.py): qaPush reads the clock: every push gets the fast set at any hour")
     text = (BODY.replace("${lib.getExe qa}", str(qa)).replace("${run lints}", str(lints)).replace("${lib.getExe docTests}", str(docs))
             .replace("${lib.getExe devenvFresh}", str(fresh)).replace("${run pushLints}", str(push_lints))
             .replace("${lib.getExe pushEval}", str(ev)).replace("${pushEval.name}", "nixos-push-eval")
             .replace("${lib.getExe record}", str(record)).replace("${lib.getExe evalRecord}", str(evrec))
+            .replace("${lib.getExe scheduledGateLint}", str(sg_lint))
             .replace("${lightHeld}", LIGHT_HELD.replace("/run/work-locks/light-work.lock", str(light))))
     left = re.findall(r"\$\{[^}]*\}", text)
     if left:
@@ -77,6 +79,8 @@ with tempfile.TemporaryDirectory() as t:
     # the devenv-fresh guard (devenvFresh, tested on its own below): refuses when DEVENV_STALE is set
     push_lints = t / "push-lints"
     push_lints.write_text(f'#!/usr/bin/env bash\necho PUSHLINTS >> "{log}"\nexit "${{PUSHLINT_RC:-0}}"\n')
+    sg_lint = t / "scheduled-gate-lint"
+    sg_lint.write_text(f'#!/usr/bin/env bash\necho RUFF >> "{log}"\nexit "${{RUFF_RC:-0}}"\n')
     ev = t / "push-eval"
     light = t / "light-work.lock"
     light.touch()
@@ -101,8 +105,8 @@ with tempfile.TemporaryDirectory() as t:
         # the hook never runs the full gate: FULL in the log is a failure of every case
         qa.write_text(f'#!/usr/bin/env bash\necho FULL >> "{log}"\n')
         gates[name] = t / f"gate-{name}.sh"
-        gates[name].write_text(render(qa, lints, gen, docs, fresh, push_lints, ev, record, light, evrec))
-    for f in (lints, docs, fresh, push_lints, ev, record, evrec, t / "qa", t / "qa-other", *gates.values()):
+        gates[name].write_text(render(qa, lints, gen, docs, fresh, push_lints, ev, record, light, evrec, sg_lint))
+    for f in (lints, docs, fresh, push_lints, sg_lint, ev, record, evrec, t / "qa", t / "qa-other", *gates.values()):
         f.chmod(0o755)
 
     # nor what nixos:qa exports to its steps (PLATFORM_RECORD_STRICT=1, NIXOS_QA_MODE, ...): the hook sets its own
@@ -126,6 +130,7 @@ with tempfile.TemporaryDirectory() as t:
 
     def verdict(seen):
         return ("FULL" if "FULL" in seen else "LINTS" if seen == ["LINTS"] else "FAST" if seen == ["PUSHLINTS", "EVAL"]
+                else "FAST+RUFF" if seen == ["PUSHLINTS", "RUFF", "EVAL"] else "PUSHLINTS+RUFF" if seen == ["PUSHLINTS", "RUFF"]
                 else "PUSHLINTS" if seen == ["PUSHLINTS"] else "LINTS+" + " ".join(seen[2:]) if seen[:2] == ["LINTS", "DOCTESTS"] else f"?{seen}")
 
     def gate(rev, which="qa", **extra):
@@ -247,6 +252,13 @@ with tempfile.TemporaryDirectory() as t:
          "LINTS+scripts/test-keys.py")
     case("DRf the doc's test failing fails the push", k, "LINTS+scripts/test-keys.py(rc=1)", DOC_RC="1")
     case("DRc the same plus a code change is the fast set", commit({"flake.nix": "dr\n"}, "and code"), "FAST")
+    git("switch", "-qc", "sg", base)
+    sg = commit({"pkgs/scheduled-gate/scheduled_gate.py": "x\n"}, "scheduled-gate code")
+    case("SG a change under pkgs/scheduled-gate/: the fast set and its ruff lint", sg, "FAST+RUFF")
+    case("SGf its ruff lint failing fails the push before the eval", sg, "PUSHLINTS+RUFF(rc=1)", RUFF_RC="1")
+    git("switch", "-qc", "goals", base)
+    case("SGn a goals.md change runs no ruff lint", commit({"goals.md": "g\n"}, "goals"), "LINTS")
+    case("SGc nor does a code change elsewhere", commit({"flake.nix": "g\n"}, "goals and code"), "FAST")
     git("switch", "-q", "main")
 
     hooks = t / "hooks"

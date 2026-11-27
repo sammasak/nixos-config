@@ -991,6 +991,17 @@ let
   ];
   # the pre-push hook's fast set: no nix fmt (it evaluates the flake and may build the formatter)
   pushLints = lints ++ [ secretsVerify ];
+  # the package's ruff lines read from its check phase, so a line it refuses fails the push, not a deploy's build
+  scheduledGateLint = gate "nixos-lint-scheduled-gate" [ pkgs.ruff ] ''
+    cd pkgs/scheduled-gate
+    ${lib.concatStringsSep "\n" (
+      lib.filter (lib.hasPrefix "ruff check ") (
+        map lib.trim (
+          lib.splitString "\n" (pkgs.callPackage ./pkgs/scheduled-gate/package.nix { }).checkPhase
+        )
+      )
+    )}
+  '';
   # the push's one evaluation: the flake check's nix flake show, import-from-derivation off, so an output that
   # needs IFD fails the push (about 90 s, 3.9 GiB on acer; the light lane, as eval-only). No check's derivation is
   # evaluated, each host's needs stylix's IFD, and nothing is built: a check failing only when built waits for the
@@ -1417,6 +1428,10 @@ let
         trim "$gitdir/nixos-qa-times" 2000
         t=$SECONDS
         ${run pushLints}
+        # no merge-base: changed paths are unknown, so it runs
+        if [ -z "$base" ] || [ -n "$(git diff --no-renames --name-only "$base" HEAD -- pkgs/scheduled-gate/)" ]; then
+          ${lib.getExe scheduledGateLint}
+        fi
         ${lightHeld}
         # a tree whose flake show passed before under this nix (scripts/eval_record.py) is not evaluated again
         if ${lib.getExe evalRecord} flake-show >/dev/null; then
@@ -1710,6 +1725,8 @@ in
       task "deploy-rs's rev agrees in devenv.yaml, devenv.lock and flake.lock (seeded: each drift fails with both revs)" deployRsPins;
     "nixos:fmt-check" =
       task "nix fmt -- --ci: the flake's formatter fails on any file it would change (and rewrites it)" fmtCheck;
+    "nixos:lint-scheduled-gate" =
+      task "pkgs/scheduled-gate's ruff lines from its check phase; the push runs it when that directory changes" scheduledGateLint;
     "nixos:secrets-verify" =
       task "Decrypt-check wifi credentials (skips without an age key)" secretsVerify;
     "nixos:nvim-check" = task "Build lenovo's nvim and start the generated config headless" nvimCheck;
