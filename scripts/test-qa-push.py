@@ -563,7 +563,7 @@ sm = re.search(r"\n  scheduledGateLint =\s+gate\s+\"nixos-lint-scheduled-gate\".
 check(sm is not None, "scheduledGateLint found in devenv.nix")
 if sm:
     sbody = textwrap.dedent(sm.group(1)).replace("''${", "${")
-    check(re.findall(r"\$\{(?!#?lines|argv)[^}]*\}", sbody) == [], "scheduledGateLint has no Nix interpolation")
+    check(re.findall(r"\$\{(?!#?lines|#?calls|argv)[^}]*\}", sbody) == [], "scheduledGateLint has no Nix interpolation")
     pkg = (ROOT / "pkgs/scheduled-gate/package.nix").read_text()
     want = [["check", "--isolated", *ln.split()[2:]] for ln in pkg.splitlines() if ln.strip().startswith("ruff check ")]
     with tempfile.TemporaryDirectory() as t:
@@ -577,7 +577,9 @@ if sm:
         def lint_run(package, **extra):
             pk = t / "pkgs/scheduled-gate/package.nix"
             pk.unlink(missing_ok=True)
+            pk.parent.rmdir()
             if package is not None:
+                pk.parent.mkdir()
                 pk.write_text(package)
             (t / "ruff-log").write_text("")
             r = subprocess.run(["bash", str(t / "lint.sh")], cwd=t, capture_output=True, text=True,
@@ -589,10 +591,17 @@ if sm:
         rc, ran, _ = lint_run(pkg, RUFF_RC="1")
         check(rc == 1 and len(ran) == 1, f"SL seeded: ruff refusing the first line fails the lint ({rc}, {ran})")
         rc, ran, err = lint_run(pkg.replace("ruff check", "${lib.getExe ruff} check"))
-        check(rc == 1 and ran == [] and "no 'ruff check' line" in err,
+        check(rc == 1 and ran == [] and "2 ruff check call(s), 0 of them" in err,
               f"SL seeded: a check phase whose ruff lines it cannot read fails, not passes ({rc}, {err.strip()})")
+        second = [ln for ln in pkg.splitlines() if "--select" in ln][0]
+        rc, ran, err = lint_run(pkg.replace(second, second.replace("ruff check", "cd . && ruff check")))
+        check(rc == 1 and ran == [] and "2 ruff check call(s), 1 of them" in err,
+              f"SL seeded: one ruff line in another shape fails the lint, not just that line unlinted ({rc}, {err.strip()})")
+        rc, ran, _ = lint_run(pkg.replace("--select E,F,W,I,UP,B", '--select "E,F" *.py'))
+        check(rc == 0 and ran[1][-3:] == ['"E,F"', "*.py", "scheduled_gate.py"],
+              f"SL quotes and globs reach ruff literally, never through a shell ({ran})")
         rc, ran, _ = lint_run(None)
-        check(rc == 0 and ran == [], f"SL a tree without the package has nothing to lint ({rc}, {ran})")
+        check(rc == 0 and ran == [], f"SL a tree without pkgs/scheduled-gate has nothing to lint ({rc}, {ran})")
 
 
 # The flake check (flakeCheck in devenv.nix) refuses to run on lenovo when a check is a VM test (it has a driver,

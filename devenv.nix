@@ -1000,11 +1000,13 @@ let
         gnugrep
       ])
       ''
+        [ -e pkgs/scheduled-gate/package.nix ] || { echo "nixos-lint-scheduled-gate: no pkgs/scheduled-gate/package.nix, nothing to lint"; exit 0; }
         cd pkgs/scheduled-gate
-        [ -e package.nix ] || { echo "nixos-lint-scheduled-gate: no pkgs/scheduled-gate/package.nix, nothing to lint"; exit 0; }
         mapfile -t lines < <(grep -E '^[[:space:]]*ruff check ' package.nix || true)
-        if [ "''${#lines[@]}" -eq 0 ]; then
-          echo "nixos-lint-scheduled-gate: no 'ruff check' line in pkgs/scheduled-gate/package.nix, so the push cannot lint as its build does" >&2
+        # any other shape of a ruff call (an interpolated ruff, a chained command) would go unlinted, so it refuses
+        mapfile -t calls < <(grep -E 'ruff[^[:space:]]* check' package.nix || true)
+        if [ "''${#lines[@]}" -eq 0 ] || [ "''${#lines[@]}" -ne "''${#calls[@]}" ]; then
+          echo "nixos-lint-scheduled-gate: pkgs/scheduled-gate/package.nix has ''${#calls[@]} ruff check call(s), ''${#lines[@]} of them a plain 'ruff check' line, so the push cannot lint as its build does" >&2
           exit 1
         fi
         for line in "''${lines[@]}"; do
