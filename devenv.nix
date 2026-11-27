@@ -991,17 +991,27 @@ let
   ];
   # the pre-push hook's fast set: no nix fmt (it evaluates the flake and may build the formatter)
   pushLints = lints ++ [ secretsVerify ];
-  # the package's ruff lines read from its check phase, so a line it refuses fails the push, not a deploy's build
-  scheduledGateLint = gate "nixos-lint-scheduled-gate" [ pkgs.ruff ] ''
-    cd pkgs/scheduled-gate
-    ${lib.concatStringsSep "\n" (
-      lib.filter (lib.hasPrefix "ruff check ") (
-        map lib.trim (
-          lib.splitString "\n" (pkgs.callPackage ./pkgs/scheduled-gate/package.nix { }).checkPhase
-        )
-      )
-    )}
-  '';
+  # the ruff lines of the pushed tree's package.nix check phase, so a line its build refuses fails the push; read at
+  # run time, as devenvFresh keys only the devenv files. --isolated: the build sees no repo ruff config
+  scheduledGateLint =
+    gate "nixos-lint-scheduled-gate"
+      (with pkgs; [
+        ruff
+        gnugrep
+      ])
+      ''
+        cd pkgs/scheduled-gate
+        [ -e package.nix ] || { echo "nixos-lint-scheduled-gate: no pkgs/scheduled-gate/package.nix, nothing to lint"; exit 0; }
+        mapfile -t lines < <(grep -E '^[[:space:]]*ruff check ' package.nix || true)
+        if [ "''${#lines[@]}" -eq 0 ]; then
+          echo "nixos-lint-scheduled-gate: no 'ruff check' line in pkgs/scheduled-gate/package.nix, so the push cannot lint as its build does" >&2
+          exit 1
+        fi
+        for line in "''${lines[@]}"; do
+          read -ra argv <<<"$line"
+          ruff check --isolated "''${argv[@]:2}"
+        done
+      '';
   # the push's one evaluation: the flake check's nix flake show, import-from-derivation off, so an output that
   # needs IFD fails the push (about 90 s, 3.9 GiB on acer; the light lane, as eval-only). No check's derivation is
   # evaluated, each host's needs stylix's IFD, and nothing is built: a check failing only when built waits for the
@@ -1358,7 +1368,8 @@ let
   # documentation (docs/ or a top-level *.md) since origin/main gets the lints, plus the tests that read a changed doc
   # (a scripts/test-* names it: CLAUDE.md, docs/ssh-host-keys.md). A tree a manual full gate passed (scripts/qa-green.sh
   # records it in the clone's git dir with the gate executable and the system generation, as tests run its tools), or
-  # it plus documentation, gets the lints. Nothing else is keyed: a flaky green, an age key or the caller's PATH are
+  # it plus documentation, gets the lints. A push changing pkgs/scheduled-gate/, or with no merge-base, also gets that
+  # package's ruff lint (scheduledGateLint). Nothing else is keyed: a flaky green, an age key or the caller's PATH are
   # not re-sampled until the record is deleted (nixos-qa-green). Everything else, no merge-base and a nested *.md
   # (deployable config) included, gets the fast set and owes the full gate, which never runs here.
   qaPush =

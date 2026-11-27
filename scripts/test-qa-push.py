@@ -259,6 +259,9 @@ with tempfile.TemporaryDirectory() as t:
     git("switch", "-qc", "goals", base)
     case("SGn a goals.md change runs no ruff lint", commit({"goals.md": "g\n"}, "goals"), "LINTS")
     case("SGc nor does a code change elsewhere", commit({"flake.nix": "g\n"}, "goals and code"), "FAST")
+    git("switch", "-q", "--orphan", "nomb")
+    case("SGm no merge-base with origin/main: the changed paths are unknown, so the ruff lint runs",
+         commit({"flake.nix": "m\n"}, "unrelated history"), "FAST+RUFF")
     git("switch", "-q", "main")
 
     hooks = t / "hooks"
@@ -553,6 +556,43 @@ if fm and bm:
               f"seeded: without the entered checkout the same worktree is refused (its devenv.local.nix is not there) ({r.returncode})")
     check(re.search(r'\$\{lib\.getExe devenvFresh\} "\$entered"', BODY.replace("\0d", "${")) is not None and "entered=$PWD" in BODY,
           "qaPush hands devenvFresh the checkout it was entered from, before it moves into the pushed worktree")
+
+
+# scheduledGateLint on its own: the ruff lines of pkgs/scheduled-gate/package.nix as written, under a ruff that logs
+sm = re.search(r"\n  scheduledGateLint =\s+gate\s+\"nixos-lint-scheduled-gate\".*?''\n(.*?)\n *'';\n", src, re.S)
+check(sm is not None, "scheduledGateLint found in devenv.nix")
+if sm:
+    sbody = textwrap.dedent(sm.group(1)).replace("''${", "${")
+    check(re.findall(r"\$\{(?!#?lines|argv)[^}]*\}", sbody) == [], "scheduledGateLint has no Nix interpolation")
+    pkg = (ROOT / "pkgs/scheduled-gate/package.nix").read_text()
+    want = [["check", "--isolated", *ln.split()[2:]] for ln in pkg.splitlines() if ln.strip().startswith("ruff check ")]
+    with tempfile.TemporaryDirectory() as t:
+        t = pathlib.Path(t)
+        (t / "bin").mkdir()
+        (t / "bin/ruff").write_text(f'#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "{t}/ruff-log"\nexit "${{RUFF_RC:-0}}"\n')
+        (t / "bin/ruff").chmod(0o755)
+        (t / "pkgs/scheduled-gate").mkdir(parents=True)
+        (t / "lint.sh").write_text("#!/usr/bin/env bash\nset -euo pipefail\n" + sbody + "\n")
+
+        def lint_run(package, **extra):
+            pk = t / "pkgs/scheduled-gate/package.nix"
+            pk.unlink(missing_ok=True)
+            if package is not None:
+                pk.write_text(package)
+            (t / "ruff-log").write_text("")
+            r = subprocess.run(["bash", str(t / "lint.sh")], cwd=t, capture_output=True, text=True,
+                               env={**os.environ, "PATH": f"{t}/bin:{os.environ['PATH']}", **extra})
+            return r.returncode, [ln.split() for ln in (t / "ruff-log").read_text().splitlines()], r.stderr
+        rc, ran, err = lint_run(pkg)
+        check(rc == 0 and len(want) == 2 and ran == want,
+              f"SL the package's two ruff lines run as its check phase has them, plus --isolated ({rc}, {ran}, {err.strip()})")
+        rc, ran, _ = lint_run(pkg, RUFF_RC="1")
+        check(rc == 1 and len(ran) == 1, f"SL seeded: ruff refusing the first line fails the lint ({rc}, {ran})")
+        rc, ran, err = lint_run(pkg.replace("ruff check", "${lib.getExe ruff} check"))
+        check(rc == 1 and ran == [] and "no 'ruff check' line" in err,
+              f"SL seeded: a check phase whose ruff lines it cannot read fails, not passes ({rc}, {err.strip()})")
+        rc, ran, _ = lint_run(None)
+        check(rc == 0 and ran == [], f"SL a tree without the package has nothing to lint ({rc}, {ran})")
 
 
 # The flake check (flakeCheck in devenv.nix) refuses to run on lenovo when a check is a VM test (it has a driver,
