@@ -6,8 +6,11 @@ exported file is GOLDEN. No session id, path, excerpt or unknown result in the t
 event series, its files counted missing. A link or FIFO day file is refused, an oversized one skipped, records past
 RECORDS_MAX counted over_cap. A failed run writes collector_failed 1 and keeps its previous success and last-record
 timestamps; a run with no record carries the last-record ones over. `--list` is METRICS; seeded: a name outside it is
-refused. A 64 MiB day file stays under 3/4 of the unit's MemoryMax. A guest (--worker): its series carry worker and
+refused. A 64 MiB day file stays under 3/4 of the unit's MemoryMax, a guest's of distinct records too. A guest (--worker): its series carry worker and
 shunt, a link on its log path is refused, bad argv exits 2; with Shunt off it still exports its Bash calls and zero sums.
+Its trashed homes (a slot's earlier turns): two inside the window add to the live one, one trashed before it and one of
+another worker are not read, a record in both a live and a trashed home counts once, a linked trashed home or .trash
+is refused, one past TRASH_MAX is over_cap, and one deleted mid-read is missing, not a failed run.
 The wiring, from the probe: imported on the devTools hosts with node-exporter, enabled on lenovo and acer; on lenovo the
 unit reads the hook log read-only with --shunt on and node-exporter the dir; on acer the host says off and each guest's
 unit passes its own declared switch, on for pool1 alone (its Read hook registered), off for the other slots; enabled off devTools, it
@@ -102,7 +105,7 @@ shunt_last_record_timestamp_seconds{hook="shunt-spill",shunt="on"} 1795410000
 # HELP shunt_bash_last_call_timestamp_seconds Unix time of the newest validate-bash record (the agent's last Bash call), carried over while the window holds none.
 # TYPE shunt_bash_last_call_timestamp_seconds gauge
 shunt_bash_last_call_timestamp_seconds{shunt="on"} 1795411800
-# HELP shunt_collector_lines Hook log lines in the window's files: shunt (a counted record), other (another hook or outside the window), malformed, overlong, partial (an unterminated last line) or over_cap.
+# HELP shunt_collector_lines Hook log lines in the window's files: shunt (a counted record), other (another hook or outside the window), malformed, overlong, partial (an unterminated last line), over_cap or duplicate (a guest's record already counted from another of its homes).
 # TYPE shunt_collector_lines gauge
 shunt_collector_lines{shunt="on",status="shunt"} 14
 shunt_collector_lines{shunt="on",status="other"} 4
@@ -110,6 +113,7 @@ shunt_collector_lines{shunt="on",status="malformed"} 3
 shunt_collector_lines{shunt="on",status="overlong"} 1
 shunt_collector_lines{shunt="on",status="partial"} 1
 shunt_collector_lines{shunt="on",status="over_cap"} 0
+shunt_collector_lines{shunt="on",status="duplicate"} 0
 # HELP shunt_collector_files The window's day files: read, missing, refused (a link or not a regular file) or too_large.
 # TYPE shunt_collector_files gauge
 shunt_collector_files{shunt="on",status="read"} 2
@@ -339,6 +343,93 @@ with tempfile.TemporaryDirectory() as tmp:
         check(r.returncode == 0 and f'shunt_bash_calls{{shunt="on",worker="{w}"}} 0\n' in got
               and re.search(rf'shunt_collector_files\{{shunt="on",status="refused",worker="{w}"\}} [12]\n', got) is not None,
               f"{w}: a link on the guest's log path is refused unread (exit {r.returncode})")
+    # a slot's trashed homes: <state>/.trash/<name>-YYYYMMDD-HHMMSS, local time, one per earlier turn
+    def stamp_name(w: str, at: float) -> str:
+        return f"{w}-{time.strftime('%Y%m%d-%H%M%S', time.localtime(at))}"
+
+    def hooks(root: pathlib.Path, *records: str) -> pathlib.Path:
+        g = root / "home/.local/state/claude-hooks"
+        g.mkdir(parents=True)
+        (g / today).write_text("".join(r + "\n" for r in records))
+        return g
+
+    pool = pathlib.Path(tmp, "pool")
+    trash = pool / ".trash"
+    trash.mkdir(parents=True)
+    t0 = time.time()
+    shared = rec("shunt-spill", "spilled", t0 - 7200, 4, chars=1000, excerpt_chars=100)
+    hooks(pool / "p1", rec("shunt-spill", "spilled", t0 - 60, 4, chars=100, excerpt_chars=10), shared,
+          rec("validate-bash", "allowed", t0 - 60, 2))
+    hooks(trash / stamp_name("p1", t0 - 3600), shared, rec("validate-bash", "allowed", t0 - 3700, 2),
+          rec("validate-bash", "allowed", t0 - 3700, 2))
+    hooks(trash / stamp_name("p1", t0 - 7200), rec("shunt-spill", "spilled", t0 - 7300, 4, chars=10, excerpt_chars=1),
+          rec("validate-bash", "allowed", t0 - 7300, 2))
+    # trashed a day and a half ago, though its file was written in the window: its turn ended before it
+    old = hooks(trash / stamp_name("p1", t0 - 36 * 3600), rec("validate-bash", "allowed", t0 - 120, 2))
+    hooks(trash / stamp_name("p1-x", t0 - 600), rec("validate-bash", "allowed", t0 - 600, 2))
+    hooks(trash / "home-cache", rec("validate-bash", "allowed", t0 - 600, 2))
+    pout = pathlib.Path(tmp, "pool.prom")
+
+    def pool_run() -> str:
+        r = run("--out", str(pout), "--state-dir", str(pool), "--worker", "p1")
+        return pout.read_text() if r.returncode == 0 else f"exit {r.returncode}, stderr {r.stderr[-200:]!r}"
+
+    def pool_check(got: str, want: list[str], why: str) -> None:
+        missing = [w for w in want if w not in got]
+        check(not missing and 'shunt_collector_failed{shunt="on",worker="p1"} 0\n' in got,
+              why + (f": no {missing} in\n{got}" if missing else ""))
+
+    pool_check(pool_run(), ['shunt_events{hook="shunt-spill",result="spilled",shunt="on",worker="p1"} 3\n',
+                            'shunt_spill_chars{kind="seen",shunt="on",worker="p1"} 1110\n',
+                            'shunt_bash_calls{shunt="on",worker="p1"} 4\n',
+                            'shunt_collector_homes{shunt="on",status="read",worker="p1"} 3\n',
+                            'shunt_collector_lines{shunt="on",status="duplicate",worker="p1"} 1\n'],
+               "a live and two trashed homes in the window sum, the record in two counts once, identical lines in one"
+               " home count apart, one trashed before the window and another worker's are not read")
+
+    # a trashed day file last written before the window is not read, though its name is a window day
+    stale = trash / stamp_name("p1", t0 - 60)
+    hooks(stale, rec("validate-bash", "allowed", t0 - 30, 2))
+    os.utime(stale / "home/.local/state/claude-hooks" / today, (t0 - 30 * 3600, t0 - 30 * 3600))
+    pool_check(pool_run(), ['shunt_bash_calls{shunt="on",worker="p1"} 4\n',
+                            'shunt_collector_homes{shunt="on",status="read",worker="p1"} 4\n'],
+               "a trashed day file written before the window is skipped")
+
+    # links: a trashed home that is one is refused, nothing behind it read; a .trash that is one, none of its homes
+    (trash / stamp_name("p1", t0 - 120)).symlink_to(old.parents[2])
+    pool_check(pool_run(), ['shunt_bash_calls{shunt="on",worker="p1"} 4\n',
+                            'shunt_collector_homes{shunt="on",status="refused",worker="p1"} 1\n'],
+               "a linked trashed home is refused unread")
+    linked = pathlib.Path(tmp, "linked")
+    hooks(linked / "p1", rec("validate-bash", "allowed", t0 - 60, 2))
+    (linked / ".trash").symlink_to(trash)
+    r = run("--out", str(pout), "--state-dir", str(linked), "--worker", "p1")
+    got = pout.read_text()
+    check(r.returncode == 0 and 'shunt_bash_calls{shunt="on",worker="p1"} 1\n' in got
+          and 'shunt_collector_homes{shunt="on",status="refused",worker="p1"} 1\n' in got,
+          f"a linked .trash is refused, the live home still read (exit {r.returncode})")
+
+    # TRASH_MAX: the newest are read, the rest counted
+    cap = sm.TRASH_MAX
+    sm.TRASH_MAX = 1
+    try:
+        tt = sm.scan_worker(str(pool), "p1", t0 - 86400, t0 + 60, time.monotonic() + 60)
+    finally:
+        sm.TRASH_MAX = cap
+    check(tt.homes == {"read": 2, "missing": 0, "refused": 0, "over_cap": 3} and tt.bash_calls == 1,
+          f"past TRASH_MAX the newest trashed home is read and the rest counted over_cap {tt.homes}")
+
+    # a trashed home the sweep deletes between the listing and its read: missing, the run still succeeds
+    real_listdir = sm.os.listdir
+    gone = stamp_name("p1", t0 - 90)
+    sm.os.listdir = lambda fd: [*real_listdir(fd), gone]
+    try:
+        tt = sm.scan_worker(str(pool), "p1", t0 - 86400, t0 + 60, time.monotonic() + 60)
+    finally:
+        sm.os.listdir = real_listdir
+    check(tt.homes is not None and tt.homes["missing"] == 1 and tt.bash_calls == 4,
+          f"a trashed home deleted mid-read is missing, not an error {tt.homes}")
+
     for argv, why in ((["--worker", "a1"], "--worker without --state-dir"),
                       (["--state-dir", str(state), "--worker", "../a1"], "a worker name outside the instance names"),
                       (["--state-dir", "workers", "--worker", "a1"], "a relative --state-dir")):
@@ -373,6 +464,23 @@ with tempfile.TemporaryDirectory() as tmp:
     capped = 'status="over_cap"} 0' not in pathlib.Path(tmp, "m.prom").read_text()
     check(kb is not None and kb < memory_max * 3 // 4 and capped,
           f"a 64 MiB day file peaks at {kb} kB, under 3/4 of the unit's MemoryMax ({memory_max} kB), past RECORDS_MAX")
+
+    # a guest's, every line distinct so each is a key to count once across its homes: past KEYS_MAX
+    g = pathlib.Path(tmp, "st/w1/home/.local/state/claude-hooks")
+    g.mkdir(parents=True)
+    day.unlink()
+    with open(g / day.name, "wb") as f:
+        size, i = 0, 0
+        while size + len(line) + 8 <= sm.FILE_MAX:
+            size += f.write(line.replace(b'"lines": 10', b'"lines": %d' % i))
+            i += 1
+    r = subprocess.run([sys.executable, "-I", "-c", code, "--out", f"{tmp}/w.prom", "--shunt", "on", "--state-dir",
+                        f"{tmp}/st", "--worker", "w1"], capture_output=True, text=True, check=False)
+    kb = int(r.stdout.split()[-1]) if r.returncode == 0 and r.stdout.split() else None
+    got = pathlib.Path(tmp, "w.prom").read_text()
+    capped = f'shunt_collector_lines{{shunt="on",status="shunt",worker="w1"}} {sm.KEYS_MAX}\n' in got
+    check(kb is not None and kb < memory_max * 3 // 4 and capped,
+          f"a guest's 64 MiB day file of distinct records peaks at {kb} kB, under 3/4 of MemoryMax, past KEYS_MAX")
 
 # the wiring
 p = gate_probe.section("shunt-metrics")

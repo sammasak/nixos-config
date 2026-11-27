@@ -20,7 +20,14 @@ shunt_collector_failed 1 and keeps the previous success and last-record timestam
 the file. Identical lines are not merged: two decisions in the same second can log the same line.
 
 With --worker, a dev-environment guest's log instead, `<state-dir>/<name>/home/.local/state/claude-hooks`, which the
-guest controls: no directory on that path and no day file is opened through a link.
+guest controls: no directory on that path and no day file is opened through a link. A pool slot's home is reset every
+task turn and moved to `<state-dir>/.trash/<name>-YYYYMMDD-HHMMSS` (local time; modules/workers/core.nix), so the
+window also covers the trashed homes named so whose trash time is inside it (an hour's slack for a clock change),
+newest first and at most TRASH_MAX of them per run (shunt_collector_homes over_cap counts the rest), under the same
+link, day-file and size rules; a trashed day file last written before the window is not read. One record found in
+two homes counts once: across homes a record (its line as the hook wrote it, the timestamp among its fields) counts as
+often as the home holding it most often, so identical lines within one home still count apart; a copy is a duplicate
+line, and an in-window record past KEYS_MAX is over_cap. A trashed home deleted mid-read is missing, not an error.
 
 Usage: shunt-metrics.py --out FILE --shunt on|off [--log-dir DIR] [--hours 24]
        shunt-metrics.py --out FILE --shunt on|off --state-dir DIR --worker NAME [--hours 24]
@@ -47,8 +54,9 @@ METRICS = {
     "shunt_hook_duration_ms": "A Shunt hook's own run time in the window, by quantile.",
     "shunt_hook_time_ms": "A hook's run time summed over the window: the Shunt hooks, and validate-bash, which runs with Shunt on or off, so ms per Bash call compares the two. A 24 h rolling sum, refreshed every 15 min.",
     "shunt_last_record_timestamp_seconds": "Unix time of the hook's newest record, carried over while the window holds none.",
-    "shunt_collector_lines": "Hook log lines in the window's files: shunt (a counted record), other (another hook or outside the window), malformed, overlong, partial (an unterminated last line) or over_cap.",
+    "shunt_collector_lines": "Hook log lines in the window's files: shunt (a counted record), other (another hook or outside the window), malformed, overlong, partial (an unterminated last line), over_cap or duplicate (a guest's record already counted from another of its homes).",
     "shunt_collector_files": "The window's day files: read, missing, refused (a link or not a regular file) or too_large.",
+    "shunt_collector_homes": "A guest's homes read: the live one and the trashed ones inside the window, read, missing (none, or deleted mid-read), refused (a link) or over_cap (past TRASH_MAX).",
     "shunt_collector_success_timestamp_seconds": "Unix time the collector last read the log without error.",
     "shunt_collector_failed": "1 when this run failed (an error or the run deadline), else 0.",
 }
@@ -68,13 +76,21 @@ READ_HOOKS = ("shunt-read", "shunt-bash")
 CHILD_TOKENS = {"input": "input_tokens", "output": "output_tokens", "cache_read": "cache_read_input_tokens",
                 "cache_creation": "cache_creation_input_tokens"}
 BASH_HOOK = "validate-bash"
-LINE_STATUS = ("shunt", "other", "malformed", "overlong", "partial", "over_cap")
+LINE_STATUS = ("shunt", "other", "malformed", "overlong", "partial", "over_cap", "duplicate")
 FILE_STATUS = ("read", "missing", "refused", "too_large")
+HOME_STATUS = ("read", "missing", "refused", "over_cap")
 QUANTILES = (0.5, 0.95)
 # a busy day logs some 500 records of about 200 bytes; these keep a run well inside the unit's MemoryMax
 LINE_MAX = 64 * 1024
 FILE_MAX = 64 * 1024 * 1024
 RECORDS_MAX = 200_000
+# a guest's in-window records remembered to count each once across its homes, some 100 turns of 500; past it a record
+# is over_cap
+KEYS_MAX = 50_000
+# a slot's turns in 24 h: 36 on acer's pool1 on 26 Nov, under 120 on any slot
+TRASH_MAX = 200
+# a trash name is local time: a clock change moves it by up to an hour
+TRASH_SLACK = 3600
 # a guest writes its own log: a larger int would overflow the float the textfile prints and fail every run for 24 h
 INT_MAX = 2**53
 DEADLINE_SECONDS = 60  # the unit's TimeoutStartSec is above this
@@ -114,6 +130,7 @@ class Tally:
     last: dict[str, float] = field(default_factory=dict)
     lines: dict[str, int] = field(default_factory=lambda: dict.fromkeys(LINE_STATUS, 0))
     files: dict[str, int] = field(default_factory=lambda: dict.fromkeys(FILE_STATUS, 0))
+    homes: dict[str, int] | None = None
     kept: int = 0
 
 
@@ -194,10 +211,10 @@ def day_files(since: float, now: float) -> list[str]:
     return days
 
 
-def open_log_dir(parts: list[str]) -> int | None:
-    """The log directory's fd, each component opened from its parent's with O_NOFOLLOW; None when it is missing.
-    A link or non-directory on the path raises OSError."""
-    fd = os.open(parts[0], DIR_FLAGS)
+def open_log_dir(parts: list[str], base: int | None = None) -> int | None:
+    """The log directory's fd, each component opened from its parent's (the first from `base` when given) with
+    O_NOFOLLOW; None when one below the first is missing. A link or non-directory on the path raises OSError."""
+    fd = os.open(parts[0], DIR_FLAGS, dir_fd=base)
     try:
         for part in parts[1:]:
             nxt = os.open(part, DIR_FLAGS, dir_fd=fd)
@@ -212,9 +229,11 @@ def open_log_dir(parts: list[str]) -> int | None:
     return fd
 
 
-def lines_of(name: str, dir_fd: int | None, t: Tally, deadline: float) -> Iterator[bytes]:
+def lines_of(name: str, dir_fd: int | None, t: Tally, deadline: float, written_since: float | None = None
+             ) -> Iterator[bytes]:
     """The file's whole lines, never through a link or from anything but a regular file (O_NONBLOCK: a FIFO cannot
-    hold the open); a line over LINE_MAX and an unterminated last line are counted, not returned."""
+    hold the open); a line over LINE_MAX and an unterminated last line are counted, not returned. A file last
+    modified before `written_since` is skipped uncounted."""
     if dir_fd is None:
         t.files["missing"] += 1
         return
@@ -230,6 +249,8 @@ def lines_of(name: str, dir_fd: int | None, t: Tally, deadline: float) -> Iterat
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode):
             t.files["refused"] += 1
+            return
+        if written_since is not None and st.st_mtime < written_since:
             return
         if st.st_size > FILE_MAX:
             t.files["too_large"] += 1
@@ -256,6 +277,32 @@ def lines_of(name: str, dir_fd: int | None, t: Tally, deadline: float) -> Iterat
             t.lines["overlong"] += 1
 
 
+def read_dir(t: Tally, dir_fd: int | None, since: float, now: float, deadline: float,
+             seen: dict[int, int] | None = None, written_since: float | None = None) -> None:
+    """The window's records in one log directory into `t`. With `seen` (a record's key to the most times one home
+    held it so far), a record no more frequent here than in an earlier home is a duplicate."""
+    mine: dict[int, int] = {}
+    for name in day_files(since, now):
+        for raw in lines_of(name, dir_fd, t, deadline, written_since):
+            try:
+                rec = json.loads(raw)
+                ts = stamp(rec.get("ts")) if isinstance(rec, dict) else None
+                key = hash(raw) if seen is not None and ts is not None and since <= ts <= now else None
+            except (ValueError, RecursionError):
+                t.lines["malformed"] += 1
+                continue
+            if seen is not None and key is not None:
+                if key not in seen and len(seen) >= KEYS_MAX:
+                    t.lines["over_cap"] += 1
+                    continue
+                n = mine[key] = mine.get(key, 0) + 1
+                if n <= seen.get(key, 0):
+                    t.lines["duplicate"] += 1
+                    continue
+                seen[key] = n
+            t.lines[add_record(t, rec, since, now)] += 1
+
+
 def scan(log_dir: list[str], since: float, now: float, deadline: float) -> Tally:
     """The window's records under the directory `log_dir` names (its path components, the first absolute)."""
     t = Tally()
@@ -268,17 +315,74 @@ def scan(log_dir: list[str], since: float, now: float, deadline: float) -> Tally
         t.files["refused"] += len(day_files(since, now))
         return t
     try:
-        for name in day_files(since, now):
-            for raw in lines_of(name, dir_fd, t, deadline):
-                try:
-                    rec = json.loads(raw)
-                except (ValueError, RecursionError):
-                    t.lines["malformed"] += 1
-                    continue
-                t.lines[add_record(t, rec, since, now)] += 1
+        read_dir(t, dir_fd, since, now, deadline)
     finally:
         if dir_fd is not None:
             os.close(dir_fd)
+    return t
+
+
+def trashed(names: list[str], worker: str, since: float) -> list[str]:
+    """The worker's trashed homes among `names` whose trash time is inside the window, newest first."""
+    pat = re.compile(re.escape(worker) + r"-(\d{8}-\d{6})")
+    homes = []
+    for name in names:
+        if not (m := pat.fullmatch(name)):
+            continue
+        try:
+            at = time.mktime(time.strptime(m[1], "%Y%m%d-%H%M%S"))
+        except (ValueError, OverflowError):
+            continue
+        if at >= since - TRASH_SLACK:
+            homes.append((m[1], name))
+    return [name for _, name in sorted(homes, reverse=True)]
+
+
+def scan_worker(state_dir: str, worker: str, since: float, now: float, deadline: float) -> Tally:
+    """The guest's live home and its trashed homes inside the window, each record counted once."""
+    homes = dict.fromkeys(HOME_STATUS, 0)
+    t = Tally(homes=homes)
+    seen: dict[int, int] = {}
+    log = ["home", ".local", "state", "claude-hooks"]
+
+    def home(parts: list[str], base: int | None, written_since: float | None) -> None:
+        try:
+            fd = open_log_dir(parts, base)
+        except FileNotFoundError:
+            fd = None
+        except OSError:
+            homes["refused"] += 1
+            t.files["refused"] += len(day_files(since, now))
+            return
+        homes["read" if fd is not None else "missing"] += 1
+        try:
+            read_dir(t, fd, since, now, deadline, seen, written_since)
+        finally:
+            if fd is not None:
+                os.close(fd)
+
+    home([state_dir, worker, *log], None, None)
+    try:
+        state = os.open(state_dir, DIR_FLAGS)
+    except OSError:
+        return t
+    try:
+        trash = os.open(".trash", DIR_FLAGS, dir_fd=state)
+    except FileNotFoundError:
+        return t
+    except OSError:
+        # a .trash that is a link: none of its homes read
+        homes["refused"] += 1
+        return t
+    finally:
+        os.close(state)
+    try:
+        names = trashed(os.listdir(trash), worker, since)
+        homes["over_cap"] += max(0, len(names) - TRASH_MAX)
+        for name in names[:TRASH_MAX]:
+            home([name, *log], trash, since)
+    finally:
+        os.close(trash)
     return t
 
 
@@ -335,6 +439,8 @@ def render(t: Tally | None, success: float | None, last: dict[str, float], **lab
             out.add("shunt_collector_lines", n, status=status)
         for status, n in t.files.items():
             out.add("shunt_collector_files", n, status=status)
+        for status, n in (t.homes or {}).items():
+            out.add("shunt_collector_homes", n, status=status)
     if success is not None:
         out.add("shunt_collector_success_timestamp_seconds", success)
     out.add("shunt_collector_failed", 1 if t is None else 0)
@@ -369,14 +475,14 @@ def main(argv: list[str] | None = None) -> int:
         p.error("--out and --shunt are required")
     if bool(a.worker) != bool(a.state_dir) or (a.state_dir and not os.path.isabs(a.state_dir)):
         p.error("--worker needs an absolute --state-dir, and --state-dir a --worker")
-    log_dir = ([a.state_dir, a.worker, "home", ".local", "state", "claude-hooks"] if a.worker
-               else [os.path.abspath(a.log_dir)])
     labels = {"shunt": a.shunt, **({"worker": a.worker} if a.worker else {})}
     now = time.time()
     success, last = previous(a.out)
     t: Tally | None
     try:
-        t = scan(log_dir, now - a.hours * 3600, now, time.monotonic() + DEADLINE_SECONDS)
+        since, deadline = now - a.hours * 3600, time.monotonic() + DEADLINE_SECONDS
+        t = (scan_worker(a.state_dir, a.worker, since, now, deadline) if a.worker
+             else scan([os.path.abspath(a.log_dir)], since, now, deadline))
         success = now
     # any error, an unexpected log shape included, costs this run its update and nothing else
     except Exception as e:  # noqa: BLE001
