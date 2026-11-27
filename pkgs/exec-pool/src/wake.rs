@@ -93,16 +93,11 @@ pub fn due_at(spec: &str, now: &ZonedDateTime) -> Result<String, Error> {
                     .map_err(|e| bad(&e))
             };
             let today = now.date().at(h, m, 0, 0);
-            let (last, next) = if zoned(today)?.timestamp() <= now.timestamp() {
-                (
-                    zoned(today)?,
-                    zoned(today.tomorrow().map_err(|e| bad(&e))?)?,
-                )
+            let at = zoned(today)?;
+            let (last, next) = if at.timestamp() <= now.timestamp() {
+                (at, zoned(today.tomorrow().map_err(|e| bad(&e))?)?)
             } else {
-                (
-                    zoned(today.yesterday().map_err(|e| bad(&e))?)?,
-                    zoned(today)?,
-                )
+                (zoned(today.yesterday().map_err(|e| bad(&e))?)?, at)
             };
             let ago = now
                 .timestamp()
@@ -110,7 +105,7 @@ pub fn due_at(spec: &str, now: &ZonedDateTime) -> Result<String, Error> {
                 .saturating_sub(last.timestamp().as_second());
             if ago < RECENT_SECS {
                 return Err(bad(&format!(
-                    "passed {} min ago in local time ({}): for that time in another zone pass RFC 3339 with \
+                    "passed {} min ago in local time (it is now {}): for that time in another zone pass RFC 3339 with \
                      its offset, for the next one {}",
                     ago / 60,
                     now.strftime("%H:%M%:z"),
@@ -160,10 +155,14 @@ mod tests {
             due_at("09:00", &at(8, 0)).unwrap(),
             "2026-11-24T09:00:00+01:00"
         );
+        let six_hours_on = date(2026, 11, 24)
+            .at(15, 0, 0, 0)
+            .to_zoned_datetime(TimeZone::fixed(Offset::constant(1)))
+            .unwrap();
         assert_eq!(
-            due_at("09:00", &at(15, 0)).unwrap(),
+            due_at("09:00", &six_hours_on).unwrap(),
             "2026-11-25T09:00:00+01:00",
-            "passed six hours ago: tomorrow's"
+            "passed six hours ago to the second: tomorrow's"
         );
         let err = due_at("09:00", &at(9, 0)).unwrap_err().to_string();
         assert!(
