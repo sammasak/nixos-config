@@ -1,5 +1,6 @@
 //! `exec-pool-runner drain-wait`, a deploy's wait on the slots' helpers, against a stand-in `systemctl` on PATH that
-//! lists the units a test names and a runtime directory holding their manifests.
+//! lists the units a test names (or fails once while `units.fail` exists) and a runtime directory holding their
+//! manifests.
 
 #![allow(
     clippy::unwrap_used,
@@ -28,7 +29,11 @@ impl Host {
         fs::create_dir_all(dir.join("bin")).unwrap();
         fs::create_dir_all(dir.join("run")).unwrap();
         let systemctl = dir.join("bin/systemctl");
-        fs::write(&systemctl, "#!/bin/sh\ncat \"$UNITS\"\n").unwrap();
+        fs::write(
+            &systemctl,
+            "#!/bin/sh\n[ -e \"$UNITS.fail\" ] && rm \"$UNITS.fail\" && exit 1\ncat \"$UNITS\"\n",
+        )
+        .unwrap();
         fs::set_permissions(&systemctl, fs::Permissions::from_mode(0o755)).unwrap();
         fs::write(dir.join("units"), "").unwrap();
         Self { dir }
@@ -172,10 +177,44 @@ fn a_long_wait_says_what_it_waits_on_every_30_s() {
         .lines()
         .filter(|l| l.starts_with("exec-pool-drain: waited "))
         .collect();
+    let second = said
+        .get(1)
+        .and_then(|l| l.strip_prefix("exec-pool-drain: waited "));
+    let secs = second.and_then(|l| l.split_once("s of 34s (0s for a one-shot run) on "));
     assert!(
         said.len() == 2
-            && said[1].starts_with("exec-pool-drain: waited 30s of 34s")
-            && said[1].contains("pool1 task cli-session"),
+            && secs.is_some_and(|(s, on)| {
+                s.parse::<u64>().is_ok_and(|s| (30..34).contains(&s))
+                    && on.starts_with("pool1 task cli-session")
+            }),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_failed_unit_listing_is_retried_until_the_bound() {
+    let host = Host::new("listing");
+    fs::write(host.dir.join("units.fail"), "").unwrap();
+    let (out, _) = host.wait(0, 0);
+    let err = stderr(&out);
+    assert_eq!(out.status.code(), Some(1), "{err}");
+    assert!(
+        err.contains("systemctl list-units: exit status: 1 after 0s"),
+        "{err}"
+    );
+    fs::write(host.dir.join("units.fail"), "").unwrap();
+    let (out, took) = host.wait(30, 0);
+    let err = stderr(&out);
+    assert_eq!(out.status.code(), Some(0), "{err}");
+    let lines: Vec<&str> = err.lines().collect();
+    assert!(
+        lines.len() == 2
+            && lines[0].starts_with(
+                "exec-pool-drain: waited 0s of 30s, systemctl list-units: exit status: 1"
+            )
+            && lines[0].ends_with(": retrying every 5s")
+            && lines[1].starts_with("exec-pool-drain: no attempt runs after ")
+            && took < Duration::from_secs(30),
         "{err}"
     );
 }

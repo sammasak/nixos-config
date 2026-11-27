@@ -23,7 +23,8 @@
 //! returns once no slot's helper runs but a one-shot run's, which it waits on only `ONE_SHOT_SECS` and then leaves to
 //! finish under the new generation, and exits 1 at `SECS` with a session turn's (or an unreadable manifest's) helper
 //! still running. It names every attempt it waits on, with its slot and how long it has run, on stderr every
-//! [`DRAIN_REPORT`] and at its end.
+//! [`DRAIN_REPORT`] and at its end. A failed `systemctl list-units` is retried every [`DRAIN_POLL`], and fails the
+//! wait only at `SECS`.
 
 use std::collections::BTreeMap;
 use std::fs::{self, File};
@@ -2908,19 +2909,26 @@ fn write_result(slot: &str, dir: &Path, mut result: ExecResult) -> Result<(), St
         .map_err(|e| format!("{RESULT}: {e}"))
 }
 
-/// A slot's running helper as a deploy's drain sees it: its attempt's task, whether it is a session turn, and how long
-/// since its manifest was written; `None` for a manifest it could not read, waited on as a session turn's.
+/// A slot's running helper as a deploy's drain sees it: its attempt's task and how long since its manifest was
+/// written; `None` for a manifest it could not read, waited on as a session turn's.
 struct Running {
     slot: String,
-    task: Option<(String, bool)>,
+    task: Option<RunningTask>,
     secs: Option<u64>,
+}
+
+struct RunningTask {
+    id: String,
+    session: bool,
 }
 
 impl std::fmt::Display for Running {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.task {
-            Some((id, true)) => write!(f, "{} task {id} (session turn", self.slot)?,
-            Some((id, false)) => write!(f, "{} task {id} (one-shot", self.slot)?,
+            Some(RunningTask { id, session }) => {
+                let kind = if *session { "session turn" } else { "one-shot" };
+                write!(f, "{} task {id} ({kind}", self.slot)?;
+            }
             None => write!(f, "{} task unknown (no readable manifest", self.slot)?,
         }
         match self.secs {
@@ -2959,7 +2967,10 @@ fn running_helpers(dir: &Path) -> Result<Vec<Running>, String> {
                 .as_deref()
                 .and_then(|p| read_regular(p).ok())
                 .and_then(|s| Manifest::parse(&s).ok())
-                .map(|m| (m.task.id, m.session.is_some()));
+                .map(|m| RunningTask {
+                    id: m.task.id,
+                    session: m.session.is_some(),
+                });
             let secs = path
                 .as_deref()
                 .filter(|_| task.is_some())
@@ -2985,8 +2996,23 @@ fn drain_wait(dir: &Path, bound: u64, one_shot_bound: u64) -> Result<(), String>
             .join(", ")
     };
     loop {
-        let running = running_helpers(dir)?;
+        let listed = running_helpers(dir);
         let waited = t.elapsed().as_secs();
+        let running = match listed {
+            Ok(running) => running,
+            Err(e) if waited < bound => {
+                if said.is_none_or(|s| s.elapsed() >= DRAIN_REPORT) {
+                    eprintln!(
+                        "exec-pool-drain: waited {waited}s of {bound}s, {e}: retrying every {}s",
+                        DRAIN_POLL.as_secs()
+                    );
+                    said = Some(Instant::now());
+                }
+                thread::sleep(DRAIN_POLL);
+                continue;
+            }
+            Err(e) => return Err(format!("{e} after {waited}s")),
+        };
         if running.is_empty() {
             if said.is_some() {
                 eprintln!("exec-pool-drain: no attempt runs after {waited}s");
@@ -2995,7 +3021,7 @@ fn drain_wait(dir: &Path, bound: u64, one_shot_bound: u64) -> Result<(), String>
         }
         let held = running
             .iter()
-            .any(|r| r.task.as_ref().is_none_or(|t| t.1) || waited < one_shot_bound);
+            .any(|r| r.task.as_ref().is_none_or(|t| t.session) || waited < one_shot_bound);
         if !held {
             eprintln!(
                 "exec-pool-drain: after {waited}s, leaving {} to finish under the new generation: a one-shot run is \
