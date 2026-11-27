@@ -10,7 +10,8 @@ refused. A 64 MiB day file stays under 3/4 of the unit's MemoryMax, a guest's of
 shunt, a link on its log path is refused, bad argv exits 2; with Shunt off it still exports its Bash calls and zero sums.
 Its trashed homes (a slot's earlier turns): two inside the window add to the live one, one trashed before it and one of
 another worker are not read, a record in both a live and a trashed home counts once, a linked trashed home or .trash
-is refused, one past TRASH_MAX is over_cap, and one deleted mid-read is missing, not a failed run.
+is refused, one past TRASH_MAX or the byte budget is over_cap, a trashed day file written before the window stale,
+and one deleted mid-read (or without its log) is missing, not a failed run; KEYS_MAX caps known hooks' records alone.
 The wiring, from the probe: imported on the devTools hosts with node-exporter, enabled on lenovo and acer; on lenovo the
 unit reads the hook log read-only with --shunt on and node-exporter the dir; on acer the host says off and each guest's
 unit passes its own declared switch, on for pool1 alone (its Read hook registered), off for the other slots; enabled off devTools, it
@@ -105,7 +106,7 @@ shunt_last_record_timestamp_seconds{hook="shunt-spill",shunt="on"} 1795410000
 # HELP shunt_bash_last_call_timestamp_seconds Unix time of the newest validate-bash record (the agent's last Bash call), carried over while the window holds none.
 # TYPE shunt_bash_last_call_timestamp_seconds gauge
 shunt_bash_last_call_timestamp_seconds{shunt="on"} 1795411800
-# HELP shunt_collector_lines Hook log lines in the window's files: shunt (a counted record), other (another hook or outside the window), malformed, overlong, partial (an unterminated last line), over_cap or duplicate (a guest's record already counted from another of its homes).
+# HELP shunt_collector_lines Hook log lines in the window's files: shunt (a counted record), other (another hook or outside the window), malformed, overlong, partial (an unterminated last line), over_cap (past the record cap; for a guest also past its 50,000 in-window records, Bash calls included) or duplicate (a guest's record already counted from another of its homes).
 # TYPE shunt_collector_lines gauge
 shunt_collector_lines{shunt="on",status="shunt"} 14
 shunt_collector_lines{shunt="on",status="other"} 4
@@ -114,12 +115,14 @@ shunt_collector_lines{shunt="on",status="overlong"} 1
 shunt_collector_lines{shunt="on",status="partial"} 1
 shunt_collector_lines{shunt="on",status="over_cap"} 0
 shunt_collector_lines{shunt="on",status="duplicate"} 0
-# HELP shunt_collector_files The window's day files: read, missing, refused (a link or not a regular file) or too_large.
+# HELP shunt_collector_files The window's day files: read, missing, refused (a link or not a regular file), too_large, stale (a guest's trashed one last written before the window) or over_cap (past the trashed homes' byte budget).
 # TYPE shunt_collector_files gauge
 shunt_collector_files{shunt="on",status="read"} 2
 shunt_collector_files{shunt="on",status="missing"} 0
 shunt_collector_files{shunt="on",status="refused"} 0
 shunt_collector_files{shunt="on",status="too_large"} 0
+shunt_collector_files{shunt="on",status="stale"} 0
+shunt_collector_files{shunt="on",status="over_cap"} 0
 # HELP shunt_collector_success_timestamp_seconds Unix time the collector last read the log without error.
 # TYPE shunt_collector_success_timestamp_seconds gauge
 shunt_collector_success_timestamp_seconds{shunt="on"} 1795413600
@@ -293,7 +296,7 @@ with tempfile.TemporaryDirectory() as tmp:
         t = sm.scan([str(log)], SINCE, NOW, time.monotonic() + 60)
     finally:
         sm.FILE_MAX, sm.RECORDS_MAX = caps
-    check(t.files == {"read": 1, "missing": 0, "refused": 0, "too_large": 1} and t.kept == 1
+    check(t.files == {"read": 1, "missing": 0, "refused": 0, "too_large": 1, "stale": 0, "over_cap": 0} and t.kept == 1
           and t.lines["over_cap"] == 0, f"a day file over FILE_MAX is skipped and counted too_large {t.files}")
     sm.RECORDS_MAX = 3
     try:
@@ -392,8 +395,9 @@ with tempfile.TemporaryDirectory() as tmp:
     hooks(stale, rec("validate-bash", "allowed", t0 - 30, 2))
     os.utime(stale / "home/.local/state/claude-hooks" / today, (t0 - 30 * 3600, t0 - 30 * 3600))
     pool_check(pool_run(), ['shunt_bash_calls{shunt="on",worker="p1"} 4\n',
-                            'shunt_collector_homes{shunt="on",status="read",worker="p1"} 4\n'],
-               "a trashed day file written before the window is skipped")
+                            'shunt_collector_homes{shunt="on",status="read",worker="p1"} 4\n',
+                            'shunt_collector_files{shunt="on",status="stale",worker="p1"} 1\n'],
+               "a trashed day file written before the window is stale, not read")
 
     # links: a trashed home that is one is refused, nothing behind it read; a .trash that is one, none of its homes
     (trash / stamp_name("p1", t0 - 120)).symlink_to(old.parents[2])
@@ -429,6 +433,41 @@ with tempfile.TemporaryDirectory() as tmp:
         sm.os.listdir = real_listdir
     check(tt.homes is not None and tt.homes["missing"] == 1 and tt.bash_calls == 4,
           f"a trashed home deleted mid-read is missing, not an error {tt.homes}")
+    # one whose hook log was deleted after its home was opened (or never made): missing below the first component
+    (trash / stamp_name("p1", t0 - 30) / "home").mkdir(parents=True)
+    tt = sm.scan_worker(str(pool), "p1", t0 - 86400, t0 + 60, time.monotonic() + 60)
+    check(tt.homes is not None and tt.homes["missing"] == 1 and tt.homes["read"] == 4 and tt.bash_calls == 4,
+          f"a trashed home without its hook log is missing, not an error {tt.homes}")
+
+    # the trashed homes' byte budget: a file past what is left is over_cap and so are the older homes
+    budget = sm.TRASH_BYTES_MAX
+    sm.TRASH_BYTES_MAX = 1
+    try:
+        tt = sm.scan_worker(str(pool), "p1", t0 - 86400, t0 + 60, time.monotonic() + 60)
+    finally:
+        sm.TRASH_BYTES_MAX = budget
+    check(tt.files["over_cap"] == 1 and tt.homes is not None and tt.homes["over_cap"] == 1 and tt.bash_calls == 1,
+          f"past TRASH_BYTES_MAX a trashed day file and the older homes are over_cap {tt.files} {tt.homes}")
+
+    # the window's edge by trash time (local, an hour's slack), and names that are not a trash time
+    since = t0 - 86400
+    names = [stamp_name("p1", since - 1800), stamp_name("p1", since - 3700), "p1-20261399-250000", "p1-2026112-101010",
+             stamp_name("p1", since + 60) + "x", stamp_name("p1", t0)]
+    check(sm.trashed(names, "p1", since) == [names[5], names[0]],
+          f"trashed: inside the slack read, past it and unparseable names not, newest first {sm.trashed(names, 'p1', since)}")
+
+    # KEYS_MAX: only a known hook's records take a key, so another hook's stay other
+    keyed = pathlib.Path(tmp, "keyed")
+    hooks(keyed / "k1", *[rec("someone-else", "x", t0 - 60 - i, 1) for i in range(3)],
+          *[rec("validate-bash", "allowed", t0 - 60 - i, 1) for i in range(3)])
+    keys = sm.KEYS_MAX
+    sm.KEYS_MAX = 2
+    try:
+        tt = sm.scan_worker(str(keyed), "k1", t0 - 86400, t0 + 60, time.monotonic() + 60)
+    finally:
+        sm.KEYS_MAX = keys
+    check(tt.bash_calls == 2 and tt.lines["over_cap"] == 1 and tt.lines["other"] == 5,
+          f"past KEYS_MAX a Bash call is over_cap, another hook's record stays other {tt.lines}")
 
     for argv, why in ((["--worker", "a1"], "--worker without --state-dir"),
                       (["--state-dir", str(state), "--worker", "../a1"], "a worker name outside the instance names"),
@@ -461,7 +500,7 @@ with tempfile.TemporaryDirectory() as tmp:
     r = subprocess.run([sys.executable, "-I", "-c", code, "--out", f"{tmp}/m.prom", "--shunt", "on", "--log-dir", tmp],
                        capture_output=True, text=True, check=False)
     kb = int(r.stdout.split()[-1]) if r.returncode == 0 and r.stdout.split() else None
-    capped = 'status="over_cap"} 0' not in pathlib.Path(tmp, "m.prom").read_text()
+    capped = 'shunt_collector_lines{shunt="on",status="over_cap"} 0' not in pathlib.Path(tmp, "m.prom").read_text()
     check(kb is not None and kb < memory_max * 3 // 4 and capped,
           f"a 64 MiB day file peaks at {kb} kB, under 3/4 of the unit's MemoryMax ({memory_max} kB), past RECORDS_MAX")
 
