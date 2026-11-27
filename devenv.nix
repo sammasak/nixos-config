@@ -1090,6 +1090,35 @@ let
       return 1
     }
   '';
+  # scheduled only, after every step: Check tuning's table (scripts/check-tuning.py, from Loki when LOKI_ADDR is set,
+  # else this host's record spool) to check-tuning.md beside NIXOS_QA_TIMES. A failed reading is one line and
+  # result=unread, not fail: the scheduled gate lists a step's fail as red, and the gate's result stays its steps'
+  checkTuningStep = ''
+    if [ "$mode" = scheduled ]; then
+      t=$SECONDS r=pass tuning_why=
+      tuning_src=()
+      [ -n "''${LOKI_ADDR:-}" ] || tuning_src=(--records "''${PLATFORM_RECORD_SPOOL:-}")
+      if [ -z "''${NIXOS_QA_TIMES:-}" ]; then
+        r=unread tuning_why="no NIXOS_QA_TIMES to write the table beside"
+      else
+        tuning=$(dirname "$NIXOS_QA_TIMES")/check-tuning.md
+        if ! tuning_why=$(python3 scripts/check-tuning.py "''${tuning_src[@]}" 2>&1 >"$tuning.tmp"); then
+          r=unread
+        elif ! tuning_why=$(mv -f "$tuning.tmp" "$tuning" 2>&1); then
+          r=unread
+        fi
+        rm -f "$tuning.tmp" || :
+      fi
+      if [ "$r" = pass ]; then
+        echo "nixos-qa: check-tuning table in $tuning"
+      else
+        echo "nixos-qa: check-tuning unread, the gate's result is its steps': $(tr '\n' ' ' <<<"''${tuning_why:-no reason given}")" \
+          | tee -a "''${NIXOS_QA_TIMES:-/dev/null}" >&2
+      fi
+      echo "nixos-qa: check-tuning took $((SECONDS - t)) s" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}"
+      ${lib.getExe record} gate-step gate=nixos-qa step=check-tuning seconds=$((SECONDS - t)) result="$r" sha="$sha"
+    fi
+  '';
   tests = [
     nvimCheck
     nativeOtelRelayTest
@@ -1360,6 +1389,7 @@ let
           ${timed sideBySide}
         fi
         ${timed tests}
+        ${checkTuningStep}
         steps_end
       '';
 
