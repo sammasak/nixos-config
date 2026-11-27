@@ -24,10 +24,14 @@ guest controls: no directory on that path and no day file is opened through a li
 task turn and moved to `<state-dir>/.trash/<name>-YYYYMMDD-HHMMSS` (local time; modules/workers/core.nix), so the
 window also covers the trashed homes named so whose trash time is inside it (an hour's slack for a clock change),
 newest first and at most TRASH_MAX of them per run (shunt_collector_homes over_cap counts the rest), under the same
-link, day-file and size rules; a trashed day file last written before the window is not read. One record found in
-two homes counts once: across homes a record (its line as the hook wrote it, the timestamp among its fields) counts as
-often as the home holding it most often, so identical lines within one home still count apart; a copy is a duplicate
-line, and an in-window record past KEYS_MAX is over_cap. A trashed home deleted mid-read is missing, not an error.
+link, day-file and size rules. The live home comes first, then archived homes; within each, newest day first. A shared
+WORKER_BYTES_MAX snapshot budget and WORKER_CHUNKS_MAX readline budget cover all day files. A file too big for the
+remaining byte budget is skipped; a file cut short by the chunk budget is incomplete. Both count as over_cap.
+A trashed day file last written before the window is stale. Nonzero cap counts mean incomplete coverage.
+One record found in two homes counts once: across homes a record (its line as the hook wrote it, the timestamp among
+its fields) counts as often as the home holding it most often, so identical lines within one home still count apart;
+a copy is a duplicate line, and a new in-window Shunt or Bash key past KEYS_MAX is over_cap. A missing log directory
+counts as a missing home; missing day files after a successful directory open count as missing files.
 
 Usage: shunt-metrics.py --out FILE --shunt on|off [--log-dir DIR] [--hours 24]
        shunt-metrics.py --out FILE --shunt on|off --state-dir DIR --worker NAME [--hours 24]
@@ -54,9 +58,9 @@ METRICS = {
     "shunt_hook_duration_ms": "A Shunt hook's own run time in the window, by quantile.",
     "shunt_hook_time_ms": "A hook's run time summed over the window: the Shunt hooks, and validate-bash, which runs with Shunt on or off, so ms per Bash call compares the two. A 24 h rolling sum, refreshed every 15 min.",
     "shunt_last_record_timestamp_seconds": "Unix time of the hook's newest record, carried over while the window holds none.",
-    "shunt_collector_lines": "Hook log lines in the window's files: shunt (a counted record), other (another hook or outside the window), malformed, overlong, partial (an unterminated last line), over_cap or duplicate (a guest's record already counted from another of its homes).",
-    "shunt_collector_files": "The window's day files: read, missing, refused (a link or not a regular file) or too_large.",
-    "shunt_collector_homes": "A guest's homes read: the live one and the trashed ones inside the window, read, missing (none, or deleted mid-read), refused (a link) or over_cap (past TRASH_MAX).",
+    "shunt_collector_lines": "Hook log lines in the window's files: shunt (a counted record), other (another hook or outside the window), malformed, overlong, partial (an unterminated last line), over_cap (past the Shunt record limit or a guest's Shunt/Bash key limit) or duplicate (a guest's record already counted from another of its homes).",
+    "shunt_collector_files": "The window's day files: read, missing, refused (a link or not a regular file), too_large; for guests also stale (archived mtime before window) or over_cap (omitted or incomplete due to shared scan budgets).",
+    "shunt_collector_homes": "A guest's live and in-window trashed homes: read (log directory opened), missing (no log directory), refused (unsafe path) or over_cap (past TRASH_MAX).",
     "shunt_collector_success_timestamp_seconds": "Unix time the collector last read the log without error.",
     "shunt_collector_failed": "1 when this run failed (an error or the run deadline), else 0.",
 }
@@ -83,6 +87,10 @@ QUANTILES = (0.5, 0.95)
 # a busy day logs some 500 records of about 200 bytes; these keep a run well inside the unit's MemoryMax
 LINE_MAX = 64 * 1024
 FILE_MAX = 64 * 1024 * 1024
+# Keep the total input of a worker scan to one maximum-sized day file, not TRASH_MAX times FILE_MAX.
+WORKER_BYTES_MAX = FILE_MAX
+# Bytes alone do not bound JSON decode attempts on files full of very short/malformed lines.
+WORKER_CHUNKS_MAX = 200_000
 RECORDS_MAX = 200_000
 # a guest's in-window records remembered to count each once across its homes, some 100 turns of 500; past it a record
 # is over_cap
@@ -132,6 +140,8 @@ class Tally:
     files: dict[str, int] = field(default_factory=lambda: dict.fromkeys(FILE_STATUS, 0))
     homes: dict[str, int] | None = None
     kept: int = 0
+    remaining_bytes: int | None = None  # only worker scans; charged from fstat before reading any line
+    remaining_chunks: int | None = None  # readline calls that return nonempty data
 
 
 def quantile(xs: list[int], q: float) -> float:
@@ -233,7 +243,8 @@ def lines_of(name: str, dir_fd: int | None, t: Tally, deadline: float, written_s
              ) -> Iterator[bytes]:
     """The file's whole lines, never through a link or from anything but a regular file (O_NONBLOCK: a FIFO cannot
     hold the open); a line over LINE_MAX and an unterminated last line are counted, not returned. A file last
-    modified before `written_since` is skipped uncounted."""
+    modified before `written_since` is stale. Worker scans charge the file's snapshot size before reading; don't
+    parse data appended after fstat, or a growing guest file could bypass the shared budget."""
     if dir_fd is None:
         t.files["missing"] += 1
         return
@@ -251,13 +262,33 @@ def lines_of(name: str, dir_fd: int | None, t: Tally, deadline: float, written_s
             t.files["refused"] += 1
             return
         if written_since is not None and st.st_mtime < written_since:
+            t.files["stale"] += 1
             return
         if st.st_size > FILE_MAX:
             t.files["too_large"] += 1
             return
+        left = None
+        if t.remaining_bytes is not None:
+            if st.st_size > t.remaining_bytes or (st.st_size and t.remaining_chunks == 0):
+                t.files["over_cap"] += 1
+                return
+            t.remaining_bytes -= st.st_size
+            left = st.st_size
         t.files["read"] += 1
         overlong = False
-        while raw := fh.readline(LINE_MAX):
+        while left is None or left > 0:
+            if t.remaining_chunks == 0:
+                # A partially read file is not complete. Retain the useful observations and expose the cap.
+                t.files["read"] -= 1
+                t.files["over_cap"] += 1
+                return
+            raw = fh.readline(LINE_MAX if left is None else min(LINE_MAX, left))
+            if not raw:
+                break
+            if left is not None:
+                left -= len(raw)
+            if t.remaining_chunks is not None:
+                t.remaining_chunks -= 1
             if time.monotonic() > deadline:
                 raise TimeoutError("run deadline reached")
             if not raw.endswith(b"\n"):
@@ -282,12 +313,15 @@ def read_dir(t: Tally, dir_fd: int | None, since: float, now: float, deadline: f
     """The window's records in one log directory into `t`. With `seen` (a record's key to the most times one home
     held it so far), a record no more frequent here than in an earlier home is a duplicate."""
     mine: dict[int, int] = {}
-    for name in day_files(since, now):
+    days = day_files(since, now)
+    for name in reversed(days) if seen is not None else days:
         for raw in lines_of(name, dir_fd, t, deadline, written_since):
             try:
                 rec = json.loads(raw)
+                hook = rec.get("hook") if isinstance(rec, dict) else None
                 ts = stamp(rec.get("ts")) if isinstance(rec, dict) else None
-                key = hash(raw) if seen is not None and ts is not None and since <= ts <= now else None
+                counted = isinstance(hook, str) and (hook == BASH_HOOK or hook in RESULTS)
+                key = hash(raw) if seen is not None and counted and ts is not None and since <= ts <= now else None
             except (ValueError, RecursionError):
                 t.lines["malformed"] += 1
                 continue
@@ -341,7 +375,8 @@ def trashed(names: list[str], worker: str, since: float) -> list[str]:
 def scan_worker(state_dir: str, worker: str, since: float, now: float, deadline: float) -> Tally:
     """The guest's live home and its trashed homes inside the window, each record counted once."""
     homes = dict.fromkeys(HOME_STATUS, 0)
-    t = Tally(homes=homes)
+    t = Tally(homes=homes, remaining_bytes=WORKER_BYTES_MAX, remaining_chunks=WORKER_CHUNKS_MAX)
+    t.files.update(stale=0, over_cap=0)
     seen: dict[int, int] = {}
     log = ["home", ".local", "state", "claude-hooks"]
 
