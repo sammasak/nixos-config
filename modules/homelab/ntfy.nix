@@ -41,6 +41,11 @@ in
         auth-default-access = "read-write";
         # Caddy on acer proxies ntfy.sammasak.dev (edge.nix); a LAN client can spoof only its rate-limit key.
         behind-proxy = true;
+        # A per-alert receipt in Loki: message_delayed is a field of the publish handler's "Received message" event
+        # alone, whose trace form carries the message JSON (topic, title). Overrides match one field, so a topic
+        # key would also trace that topic's keepalives and stats. json keeps the indented body on one journal line.
+        log-format = "json";
+        log-level-overrides = [ "message_delayed -> trace" ];
       };
     };
 
