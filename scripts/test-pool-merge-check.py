@@ -146,6 +146,30 @@ check(a == "/t#checks.x86_64-linux.execution-pool-vm.drvPath", f"evalcheck: the 
 check("WORK_LOCKS_HELD=1" in pmc.EVAL and "WORK_LOCKS_HELD=1" in pmc.BUILD,
       "its nix runs marked as holding its locks, or a pool slot's nix waits on the light hold it is under")
 
+# Session-head runtime selection is advisory, not a change to the legacy merge-check plan.
+# Keep the direct ownership paths and exact registration in sync.
+def selected(*paths: str) -> list[str]:
+    return pmc.runtime_plan(list(paths)) if hasattr(pmc, "runtime_plan") else []
+
+
+pool_runtime = ".#checks.x86_64-linux.execution-pool-vm"
+post_runtime = ".#checks.x86_64-linux.post-deploy-check-vm"
+for path in ("tests/execution-pool-vm.nix", "modules/workers/core.nix", "modules/workers/execution-pool.nix"):
+    check(selected(path) == [pool_runtime], f"runtime selection: {path} -> existing execution-pool assertion")
+for path in ("tests/post-deploy-check-vm.nix", "scripts/post-deploy-check.sh"):
+    check(selected(path) == [post_runtime], f"runtime selection: {path} -> existing post-deploy assertion")
+check(selected("tests/post-deploy-check-vm.nix", "scripts/post-deploy-check.sh", "tests/execution-pool-vm.nix",
+               "tests/execution-pool-vm.nix") == [pool_runtime, post_runtime], "runtime selection dedupes and sorts")
+check(selected("docs/x.md", "scripts/test-x.py", "modules/core/fleet.nix", "tests/socket-rebind-vm.nix",
+               "flake-modules/runtime-host-vm-test.nix", "flake.lock") == [], "pilot: no unrelated or broad runtime selection")
+registration = (HERE.parent / "flake-modules/runtime-host-vm-test.nix").read_text()
+for target in (pool_runtime, post_runtime):
+    name = target.rsplit(".", 1)[-1]
+    check(f"{name} = import ../tests/{name}.nix" in registration, f"runtime selection: {name} is registered")
+pick = subprocess.run([sys.executable, str(HERE / "pool_merge_check.py"), "--runtime-plan", "scripts/post-deploy-check.sh"],
+                      capture_output=True, text=True, check=False)
+check(pick.returncode == 0 and pick.stdout.strip() == f"legacy-qemu {post_runtime}", "runtime-plan CLI labels the backend")
+
 # each nix process with the locks it runs under: a stub nix that tries both (held, or free) and names an inherited one
 with tempfile.TemporaryDirectory() as tmp:
     d = pathlib.Path(tmp)
