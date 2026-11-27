@@ -46,15 +46,17 @@ if not lh:
 LIGHT_HELD = textwrap.dedent(lh.group(1)).replace("''${", "\0d").replace("${pkgs.util-linux}/bin/flock", "flock")
 
 
-def render(qa, lints, gen, docs, fresh, push_lints, ev, record, light, evrec):
+def render(qa, lints, gen, docs, fresh, push_lints, ev, record, light, evrec, sg_lint):
     """The hook as writeShellApplication would build it, with qa (its store path keys a green), the lints, the push's
-    lints and eval, the record helper, the doc readers' tests, the devenv-fresh guard and /run/current-system replaced."""
+    lints and eval, the record helper, the doc readers' tests, the devenv-fresh guard, pkgs/scheduled-gate's ruff lint and
+    /run/current-system replaced."""
     if re.search(r"\bdate\b", BODY):
         sys.exit("FAIL (scripts/test-qa-push.py): qaPush reads the clock: every push gets the fast set at any hour")
     text = (BODY.replace("${lib.getExe qa}", str(qa)).replace("${run lints}", str(lints)).replace("${lib.getExe docTests}", str(docs))
             .replace("${lib.getExe devenvFresh}", str(fresh)).replace("${run pushLints}", str(push_lints))
             .replace("${lib.getExe pushEval}", str(ev)).replace("${pushEval.name}", "nixos-push-eval")
             .replace("${lib.getExe record}", str(record)).replace("${lib.getExe evalRecord}", str(evrec))
+            .replace("${lib.getExe scheduledGateLint}", str(sg_lint))
             .replace("${lightHeld}", LIGHT_HELD.replace("/run/work-locks/light-work.lock", str(light))))
     left = re.findall(r"\$\{[^}]*\}", text)
     if left:
@@ -77,6 +79,8 @@ with tempfile.TemporaryDirectory() as t:
     # the devenv-fresh guard (devenvFresh, tested on its own below): refuses when DEVENV_STALE is set
     push_lints = t / "push-lints"
     push_lints.write_text(f'#!/usr/bin/env bash\necho PUSHLINTS >> "{log}"\nexit "${{PUSHLINT_RC:-0}}"\n')
+    sg_lint = t / "scheduled-gate-lint"
+    sg_lint.write_text(f'#!/usr/bin/env bash\necho RUFF >> "{log}"\nexit "${{RUFF_RC:-0}}"\n')
     ev = t / "push-eval"
     light = t / "light-work.lock"
     light.touch()
@@ -101,8 +105,8 @@ with tempfile.TemporaryDirectory() as t:
         # the hook never runs the full gate: FULL in the log is a failure of every case
         qa.write_text(f'#!/usr/bin/env bash\necho FULL >> "{log}"\n')
         gates[name] = t / f"gate-{name}.sh"
-        gates[name].write_text(render(qa, lints, gen, docs, fresh, push_lints, ev, record, light, evrec))
-    for f in (lints, docs, fresh, push_lints, ev, record, evrec, t / "qa", t / "qa-other", *gates.values()):
+        gates[name].write_text(render(qa, lints, gen, docs, fresh, push_lints, ev, record, light, evrec, sg_lint))
+    for f in (lints, docs, fresh, push_lints, sg_lint, ev, record, evrec, t / "qa", t / "qa-other", *gates.values()):
         f.chmod(0o755)
 
     # nor what nixos:qa exports to its steps (PLATFORM_RECORD_STRICT=1, NIXOS_QA_MODE, ...): the hook sets its own
@@ -126,6 +130,7 @@ with tempfile.TemporaryDirectory() as t:
 
     def verdict(seen):
         return ("FULL" if "FULL" in seen else "LINTS" if seen == ["LINTS"] else "FAST" if seen == ["PUSHLINTS", "EVAL"]
+                else "FAST+RUFF" if seen == ["PUSHLINTS", "RUFF", "EVAL"] else "PUSHLINTS+RUFF" if seen == ["PUSHLINTS", "RUFF"]
                 else "PUSHLINTS" if seen == ["PUSHLINTS"] else "LINTS+" + " ".join(seen[2:]) if seen[:2] == ["LINTS", "DOCTESTS"] else f"?{seen}")
 
     def gate(rev, which="qa", **extra):
@@ -247,6 +252,16 @@ with tempfile.TemporaryDirectory() as t:
          "LINTS+scripts/test-keys.py")
     case("DRf the doc's test failing fails the push", k, "LINTS+scripts/test-keys.py(rc=1)", DOC_RC="1")
     case("DRc the same plus a code change is the fast set", commit({"flake.nix": "dr\n"}, "and code"), "FAST")
+    git("switch", "-qc", "sg", base)
+    sg = commit({"pkgs/scheduled-gate/scheduled_gate.py": "x\n"}, "scheduled-gate code")
+    case("SG a change under pkgs/scheduled-gate/: the fast set and its ruff lint", sg, "FAST+RUFF")
+    case("SGf its ruff lint failing fails the push before the eval", sg, "PUSHLINTS+RUFF(rc=1)", RUFF_RC="1")
+    git("switch", "-qc", "goals", base)
+    case("SGn a goals.md change runs no ruff lint", commit({"goals.md": "g\n"}, "goals"), "LINTS")
+    case("SGc nor does a code change elsewhere", commit({"flake.nix": "g\n"}, "goals and code"), "FAST")
+    git("switch", "-q", "--orphan", "nomb")
+    case("SGm no merge-base with origin/main: the changed paths are unknown, so the ruff lint runs",
+         commit({"flake.nix": "m\n"}, "unrelated history"), "FAST+RUFF")
     git("switch", "-q", "main")
 
     hooks = t / "hooks"
@@ -541,6 +556,52 @@ if fm and bm:
               f"seeded: without the entered checkout the same worktree is refused (its devenv.local.nix is not there) ({r.returncode})")
     check(re.search(r'\$\{lib\.getExe devenvFresh\} "\$entered"', BODY.replace("\0d", "${")) is not None and "entered=$PWD" in BODY,
           "qaPush hands devenvFresh the checkout it was entered from, before it moves into the pushed worktree")
+
+
+# scheduledGateLint on its own: the ruff lines of pkgs/scheduled-gate/package.nix as written, under a ruff that logs
+sm = re.search(r"\n  scheduledGateLint =\s+gate\s+\"nixos-lint-scheduled-gate\".*?''\n(.*?)\n *'';\n", src, re.S)
+check(sm is not None, "scheduledGateLint found in devenv.nix")
+if sm:
+    sbody = textwrap.dedent(sm.group(1)).replace("''${", "${")
+    check(re.findall(r"\$\{(?!#?lines|#?calls|argv)[^}]*\}", sbody) == [], "scheduledGateLint has no Nix interpolation")
+    pkg = (ROOT / "pkgs/scheduled-gate/package.nix").read_text()
+    want = [["check", "--isolated", *ln.split()[2:]] for ln in pkg.splitlines() if ln.strip().startswith("ruff check ")]
+    with tempfile.TemporaryDirectory() as t:
+        t = pathlib.Path(t)
+        (t / "bin").mkdir()
+        (t / "bin/ruff").write_text(f'#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "{t}/ruff-log"\nexit "${{RUFF_RC:-0}}"\n')
+        (t / "bin/ruff").chmod(0o755)
+        (t / "pkgs/scheduled-gate").mkdir(parents=True)
+        (t / "lint.sh").write_text("#!/usr/bin/env bash\nset -euo pipefail\n" + sbody + "\n")
+
+        def lint_run(package, **extra):
+            pk = t / "pkgs/scheduled-gate/package.nix"
+            pk.unlink(missing_ok=True)
+            pk.parent.rmdir()
+            if package is not None:
+                pk.parent.mkdir()
+                pk.write_text(package)
+            (t / "ruff-log").write_text("")
+            r = subprocess.run(["bash", str(t / "lint.sh")], cwd=t, capture_output=True, text=True,
+                               env={**os.environ, "PATH": f"{t}/bin:{os.environ['PATH']}", **extra})
+            return r.returncode, [ln.split() for ln in (t / "ruff-log").read_text().splitlines()], r.stderr
+        rc, ran, err = lint_run(pkg)
+        check(rc == 0 and len(want) == 2 and ran == want,
+              f"SL the package's two ruff lines run as its check phase has them, plus --isolated ({rc}, {ran}, {err.strip()})")
+        rc, ran, _ = lint_run(pkg, RUFF_RC="1")
+        check(rc == 1 and len(ran) == 1, f"SL seeded: ruff refusing the first line fails the lint ({rc}, {ran})")
+        rc, ran, err = lint_run(pkg.replace("ruff check", "${lib.getExe ruff} check"))
+        check(rc == 1 and ran == [] and "2 ruff check call(s), 0 of them" in err,
+              f"SL seeded: a check phase whose ruff lines it cannot read fails, not passes ({rc}, {err.strip()})")
+        second = [ln for ln in pkg.splitlines() if "--select" in ln][0]
+        rc, ran, err = lint_run(pkg.replace(second, second.replace("ruff check", "cd . && ruff check")))
+        check(rc == 1 and ran == [] and "2 ruff check call(s), 1 of them" in err,
+              f"SL seeded: one ruff line in another shape fails the lint, not just that line unlinted ({rc}, {err.strip()})")
+        rc, ran, _ = lint_run(pkg.replace("--select E,F,W,I,UP,B", '--select "E,F" *.py'))
+        check(rc == 0 and ran[1][-3:] == ['"E,F"', "*.py", "scheduled_gate.py"],
+              f"SL quotes and globs reach ruff literally, never through a shell ({ran})")
+        rc, ran, _ = lint_run(None)
+        check(rc == 0 and ran == [], f"SL a tree without pkgs/scheduled-gate has nothing to lint ({rc}, {ran})")
 
 
 # The flake check (flakeCheck in devenv.nix) refuses to run on lenovo when a check is a VM test (it has a driver,

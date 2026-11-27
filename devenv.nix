@@ -991,6 +991,29 @@ let
   ];
   # the pre-push hook's fast set: no nix fmt (it evaluates the flake and may build the formatter)
   pushLints = lints ++ [ secretsVerify ];
+  # the ruff lines of the pushed tree's package.nix check phase, so a line its build refuses fails the push; read at
+  # run time, as devenvFresh keys only the devenv files. --isolated: the build sees no repo ruff config
+  scheduledGateLint =
+    gate "nixos-lint-scheduled-gate"
+      (with pkgs; [
+        ruff
+        gnugrep
+      ])
+      ''
+        [ -e pkgs/scheduled-gate/package.nix ] || { echo "nixos-lint-scheduled-gate: no pkgs/scheduled-gate/package.nix, nothing to lint"; exit 0; }
+        cd pkgs/scheduled-gate
+        mapfile -t lines < <(grep -E '^[[:space:]]*ruff check ' package.nix || true)
+        # any other shape of a ruff call (an interpolated ruff, a chained command) would go unlinted, so it refuses
+        mapfile -t calls < <(grep -E 'ruff[^[:space:]]* check' package.nix || true)
+        if [ "''${#lines[@]}" -eq 0 ] || [ "''${#lines[@]}" -ne "''${#calls[@]}" ]; then
+          echo "nixos-lint-scheduled-gate: pkgs/scheduled-gate/package.nix has ''${#calls[@]} ruff check call(s), ''${#lines[@]} of them a plain 'ruff check' line, so the push cannot lint as its build does" >&2
+          exit 1
+        fi
+        for line in "''${lines[@]}"; do
+          read -ra argv <<<"$line"
+          ruff check --isolated "''${argv[@]:2}"
+        done
+      '';
   # the push's one evaluation: the flake check's nix flake show, import-from-derivation off, so an output that
   # needs IFD fails the push (about 90 s, 3.9 GiB on acer; the light lane, as eval-only). No check's derivation is
   # evaluated, each host's needs stylix's IFD, and nothing is built: a check failing only when built waits for the
@@ -1347,7 +1370,8 @@ let
   # documentation (docs/ or a top-level *.md) since origin/main gets the lints, plus the tests that read a changed doc
   # (a scripts/test-* names it: CLAUDE.md, docs/ssh-host-keys.md). A tree a manual full gate passed (scripts/qa-green.sh
   # records it in the clone's git dir with the gate executable and the system generation, as tests run its tools), or
-  # it plus documentation, gets the lints. Nothing else is keyed: a flaky green, an age key or the caller's PATH are
+  # it plus documentation, gets the lints. A push changing pkgs/scheduled-gate/, or with no merge-base, also gets that
+  # package's ruff lint (scheduledGateLint). Nothing else is keyed: a flaky green, an age key or the caller's PATH are
   # not re-sampled until the record is deleted (nixos-qa-green). Everything else, no merge-base and a nested *.md
   # (deployable config) included, gets the fast set and owes the full gate, which never runs here.
   qaPush =
@@ -1417,6 +1441,10 @@ let
         trim "$gitdir/nixos-qa-times" 2000
         t=$SECONDS
         ${run pushLints}
+        # no merge-base: changed paths are unknown, so it runs
+        if [ -z "$base" ] || [ -n "$(git diff --no-renames --name-only "$base" HEAD -- pkgs/scheduled-gate/)" ]; then
+          ${lib.getExe scheduledGateLint}
+        fi
         ${lightHeld}
         # a tree whose flake show passed before under this nix (scripts/eval_record.py) is not evaluated again
         if ${lib.getExe evalRecord} flake-show >/dev/null; then
@@ -1710,6 +1738,8 @@ in
       task "deploy-rs's rev agrees in devenv.yaml, devenv.lock and flake.lock (seeded: each drift fails with both revs)" deployRsPins;
     "nixos:fmt-check" =
       task "nix fmt -- --ci: the flake's formatter fails on any file it would change (and rewrites it)" fmtCheck;
+    "nixos:lint-scheduled-gate" =
+      task "pkgs/scheduled-gate's ruff lines from its check phase; the push runs it when that directory changes" scheduledGateLint;
     "nixos:secrets-verify" =
       task "Decrypt-check wifi credentials (skips without an age key)" secretsVerify;
     "nixos:nvim-check" = task "Build lenovo's nvim and start the generated config headless" nvimCheck;
