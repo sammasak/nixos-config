@@ -15,7 +15,9 @@ others' files written and its own last one intact. The per-session state caps (l
 pending, a stretch's directories, the run's stretches, a Bash command's length each abandon the transcript with none of
 its counts kept; at the real caps 400,000 distinct reads and a 2 MiB command stay well under the guest unit's MemoryMax.
 Usage: test-nav-metrics.py [SCRIPT] (a mutated copy for a seed)."""
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import pathlib
@@ -223,8 +225,11 @@ with tempfile.TemporaryDirectory() as tmp:
     # a section that raises: its series are left out, its last success timestamp is kept
     before = m
     good, nm.misses = nm.misses, lambda *a: 1 / 0
-    rc, _, m = run(out)
+    with contextlib.redirect_stderr(io.StringIO()) as err:
+        rc, _, m = run(out)
     nm.misses = good
+    check(err.getvalue() == "nav-metrics: misses failed, its series are left out: ZeroDivisionError\n",
+          f"the failed section says so on stderr, captured: the gate's log shows no injected fault ({err.getvalue()!r})")
     stamp = 'agent_nav_collector_success_timestamp_seconds{section="misses"}'
     check(rc == 0 and m.get('agent_nav_collector_section_failed{section="misses"}') == 1
           and not any(k.startswith("agent_nav_repo_miss_ratio") for k in m) and m.get(stamp) == before[stamp]
@@ -233,8 +238,11 @@ with tempfile.TemporaryDirectory() as tmp:
 
     # the scan fails (the run deadline): every section failed, the file is still written
     deadline, nm.DEADLINE = nm.DEADLINE, time.monotonic() - 1
-    rc, _, m = run(out)
+    with contextlib.redirect_stderr(io.StringIO()) as err:
+        rc, _, m = run(out)
     nm.DEADLINE = deadline
+    check(err.getvalue() == "nav-metrics: scan failed, its series are left out: TimeoutError\n",
+          f"past the run deadline the scan says so on stderr, captured ({err.getvalue()!r})")
     check(rc == 0 and all(m.get(f'agent_nav_collector_section_failed{{section="{s}"}}') == 1 for s in nm.SECTIONS)
           and not any(k.startswith("agent_nav_repo_nav_calls") for k in m),
           "past the run deadline every section writes section_failed 1 and no sample")
@@ -499,11 +507,13 @@ with tempfile.TemporaryDirectory() as tmp:
                 path = pathlib.Path(tmp, f"{len(got)}-{n}.jsonl")
                 s.write(path)
                 skipped = dict.fromkeys(nm.SKIPS, 0)
-                t = nm.scan(None, since, [str(path)], skipped)
-                got.append((skipped["too_much_state"], sum(r["judged"] + r["reads"] + len(r["before"]) for r in t.values())))
-            check(got[0][0] == 0 and got[0][1] > 0 and got[1] == (1, 0),
+                with contextlib.redirect_stderr(io.StringIO()) as err:
+                    t = nm.scan(None, since, [str(path)], skipped)
+                got.append((skipped["too_much_state"], sum(r["judged"] + r["reads"] + len(r["before"]) for r in t.values()),
+                            err.getvalue().count("nav-metrics: a transcript was over a state cap (")))
+            check(got[0][0] == 0 and got[0][1] > 0 and got[0][2] == 0 and got[1] == (1, 0, 1),
                   f"{name}: at the cap the transcript counts, one over it is abandoned (too_much_state) and none of its "
-                  f"counts kept (skipped, counts at the cap and over: {got})")
+                  f"counts kept, one stderr line, captured (skipped, counts, lines at the cap and over: {got})")
         # the run's stretches, across transcripts: the one that passes the cap is abandoned, those before it count
         paths = []
         for i in range(2):
@@ -512,9 +522,11 @@ with tempfile.TemporaryDirectory() as tmp:
             paths.append(pathlib.Path(tmp, f"run-{i}.jsonl"))
             s.write(paths[-1])
         skipped = dict.fromkeys(nm.SKIPS, 0)
-        t = nm.scan(None, since, [str(p) for p in paths], skipped)
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            t = nm.scan(None, since, [str(p) for p in paths], skipped)
         n = sum(len(r["before"]) for r in t.values())
-        check(n == 30 and skipped["too_much_state"] == 1,
+        check(n == 30 and skipped["too_much_state"] == 1
+              and err.getvalue() == "nav-metrics: a transcript was over a state cap (stretches), skipped\n",
               f"the run's stretches are capped across transcripts: the second 30 abandoned, the first kept ({n})")
     finally:
         nm.STATE_MAX, nm.CMD_MAX = caps

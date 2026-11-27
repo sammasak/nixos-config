@@ -14,7 +14,9 @@ unit passes its own declared switch, on for pool1 alone (its Read hook registere
 fails evaluation.
 
 Usage: test-shunt-metrics.py [SCRIPT] (a mutated copy for a seed)."""
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import pathlib
@@ -229,9 +231,12 @@ with tempfile.TemporaryDirectory() as tmp:
     real = sm.scan
     sm.scan = lambda *a: (_ for _ in ()).throw(TimeoutError("run deadline reached"))
     try:
-        sm.main(["--out", str(out), "--shunt", "on", "--log-dir", str(live)])
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            sm.main(["--out", str(out), "--shunt", "on", "--log-dir", str(live)])
     finally:
         sm.scan = real
+    check(err.getvalue() == "shunt-metrics: the scan failed, only the previous timestamps are kept: TimeoutError\n",
+          f"the failed run says so on stderr, captured: the gate's log shows no injected fault ({err.getvalue()!r})")
     got = out.read_text()
     check('shunt_collector_failed{shunt="on"} 1\n' in got
           and f'shunt_collector_success_timestamp_seconds{{shunt="on"}} {ok:.15g}\n' in got

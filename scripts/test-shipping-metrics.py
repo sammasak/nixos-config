@@ -7,8 +7,10 @@ from its last commit, its gates (a full gate, the push hook's fast set, a pool m
 first deploy that has its merge, of any host and per host, cached once final. Then GitHub down: exit 0, no GitHub series
 (no 0 in their place), the Loki sections still written and GitHub's last success timestamps carried over. Seeded: a
 name outside METRICS is refused."""
+import contextlib
 import http.server
 import importlib.util
+import io
 import json
 import os
 import pathlib
@@ -190,6 +192,11 @@ def run(out):
                   "--loki", url, "--github-api", url, "--hostnames", "lenovo-21CB001PMX,acer-swift"])
     text = pathlib.Path(out).read_text()
     return rc, {l.rsplit(" ", 1)[0]: float(l.rsplit(" ", 1)[1]) for l in text.splitlines() if l and not l.startswith("#")}
+
+
+def failures(err):
+    """The section failures a run printed to the captured stderr, its other lines (a PR's unread commits) aside."""
+    return [line for line in err.getvalue().splitlines() if " failed, its series are left out: " in line]
 
 
 SECTIONS = ("issues", "prs", "reviews", "escapes", "gates", "deploys", "phases")
@@ -398,8 +405,11 @@ with tempfile.TemporaryDirectory() as tmp:
     # compare fails: phases alone fails, writes none of its series, the other sections stand
     pathlib.Path(f"{tmp}/phase-cache.json").unlink()
     compare_up = False
-    rc, m = run(out)
+    with contextlib.redirect_stderr(io.StringIO()) as err:
+        rc, m = run(out)
     compare_up = True
+    check(failures(err) == ["shipping-metrics: phases failed, its series are left out: <HTTPError 500: 'Internal Server Error'>"],
+          f"the failed section says so on stderr, captured: the gate's log shows no injected fault ({err.getvalue()!r})")
     check(rc == 0 and m.get('shipping_collector_section_failed{section="phases"}') == 1
           and m.get('shipping_collector_section_failed{section="deploys"}') == 0
           and not any("pr_phase" in k or "gate_retries" in k for k in m),
@@ -417,15 +427,23 @@ with tempfile.TemporaryDirectory() as tmp:
 
     # the run deadline passed: every section fails, and says so
     deadline, sm.DEADLINE = sm.DEADLINE, time.monotonic() - 1
-    rc, m = run(out)
+    with contextlib.redirect_stderr(io.StringIO()) as err:
+        rc, m = run(out)
     sm.DEADLINE = deadline
+    check(failures(err) == [f"shipping-metrics: {s} failed, its series are left out: TimeoutError('run deadline reached')"
+                             for s in ("issues", "prs", "escapes", "gates", "deploys")],
+          f"past the run deadline each section that reads says so on stderr, captured ({err.getvalue()!r})")
     check(rc == 0 and all(m.get(f'shipping_collector_section_failed{{section="{s}"}}') == 1 for s in SECTIONS),
           "past the run deadline each section writes section_failed 1, so a timeout is a series, not a gap")
 
     before = m
     github_up = False
-    rc, m = run(out)
+    with contextlib.redirect_stderr(io.StringIO()) as err:
+        rc, m = run(out)
     check(rc == 0, "GitHub down: still exits 0, no restart loop")
+    check(failures(err) == [f"shipping-metrics: {s} failed, its series are left out: <HTTPError 503: 'Service Unavailable'>"
+                             for s in ("issues", "prs", "escapes", "deploys")],
+          f"GitHub down: each GitHub section says so on stderr, captured ({err.getvalue()!r})")
     check(not any(k.startswith(("shipping_issues", "shipping_pr", "shipping_review", "shipping_escapes")) for k in m),
           "GitHub down: no GitHub series, no 0 in their place")
     check(any(k.startswith("shipping_gate_fail_ratio{") for k in m), "GitHub down: the Loki sections are still written")
