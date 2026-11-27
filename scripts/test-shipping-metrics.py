@@ -243,6 +243,28 @@ check(sm.gate_failures([gate_rec(30, "pass", "scheduled"), gate_rec(20, "fail", 
       "seeded: a scheduled green clears no push gate's failure, and a push pass clears no scheduled red")
 
 
+# Exercise the real producer aggregation and denominator across hosts, not just its selection helper.
+sample = [
+    (50, {**gate_rec(50, "fail", "scheduled")[1], "@host": "acer"}),
+    (40, {**gate_rec(40, "pass", "scheduled")[1], "@host": "acer"}),
+    (30, {**gate_rec(30, "fail", "scheduled")[1], "@host": "acer"}),
+    (20, {**gate_rec(20, "fail", "push")[1], "@host": "msi"}),
+    (10, {**gate_rec(10, "pass", "push")[1], "@host": "msi"}),
+]
+original_loki_records = sm.loki_records
+sm.loki_records = lambda loki, query, days, enough=None: sample if query == sm.GATE_QUERY else []
+try:
+    counts = sm.Out()
+    sm.gates("fixture", counts, len(sample))
+finally:
+    sm.loki_records = original_loki_records
+check(counts.lines["shipping_gate_runs_counted"] == ['shipping_gate_runs_counted{host="acer"} 3',
+                                                     'shipping_gate_runs_counted{host="msi"} 2']
+      and counts.lines["shipping_gate_fail_ratio"] == ['shipping_gate_fail_ratio{host="acer"} 0.333333333333333',
+                                                       'shipping_gate_fail_ratio{host="msi"} 0.5'],
+      "seeded: outstanding fail share uses all sampled runs, preserving per-host weights and the later red")
+
+
 def pass_rec(t, line):
     return (t, rec(line)[1])
 FLAKE = ("nixos-flake-check", DASH)
