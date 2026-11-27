@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """The fleet's ntfy and Loki ports and its host list, held to their definitions: no tracked file but
-modules/core/fleet.nix and the rule unit tests' series labels names either port (one allowlisted line, with its
-reason), ntfy or Loki on a port off its sam.fleet fact fails an assertion, every host's rendered firewall admits each
-sam.fleet listener's port from exactly its callers' addresses and opens nothing the listeners and public entries do not
-list (an open port, an upstream openFirewall, a stray rule and a trusted interface each fail evaluation), each
-listener's service binds its port, the listeners' address:port pairs scripts/lint-fleet-pairs.py reads from fleet.nix's
-text are the evaluated ones, lenovo's sam.herdr.machines and jump hosts must be the runtime hosts of
-flake-modules/hosts.nix: one left out, one the table no longer has, and the table with asus-b460m removed each fail
-evaluation; a collector on a host without a fleet address fails too."""
+modules/core/fleet.nix (and every file under modules/homelab/monitoring/rules/tests/, the rule unit tests) names either
+port (one allowlisted line, with its reason), ntfy or Loki on a port off its sam.fleet fact fails an assertion, every
+host's rendered firewall admits each sam.fleet listener's port from exactly its callers' addresses and opens nothing
+the listeners and public entries do not list (an open port, an upstream openFirewall, a stray rule and a trusted
+interface each fail evaluation), each listener's service binds its port, the listeners' address:port pairs
+scripts/lint-fleet-pairs.py reads from fleet.nix's text are the evaluated ones, lenovo's sam.herdr.machines and jump
+hosts must be the runtime hosts of flake-modules/hosts.nix: one left out, one the table no longer has, and the table
+with asus-b460m removed each fail evaluation; a collector on a host without a fleet address fails too."""
 import importlib.util
 import os
 import pathlib
@@ -63,7 +63,7 @@ check(len(files) > 100 and any(p == "modules/core/fleet.nix" for p, _ in files),
 defined = [p for p, t in files if p == "modules/core/fleet.nix" for port in ports.values() if f"port = {port};" in t]
 check(len(defined) == 2, "modules/core/fleet.nix defines both ports")
 hits = literals(files)
-check(hits == [], "no tracked file but fleet.nix names the ntfy or Loki port: " + "; ".join(f"{p}:{n} ({k}) {l}" for p, n, k, l in hits))
+check(hits == [], "no tracked file but fleet.nix and the rule unit tests names the ntfy or Loki port: " + "; ".join(f"{p}:{n} ({k}) {l}" for p, n, k, l in hits))
 for (path, name, marker), why in ALLOWED.items():
     lines = [l for l in dict(files).get(path, "").splitlines() if re.search(rf"(?<![0-9]){ports[name]}(?![0-9])", l)]
     check(len(lines) == 1 and marker in lines[0], f"allowlisted {path} names the {name} port on its one marked line only ({why})")
