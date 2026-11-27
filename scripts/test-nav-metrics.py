@@ -229,7 +229,7 @@ with tempfile.TemporaryDirectory() as tmp:
         rc, _, m = run(out)
     nm.misses = good
     check(err.getvalue() == "nav-metrics: misses failed, its series are left out: ZeroDivisionError\n",
-          f"the failed section says so on stderr, captured: the gate's log shows no injected fault ({err.getvalue()!r})")
+          "the failed section says so on stderr, captured: the gate's log shows no injected fault")
     stamp = 'agent_nav_collector_success_timestamp_seconds{section="misses"}'
     check(rc == 0 and m.get('agent_nav_collector_section_failed{section="misses"}') == 1
           and not any(k.startswith("agent_nav_repo_miss_ratio") for k in m) and m.get(stamp) == before[stamp]
@@ -242,7 +242,7 @@ with tempfile.TemporaryDirectory() as tmp:
         rc, _, m = run(out)
     nm.DEADLINE = deadline
     check(err.getvalue() == "nav-metrics: scan failed, its series are left out: TimeoutError\n",
-          f"past the run deadline the scan says so on stderr, captured ({err.getvalue()!r})")
+          "past the run deadline the scan says so on stderr, captured")
     check(rc == 0 and all(m.get(f'agent_nav_collector_section_failed{{section="{s}"}}') == 1 for s in nm.SECTIONS)
           and not any(k.startswith("agent_nav_repo_nav_calls") for k in m),
           "past the run deadline every section writes section_failed 1 and no sample")
@@ -510,10 +510,12 @@ with tempfile.TemporaryDirectory() as tmp:
                 with contextlib.redirect_stderr(io.StringIO()) as err:
                     t = nm.scan(None, since, [str(path)], skipped)
                 got.append((skipped["too_much_state"], sum(r["judged"] + r["reads"] + len(r["before"]) for r in t.values()),
-                            err.getvalue().count("nav-metrics: a transcript was over a state cap (")))
-            check(got[0][0] == 0 and got[0][1] > 0 and got[0][2] == 0 and got[1] == (1, 0, 1),
+                            err.getvalue().splitlines()))
+            check(got[0][0] == 0 and got[0][1] > 0 and got[0][2] == [] and got[1][:2] == (1, 0) and len(got[1][2]) == 1
+                  and got[1][2][0].startswith("nav-metrics: a transcript was over a state cap (")
+                  and got[1][2][0].endswith("), skipped"),
                   f"{name}: at the cap the transcript counts, one over it is abandoned (too_much_state) and none of its "
-                  f"counts kept, one stderr line, captured (skipped, counts, lines at the cap and over: {got})")
+                  f"counts kept, one stderr line, captured (skipped and counts at the cap and over: {[g[:2] for g in got]})")
         # the run's stretches, across transcripts: the one that passes the cap is abandoned, those before it count
         paths = []
         for i in range(2):

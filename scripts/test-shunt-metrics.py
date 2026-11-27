@@ -236,7 +236,7 @@ with tempfile.TemporaryDirectory() as tmp:
     finally:
         sm.scan = real
     check(err.getvalue() == "shunt-metrics: the scan failed, only the previous timestamps are kept: TimeoutError\n",
-          f"the failed run says so on stderr, captured: the gate's log shows no injected fault ({err.getvalue()!r})")
+          "the failed run says so on stderr, captured: the gate's log shows no injected fault")
     got = out.read_text()
     check('shunt_collector_failed{shunt="on"} 1\n' in got
           and f'shunt_collector_success_timestamp_seconds{{shunt="on"}} {ok:.15g}\n' in got

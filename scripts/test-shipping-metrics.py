@@ -15,6 +15,7 @@ import json
 import os
 import pathlib
 import re
+import sys
 import tempfile
 import threading
 import time
@@ -195,8 +196,13 @@ def run(out):
 
 
 def failures(err):
-    """The section failures a run printed to the captured stderr, its other lines (a PR's unread commits) aside."""
-    return [line for line in err.getvalue().splitlines() if " failed, its series are left out: " in line]
+    """The section failures a run printed to the captured stderr; its other lines (a PR's unread commits) go back to
+    the real stderr, so nothing unexpected is hidden."""
+    lines = err.getvalue().splitlines()
+    for line in lines:
+        if " failed, its series are left out: " not in line:
+            print(line, file=sys.__stderr__)
+    return [line for line in lines if " failed, its series are left out: " in line]
 
 
 SECTIONS = ("issues", "prs", "reviews", "escapes", "gates", "deploys", "phases")
@@ -409,7 +415,7 @@ with tempfile.TemporaryDirectory() as tmp:
         rc, m = run(out)
     compare_up = True
     check(failures(err) == ["shipping-metrics: phases failed, its series are left out: <HTTPError 500: 'Internal Server Error'>"],
-          f"the failed section says so on stderr, captured: the gate's log shows no injected fault ({err.getvalue()!r})")
+          "the failed section says so on stderr, captured: the gate's log shows no injected fault")
     check(rc == 0 and m.get('shipping_collector_section_failed{section="phases"}') == 1
           and m.get('shipping_collector_section_failed{section="deploys"}') == 0
           and not any("pr_phase" in k or "gate_retries" in k for k in m),
@@ -432,7 +438,7 @@ with tempfile.TemporaryDirectory() as tmp:
     sm.DEADLINE = deadline
     check(failures(err) == [f"shipping-metrics: {s} failed, its series are left out: TimeoutError('run deadline reached')"
                              for s in ("issues", "prs", "escapes", "gates", "deploys")],
-          f"past the run deadline each section that reads says so on stderr, captured ({err.getvalue()!r})")
+          "past the run deadline each section that reads says so on stderr, captured")
     check(rc == 0 and all(m.get(f'shipping_collector_section_failed{{section="{s}"}}') == 1 for s in SECTIONS),
           "past the run deadline each section writes section_failed 1, so a timeout is a series, not a gap")
 
@@ -443,7 +449,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check(rc == 0, "GitHub down: still exits 0, no restart loop")
     check(failures(err) == [f"shipping-metrics: {s} failed, its series are left out: <HTTPError 503: 'Service Unavailable'>"
                              for s in ("issues", "prs", "escapes", "deploys")],
-          f"GitHub down: each GitHub section says so on stderr, captured ({err.getvalue()!r})")
+          "GitHub down: each GitHub section says so on stderr, captured")
     check(not any(k.startswith(("shipping_issues", "shipping_pr", "shipping_review", "shipping_escapes")) for k in m),
           "GitHub down: no GitHub series, no 0 in their place")
     check(any(k.startswith("shipping_gate_fail_ratio{") for k in m), "GitHub down: the Loki sections are still written")
