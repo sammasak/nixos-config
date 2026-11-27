@@ -764,7 +764,7 @@
     {
       "id": 17,
       "type": "timeseries",
-      "title": "Gate fail rate (last push gates)",
+      "title": "Outstanding full gate failures",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -792,7 +792,7 @@
         },
         "overrides": []
       },
-      "description": "Per host, over its share of the last push gates; GateFailRateHigh reads the run-weighted fleet ratio."
+      "description": "Per host: push failures plus scheduled failures not superseded by a newer scheduled pass, divided by its share of the sampled full gates (including superseded runs). GateFailRateHigh reads the run-weighted fleet ratio. Not a historical failure rate or proof of each deferred check; see failed gate steps for failure history."
     },
     {
       "id": 18,
