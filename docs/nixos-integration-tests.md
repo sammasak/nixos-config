@@ -27,7 +27,8 @@ From the exact checkout, one command per lock:
 
 ```sh
 jq -r '.nodes.nixpkgs.locked.rev' flake.lock
-flock -o -w 900 /run/work-locks/light-work.lock nix eval --json .#packages.x86_64-linux.post-deploy-check-nspawn.requiredSystemFeatures
+flock -o -w 900 /run/work-locks/light-work.lock nix eval --json .#packages.x86_64-linux.post-deploy-check-nspawn.config.requiredFeatures \
+  --apply 'features: builtins.filter (name: features.${name}) (builtins.attrNames features)'
 flock -o /run/work-locks/heavy-work.lock nix build -L --no-link .#packages.x86_64-linux.post-deploy-check-nspawn
 ```
 
@@ -48,7 +49,15 @@ On our [pinned interactive driver](https://github.com/NixOS/nixpkgs/blob/fe13242
 native nspawn interactive driving requires host root. Resolve the store
 path of `result-native-driver/bin/nixos-test-driver` and hand the
 operator that exact executable plus `--interactive`. Operator holds
-the same heavy lock through the foreground run. No sudo grant to agents;
+the same heavy lock through the foreground run. For the already authorized
+root operator only, from the disposable checkout:
+
+```sh
+driver=$(readlink -f result-native-driver/bin/nixos-test-driver)
+flock -o /run/work-locks/heavy-work.lock "$driver" --interactive
+```
+
+No sudo grant to agents;
 if no root session is authorized, use unattended build logs and record
 interactive UNTESTED. No production activation or live worker access.
 
@@ -61,11 +70,14 @@ start_all()
 machine.wait_for_unit("multi-user.target", timeout=timedelta(seconds=45))
 print(machine.execute("systemctl is-system-running", timeout=timedelta(seconds=10)))
 print(machine.execute("systemctl --failed --no-pager", timeout=timedelta(seconds=10)))
+print(machine.execute("systemctl start waiting.service", timeout=timedelta(seconds=10)))
+machine.wait_until_succeeds("systemctl show -p SubState --value waiting.service | grep -qx auto-restart", timeout=timedelta(seconds=45))
 print(machine.execute("systemctl show -p ActiveState -p SubState waiting.service", timeout=timedelta(seconds=10)))
+print(machine.execute("journalctl -u waiting.service -b --no-pager -n 30", timeout=timedelta(seconds=10)))
 ```
 
-For a controlled failure, start the existing fixture's restart-waiting
-service in the guest, observe its auto-restart state, then execute the
+For this controlled failure, after observing the fixture's auto-restart
+state in the guest, execute the
 script as its unprivileged fixture user (the resolved store script path
 is in the built driver's test-script). Before stopping it the check
 must exit 1 with the restart-loop message; after stopping it the
