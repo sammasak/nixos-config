@@ -18,6 +18,24 @@
     ../../modules/homelab/journal-collector.nix
   ];
 
+  # Idle-exit overlap can inflate /proc/stat and invalidate capacity measurements (#601).
+  boot.kernelPatches = [
+    {
+      name = "cpu-idle-overlap-96a494c9";
+      patch = ../../pkgs/patches/linux-cpu-accounting/idle-overlap.patch;
+    }
+    {
+      name = "cpu-idle-warning-b327e636";
+      patch = ../../pkgs/patches/linux-cpu-accounting/idle-warning.patch;
+    }
+  ];
+  assertions = [
+    {
+      assertion = config.boot.kernelPackages.kernel.version == "7.2.10";
+      message = "black-pi: recheck/remove the CPU accounting backports when changing kernel 7.2.10 (#601).";
+    }
+  ];
+
   # Unauthenticated, per #302: the journal collectors and pi-offload push, Grafana here reads on loopback.
   # A fresh store; the chart's volume stays on disk.
   homelab.loki = {
@@ -36,13 +54,13 @@
   };
   sam.hostSecrets.enable = true;
 
-  # The 29 GB SD card also holds the observability volumes; min-free makes nix GC itself during builds.
-  nix.settings.min-free = 3 * 1024 * 1024 * 1024;
-  nix.settings.max-free = 8 * 1024 * 1024 * 1024;
   services.journald.settings.Journal.SystemMaxUse = lib.mkForce "200M";
 
-  # nodejs/neovim/herdr build on the Pi (aarch64 cache misses); 4x4 threads OOM it.
   nix.settings = {
+    # The 29 GB SD card also holds the observability volumes; min-free makes nix GC itself during builds.
+    min-free = 3 * 1024 * 1024 * 1024;
+    max-free = 8 * 1024 * 1024 * 1024;
+    # nodejs/neovim/herdr build on the Pi (aarch64 cache misses); 4x4 threads OOM it.
     max-jobs = 1;
     cores = 2;
   };
