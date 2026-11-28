@@ -329,6 +329,14 @@ either side is only reported.
 - **stateVersion**: Set to `25.11` in `core/system.nix`.
 - **Check reporting**: every session reply states the minutes of each check it ran and what any failure caught; an
   escape gets a row in goals.md's Check tuning section and a narrow check, not a longer gate.
+  For test-owning changes, use `python3 scripts/pool_merge_check.py --runtime-plan PATH...` with changed paths
+  from the session's starting commit to its exact candidate head (including renamed/deleted paths).
+  It selects the existing execution-pool or post-deploy assertion where directly owned; it runs nothing.
+  Empty output is not proof that other checks are unnecessary, and `legacy-qemu` is not an admission to boot.
+  Prefer native nspawn for new service tests; keep legacy runtime assertions until equivalent native proof.
+  For a selected check, record its exact attribute, admitted builder, result and elapsed on the session head;
+  without capacity mark it owed/UNTESTED and name the owner/constraint. A drvPath or debug session is not PASS.
+  No extra current-main merge check or change to the scheduled gate.
 
 ## Adding a New Host
 

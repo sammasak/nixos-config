@@ -43,7 +43,8 @@ A host evaluation or the flake show this user's eval record (scripts/eval_record
 this nix is not run again (result=cached), and each one that passes here goes into that record.
 
 Usage: pool_merge_check.py BRANCH
-       pool_merge_check.py --plan PATH...    the checks those changed paths map to, one per line (tests)"""
+       pool_merge_check.py --plan PATH...    the legacy merge-check selection, one per line (tests)
+       pool_merge_check.py --runtime-plan PATH...    relevant existing runtime assertions on the session head (selection only)"""
 
 from __future__ import annotations
 
@@ -92,6 +93,17 @@ SHOW = "nixos-push-eval"
 # the paths whose change can move the test's gate-probe section; the section evaluates asus alone
 OLLAMA_GPU = ("hosts/asus-b460m/", "modules/homelab/ollama-host.nix", "modules/homelab/paddock.nix", "flake.lock")
 PROBE_SECTIONS = {"scripts/test-ollama-gpu.py": "ollama-gpu"}
+
+# Session-head runtime assertions for direct changes to the fixtures and behavior they exercise. These are existing
+# legacy QEMU checks, not a request to boot a VM: the session must establish runner admission or report them owed.
+# Keep this pilot small; shared registration/input changes require a separate risk-sized review, not all VM boots.
+RUNTIME_PATHS = {
+    "tests/execution-pool-vm.nix": "execution-pool-vm",
+    "modules/workers/core.nix": "execution-pool-vm",
+    "modules/workers/execution-pool.nix": "execution-pool-vm",
+    "tests/post-deploy-check-vm.nix": "post-deploy-check-vm",
+    "scripts/post-deploy-check.sh": "post-deploy-check-vm",
+}
 
 
 @dataclass(frozen=True, order=True)
@@ -144,6 +156,11 @@ def plan(paths: list[str], hosts: list[str], pkgdirs: list[str]) -> list[Check]:
     if every_host:
         want.update(Check("eval", h) for h in hosts)
     return sorted(want)
+
+
+def runtime_plan(paths: list[str]) -> list[str]:
+    """Exact existing runtime-check flake attrs, not evaluation, runner admission or a passing gate."""
+    return sorted({f".#checks.{SYSTEM}.{RUNTIME_PATHS[p]}" for p in paths if p in RUNTIME_PATHS})
 
 
 def migrations_problem(directory: pathlib.Path) -> str | None:
@@ -290,7 +307,9 @@ def remember(check: Check, tree: pathlib.Path, began: str | None, stdout: str) -
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("branch", nargs="?")
-    ap.add_argument("--plan", nargs="+", metavar="PATH")
+    selection = ap.add_mutually_exclusive_group()
+    selection.add_argument("--plan", nargs="+", metavar="PATH")
+    selection.add_argument("--runtime-plan", nargs="+", metavar="PATH")
     ap.add_argument("--hosts", default="lenovo acer-swift msi-ms7758 asus-b460m black-pi naked-pi")
     ap.add_argument("--pkgdirs", default="")
     a = ap.parse_args()
@@ -298,8 +317,14 @@ def main() -> int:
         for c in plan(a.plan, a.hosts.split(), a.pkgdirs.split()):
             print(f"{c.kind} {c.target}")
         return 0
+    if a.runtime_plan:
+        if a.branch:
+            ap.error("--runtime-plan takes the session head's changed paths, not a branch")
+        for target in runtime_plan(a.runtime_plan):
+            print(f"legacy-qemu {target}")
+        return 0
     if not a.branch:
-        ap.error("BRANCH or --plan")
+        ap.error("BRANCH, --plan or --runtime-plan")
     if not LOCK.exists():
         say(f"no {LOCK} on this host", err=True)
         return 1
