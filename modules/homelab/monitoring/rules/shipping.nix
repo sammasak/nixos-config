@@ -108,7 +108,7 @@ in
         )
         (alert "GateFailRateHigh"
           "${gateFailRatio} > ${toString a.GateFailRateHigh.maxRatio.value} and on () ${gateRuns} >= ${toString a.GateFailRateHigh.lastRuns.value}"
-          "{{ $value | humanizePercentage }} of the last ${toString a.GateFailRateHigh.lastRuns.value} push gates failed. The Shipping dashboard (https://grafana.sammasak.dev/d/shipping, failed gate steps, last 7 d, and gate fail rate) names the step and host; rerun that step alone on main with NIXOS_STEP=STEP devenv tasks run nixos:step (for nixos-push-eval: nix flake show --all-systems), and fix what it names before the next push."
+          "{{ $value | humanizePercentage }} of the last ${toString a.GateFailRateHigh.lastRuns.value} full gates are counted as failed: push failures and scheduled failures not superseded by a newer scheduled pass. Inspect the Shipping dashboard (https://grafana.sammasak.dev/d/shipping, outstanding full gate failures and failed gate steps, last 7 d) for the failing step and host; read the failed gate records in Loki for the head. If still relevant, rerun that step alone on the affected checkout with NIXOS_STEP=STEP devenv tasks run nixos:step (for nixos-push-eval: nix flake show --all-systems). A newer scheduled pass is not proof of each deferred check."
           { }
         )
         # the full gate runs on main only, on a schedule (modules/homelab/scheduled-gate.nix): a red run names its first
@@ -158,10 +158,10 @@ in
         )
         # per host, against its own past: a host joining (a guest) moves no other median. offset 5d: on a younger series
         # the 7-d average is still filling, so a warm-up rise, or a new host slow from the start, would fire. Slower
-        # alone is no reason for a retro (a bigger change gates longer): its gates must also fail more than their average
+        # alone is no reason for a retro (a bigger change gates longer): its outstanding failure share must also rise
         (alert "RetroDueGateSlower"
           "${gateMedian} > ${toString a.RetroDueGateSlower.factor.value} * avg_over_time(${gateMedian}[7d]) and on (host) shipping_gate_fail_ratio > avg_over_time(shipping_gate_fail_ratio[7d]) and ${gateMedian} offset 5d"
-          "The median push gate on {{ $labels.host }} takes {{ $value | humanizeDuration }}, over ${toString a.RetroDueGateSlower.factor.value}x its own 7-d average, and its gates fail more than their 7-d average: a retro is due (https://grafana.sammasak.dev/d/shipping: where a gate's time goes, by gate step, and failed gate steps)."
+          "The median full gate on {{ $labels.host }} takes {{ $value | humanizeDuration }}, over ${toString a.RetroDueGateSlower.factor.value}x its own 7-d average, and its outstanding full gate failure share is above its 7-d average: a retro is due (https://grafana.sammasak.dev/d/shipping: where a gate's time goes, by gate step, and failed gate steps)."
           { }
         )
         # one step, or one check inside the flake check, failing on 3 heads over a full sample: one bad change on two hosts

@@ -241,6 +241,43 @@ check(sm.step_failures([check_rec(DASH, "none"), step_rec("nixos-flake-check", "
 check(sm.step_last_failures([(30, check_rec(DASH, H1)[1]), (20, step_rec("nixos-flake-check", H2)[1]), (10, check_rec(DASH, H2)[1])])
       == {("nixos-flake-check", DASH): 30},
       "seeded: a unit's newest failure is its latest record's time; an umbrella record its inner check explains is not one")
+def gate_rec(t, result, mode):
+    return (t, rec(f"gate=nixos-qa seconds=60 result={result} sha=x mode={mode}")[1])
+# 27 Nov: ten scheduled reds of one broken main, then a scheduled green, held GateFailRateHigh firing for days
+reds = [gate_rec(10 + i, "fail", "scheduled") for i in range(10)]
+check(sm.gate_failures([gate_rec(30, "pass", "scheduled"), *reds]) == [],
+      "seeded: scheduled reds a newer scheduled run passed are not counted failed")
+check(len(sm.gate_failures(reds)) == 10 and sm.gate_failures([gate_rec(40, "fail", "scheduled"), gate_rec(30, "pass", "scheduled")])
+      == [gate_rec(40, "fail", "scheduled")],
+      "seeded: a scheduled red with no newer scheduled pass counts, one after the last green included")
+check(sm.gate_failures([gate_rec(30, "pass", "scheduled"), gate_rec(20, "fail", "push"), gate_rec(25, "fail", "scheduled")])
+      == [gate_rec(20, "fail", "push")] and sm.gate_failures([gate_rec(30, "pass", "push"), gate_rec(20, "fail", "scheduled")])
+      == [gate_rec(20, "fail", "scheduled")],
+      "seeded: a scheduled green clears no push gate's failure, and a push pass clears no scheduled red")
+
+
+# Exercise the real producer aggregation and denominator across hosts, not just its selection helper.
+sample = [
+    (50, {**gate_rec(50, "fail", "scheduled")[1], "@host": "acer"}),
+    (40, {**gate_rec(40, "pass", "scheduled")[1], "@host": "acer"}),
+    (30, {**gate_rec(30, "fail", "scheduled")[1], "@host": "acer"}),
+    (20, {**gate_rec(20, "fail", "push")[1], "@host": "msi"}),
+    (10, {**gate_rec(10, "pass", "push")[1], "@host": "msi"}),
+]
+original_loki_records = sm.loki_records
+sm.loki_records = lambda loki, query, days, enough=None: sample if query == sm.GATE_QUERY else []
+try:
+    counts = sm.Out()
+    sm.gates("fixture", counts, len(sample))
+finally:
+    sm.loki_records = original_loki_records
+check(counts.lines["shipping_gate_runs_counted"] == ['shipping_gate_runs_counted{host="acer"} 3',
+                                                     'shipping_gate_runs_counted{host="msi"} 2']
+      and counts.lines["shipping_gate_fail_ratio"] == ['shipping_gate_fail_ratio{host="acer"} 0.333333333333333',
+                                                       'shipping_gate_fail_ratio{host="msi"} 0.5'],
+      "seeded: outstanding fail share uses all sampled runs, preserving per-host weights and the later red")
+
+
 def pass_rec(t, line):
     return (t, rec(line)[1])
 FLAKE = ("nixos-flake-check", DASH)

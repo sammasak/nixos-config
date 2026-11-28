@@ -38,7 +38,7 @@ METRICS = {
     "shipping_review_prs_counted": "Reviewed merged PRs behind the review ratio and rounds.",
     "shipping_review_unreviewed_prs": "Merged PRs in the review sample with no verdict comment.",
     "shipping_escapes": "Reverts on default branches not reapplied since and not marked Escape: no, and open issues labelled escape, in the window.",
-    "shipping_gate_fail_ratio": "Share of the last full nixos-qa gate runs (push or scheduled mode) that failed, by the host that ran them.",
+    "shipping_gate_fail_ratio": "Outstanding failure share of the last full nixos-qa runs, by host: push failures and scheduled failures not superseded by a newer scheduled pass, divided by all sampled full runs. Not historical failure rate or proof of deferred checks.",
     "shipping_gate_runs_counted": "Full gate runs (push or scheduled mode) behind the fail ratio, by host.",
     "shipping_gate_seconds": "Duration of the last full gate runs (push or scheduled mode), by host and quantile.",
     "shipping_gate_step_failures": "Distinct heads a push-gate step (or the flake check's inner check) failed on in the last 7 d, by step and check.",
@@ -361,10 +361,11 @@ def gates(loki, out, want):
     """The last `want` full gates, by the host that ran them: a host is compared with its own past (RetroDueGateSlower),
     and a new one, a guest included, does not move another's median."""
     runs = loki_records(loki, GATE_QUERY, 14, lambda r: len(r) >= want)[:want]
+    failed = {id(r) for _, r in gate_failures(runs)}
     for host in sorted({r["@host"] for _, r in runs}):
         mine = [r for _, r in runs if r["@host"] == host]
         out.add("shipping_gate_runs_counted", len(mine), host=host)
-        out.add("shipping_gate_fail_ratio", sum(r["result"] != "pass" for r in mine) / len(mine), host=host)
+        out.add("shipping_gate_fail_ratio", sum(id(r) in failed for r in mine) / len(mine), host=host)
         secs = [float(r["seconds"]) for r in mine if r.get("seconds", "").isdigit()]
         for q in (0.5, 0.9):
             if secs:
@@ -379,6 +380,16 @@ def gates(loki, out, want):
         passes = loki_records(loki, '{job="platform",kind="gate-step"} != "result=fail" |~ "(sha|head)=(%s)"' % "|".join(heads), 7)
         for (step, check), t in sorted(step_scheduled_passes(passes, heads, newest).items()):
             out.add("shipping_gate_step_scheduled_pass_timestamp_seconds", t, step=step, check=check)
+
+
+def gate_failures(runs):
+    """The (time, record) runs that count as failed: any not passed, except a scheduled run that a newer scheduled run
+    passed. The schedule gates main alone, so its green is that red fixed (ScheduledGateRed named it while it lasted);
+    counted on, one red main gated three times a day held the fleet's ratio over the threshold for days after the green,
+    as each new run pushes out the window's oldest, a pass."""
+    green = max((t for t, r in runs if r.get("mode") == "scheduled" and r.get("result") == "pass"), default=None)
+    return [(t, r) for t, r in runs if r.get("result") != "pass"
+            and not (r.get("mode") == "scheduled" and green is not None and t < green)]
 
 
 def step_failures(records):
