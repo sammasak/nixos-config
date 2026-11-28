@@ -1,7 +1,7 @@
 # scripts/post-deploy-check.sh (just deploy's post-deploy check) against real systemd states, run as an unprivileged
 # user the way deploy runs it: a failed unit, one waiting to restart and one activating again after a restart each fail
 # it, a condition-skipped unit and a plain long-running oneshot do not. `nix build .#checks.x86_64-linux.post-deploy-check-vm`.
-{ pkgs }:
+{ pkgs, nativeContainer ? false }:
 let
   check = ../scripts/post-deploy-check.sh;
   sh = script: "${pkgs.bash}/bin/bash -c ${pkgs.lib.escapeShellArg script}";
@@ -9,7 +9,7 @@ in
 pkgs.testers.runNixOSTest {
   name = "post-deploy-check";
 
-  nodes.machine = {
+  ${if nativeContainer then "containers" else "nodes"}.machine = {
     users.users.checker = {
       isSystemUser = true;
       group = "checker";
