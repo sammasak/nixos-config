@@ -318,10 +318,13 @@ def read_dir(t: Tally, dir_fd: int | None, since: float, now: float, deadline: f
         for raw in lines_of(name, dir_fd, t, deadline, written_since):
             try:
                 rec = json.loads(raw)
-                hook = rec.get("hook") if isinstance(rec, dict) else None
-                ts = stamp(rec.get("ts")) if isinstance(rec, dict) else None
-                counted = isinstance(hook, str) and (hook == BASH_HOOK or hook in RESULTS)
-                key = hash(raw) if seen is not None and counted and ts is not None and since <= ts <= now else None
+                key = None
+                if seen is not None and isinstance(rec, dict):
+                    hook = rec.get("hook")
+                    counted = isinstance(hook, str) and (hook == BASH_HOOK or hook in RESULTS)
+                    ts = stamp(rec.get("ts")) if counted else None
+                    if ts is not None and since <= ts <= now:
+                        key = hash(raw)
             except (ValueError, RecursionError):
                 t.lines["malformed"] += 1
                 continue

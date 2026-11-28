@@ -432,6 +432,23 @@ with tempfile.TemporaryDirectory() as tmp:
     check(tt.homes is not None and tt.homes["missing"] == 1 and tt.bash_calls == 4,
           f"a trashed home deleted mid-read is missing, not an error {tt.homes}")
 
+    # Host scans do not deduplicate across worker homes. Avoid parsing every timestamp twice.
+    host_logs = hooks(pathlib.Path(tmp, "host-stamp"), rec("validate-bash", "allowed", t0 - 60, 2))
+    original_stamp = sm.stamp
+    stamp_calls = []
+
+    def counted_stamp(value):
+        stamp_calls.append(value)
+        return original_stamp(value)
+
+    sm.stamp = counted_stamp
+    try:
+        host = sm.scan([str(host_logs)], t0 - 86400, t0 + 60, time.monotonic() + 60)
+    finally:
+        sm.stamp = original_stamp
+    check(host.bash_calls == 1 and len(stamp_calls) == 1,
+          f"host timestamp parsed once per record, got {len(stamp_calls)} calls")
+
     # One worker-wide byte budget: a retained turn cannot multiply the maximum scan input. Live is first,
     # followed by the most recently trashed home; an older file that won't fit is reported, not parsed.
     bounded = pathlib.Path(tmp, "bounded")
